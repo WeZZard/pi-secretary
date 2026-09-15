@@ -78,11 +78,7 @@ export function registerGoalUI(pi: ExtensionAPI, engine: GoalEngine): void {
       "Show or manage the current thread goal (view | create <text> | clear | complete | blocked | paused).",
     handler: async (args, ctx: ExtensionCommandContext) => {
       latestUi = ctx.ui;
-      const threadId = ctx.sessionManager.getSessionFile() ?? null;
-      if (!threadId) {
-        ctx.ui.notify("Goal requires a persistent thread.", "warning");
-        return;
-      }
+      const threadId = ctx.sessionManager.getSessionFile() ?? ctx.sessionManager.getSessionId();
       engine.setThreadId(threadId);
       const [verb, ...rest] = args.trim().split(/\s+/);
       const target = rest.join(" ");
@@ -91,7 +87,15 @@ export function registerGoalUI(pi: ExtensionAPI, engine: GoalEngine): void {
         case "": {
           const goal = engine.service.getGoal(threadId);
           const { widget } = renderGoalDashboard(goal);
-          await ctx.ui.input("Goal", widget.length ? widget.join("\n") : "No goal set.");
+          const help = widget.length
+            ? widget
+            : [
+                "No goal for this thread.",
+                "",
+                "Create one by asking the agent (it calls create_goal), or:",
+                "  /goal create <objective>   ",
+              ];
+          await ctx.ui.input("Goal", help.join("\n"));
           break;
         }
         case "create": {

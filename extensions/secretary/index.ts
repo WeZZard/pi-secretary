@@ -8,7 +8,6 @@ import {
   executeGetGoal,
   executeUpdateGoal,
   type GoalToolResponse,
-  GoalToolError,
 } from "./goal/tools/goal-tool-executors.ts";
 import {
   createGoalToolSpec,
@@ -54,8 +53,10 @@ function defaultDbPath(): string {
   return path.join(dir, "pi-secretary-goals.sqlite");
 }
 
-function threadIdFor(ctx: ExtensionContext): string | null {
-  return ctx.sessionManager.getSessionFile() ?? null;
+function threadIdFor(ctx: ExtensionContext): string {
+  // Prefer the persisted session file; fall back to the session id so goals
+  // work in ephemeral sessions that have not yet written a session file.
+  return ctx.sessionManager.getSessionFile() ?? ctx.sessionManager.getSessionId();
 }
 
 /**
@@ -64,9 +65,6 @@ function threadIdFor(ctx: ExtensionContext): string | null {
 export function registerGoalTools(pi: ExtensionAPI, engine: GoalEngine): void {
   const threadOf = (ctx: ExtensionContext): string => {
     const threadId = threadIdFor(ctx);
-    if (!threadId) {
-      throw new GoalToolError("Goal tools require a persistent thread.");
-    }
     engine.setThreadId(threadId);
     return threadId;
   };
