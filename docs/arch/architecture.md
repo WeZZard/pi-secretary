@@ -4,7 +4,7 @@
 **Document type:** System / Architecture Design
 **Status:** Draft
 **Date:** 2026-09-15
-**Related:** `../user-stories/user-stories.md` · `../ux/ux-design.md` · `../../.plans/2026-09-15T13-17-45z-codex-goal-replicate.md`
+**Related:** `../user-stories/user-stories.md` · `../ux/ux-design.md` · `../../.plans/2026-09-15T13:17:45Z-codex-goal-replicate.md`
 
 ---
 
