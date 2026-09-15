@@ -4,7 +4,7 @@
 **Document type:** User Stories / Requirements
 **Status:** Draft
 **Date:** 2026-09-15
-**Related:** `../ux/ux-design.md` · `../arch/architecture.md` · `../../.plans/2026-09-15T13-17-45Z-codex-goal-replicate.md`
+**Related:** `../ux/ux-design.md` · `../arch/architecture.md` · `../../.plans/2026-09-15T13-17-45z-codex-goal-replicate.md`
 
 ---
 
