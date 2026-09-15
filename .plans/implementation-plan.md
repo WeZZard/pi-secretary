@@ -6,6 +6,13 @@
 **Date:** 2026-09-15
 **Phase count:** 6
 **Source designs:** `../docs/user-stories/user-stories.md` · `../docs/ux/ux-design.md` · `../docs/arch/architecture.md`
+**Test traceability:** `../docs/research/codex-goal-test-traceability.md`
+
+> **Tests are built per phase.** Every phase that introduces a module also
+> turns the corresponding scenarios from the **traceability matrix**
+> (`codex-goal-test-traceability.md`) into runnable TypeScript tests before the
+> phase is considered done. A phase is not complete until its mapped scenario
+> set is green.
 
 ---
 
@@ -85,11 +92,20 @@ extension loads via `pi -e ./extensions/goal.ts`.
   `has_thread_goal_continuation_deferral`.
 - [ ] Enforce single-goal-per-thread: `insert_thread_goal` fails if an
   unfinished goal exists.
-- [ ] Unit tests: validation, single-goal invariant, transactional write,
-  accounting idempotence.
 
-**Exit:** storage layer fully tested; cannot create a second unfinished goal;
-accounting is idempotent.
+### Test cases to build (traceability §3) — `tests/storage/goal-db.test.ts`
+- [ ] CRUD round-trip (`replace_update_and_get_thread_goal`).
+- [ ] Budget-limit immediacy on replace and insert (`*_applies_budget_limit_immediately`).
+- [ ] Insert does not replace existing goal (`insert_thread_goal_does_not_replace_existing_goal`).
+- [ ] `expected_goal_id` version guard rejects stale writes (`update_thread_goal_ignores_replaced_goal_version`, `usage_accounting_ignores_replaced_goal_version`).
+- [ ] Objective update preserves usage/created_at (`update_thread_goal_objective_preserves_usage_and_created_at`).
+- [ ] Concurrent partial updates preserve independent fields.
+- [ ] Terminal-status precedence (pause/block cannot override `complete`/`budget_limited`).
+- [ ] Accounting mode scoping (ActiveOnly vs ActiveOrComplete/Stopped) and concurrent delta addition.
+- [ ] Cascade delete on thread delete.
+
+**Exit:** all storage scenarios in traceability §3 are green; cannot create a
+second unfinished goal; accounting is idempotent.
 
 ---
 
@@ -109,8 +125,14 @@ accounting is idempotent.
 - [ ] Tests: create/get/set/clear, single-goal invariant, late-result
   `expected_goal_id` rejection, mutation-effect ordering.
 
+### Test cases to build (traceability §2 service rows) — `tests/service/goal-service.test.ts`
+- [ ] Set/get/clear thread goal (`goal_service_sets_gets_and_clears_thread_goal`).
+- [ ] Enforce maximum token budget on create/update (`goal_service_enforces_maximum_token_budget_on_creation_and_updates`).
+- [ ] `requestTerminalUpdate` only accepts terminal statuses for the model.
+- [ ] Late (stale) result is rejected via `expected_goal_id` / focus token.
+
 **Exit:** `goal.ts`/tools no longer write goal state directly; service is the
-only mutation path.
+only mutation path; service scenarios green.
 
 ---
 
@@ -132,8 +154,17 @@ only mutation path.
 - [ ] Tool-selection tests: no calls to removed tools; no confusion between
   complete/blocked/paused.
 
+### Test cases to build (traceability §2 tool rows) — `tests/tools/goal-tools.test.ts`
+- [ ] Create goal + fill empty preview (`installed_goal_tools_create_goal_and_fill_empty_preview`).
+- [ ] Apply max token budget (`installed_goal_tools_apply_maximum_token_budget`).
+- [ ] Ephemeral tools preserve specs but reject execution (`ephemeral_goal_tools_preserve_specs_but_reject_execution`).
+- [ ] Tools hidden for review subagents (`goal_tools_hidden_for_review_subagents`).
+- [ ] Only replace a completed goal (`installed_goal_tools_only_replace_complete_goal`).
+- [ ] `update_goal` can stop + accounts final progress; rejects resume/system-limit statuses (`update_goal_rejects_resume_and_system_limit_statuses`).
+- [ ] Tool-selection: no calls to removed tools; no confusion between complete/blocked/paused.
+
 **Exit:** exactly three advertised goal tools; schemas deep-equal the expected
-specs.
+specs; tool scenarios green.
 
 ---
 
@@ -156,8 +187,21 @@ specs.
 - [ ] Tests: continuation gated by permit; restore; stop reasons; no
   double-charge; budget-limit exactly once; template escaping/caps.
 
+### Test cases to build (traceability §2 accounting/runtime rows + §2 accounting & steering tables) — `tests/runtime/goal-runtime.test.ts`, `tests/runtime/goal-accounting.test.ts`, `tests/prompts/goal-prompts.test.ts`
+- [ ] Per-turn start baseline gives exact deltas (`goal_accounting_uses_turn_start_baseline_for_exact_deltas`).
+- [ ] Ignore plan-mode turns (`goal_accounting_ignores_plan_mode_turns`).
+- [ ] Empty continuations require 3 turns without activity (`empty_continuations_require_three_turns_without_activity_or_goal_changes`).
+- [ ] Execution failures do not transfer to a replacement goal.
+- [ ] Successful tool resets failures before an interrupted turn ends.
+- [ ] Concurrent descendant usage preserved across checkpoints.
+- [ ] Budget-limited keeps accruing; spawn/grandchild/subagent usage roll-up.
+- [ ] Turn-error / usage-limit stop reasons; stale turn does not stop current goal.
+- [ ] External mutation start/set accounts active progress; preserves concurrent usage.
+- [ ] Thread stop unregisters runtime; resume rehydrates idle accounting (trace §2 runtime rows).
+- [ ] Steering: checklist on/off preserves the original continuation prompt and goal text (trace §2 steering table).
+
 **Exit:** continuation/accounting/budget behavior verified; steering prompts
-bounded and escaped.
+bounded and escaped; runtime/accounting/steering scenarios green.
 
 ---
 
@@ -178,7 +222,15 @@ bounded and escaped.
 - [ ] UX tests: widget present when a goal exists; expand/collapse; command
   feedback; clear confirmation; no task tree/contracts/auditor surfaced.
 
-**Exit:** TUI matches `docs/ux/ux-design.md`; renders only from service state.
+### Test cases to build (traceability §4 + UX stories) — `tests/tui/goal-widget.test.ts`, `tests/commands/goal-commands.test.ts`
+- [ ] Goal menu renders summary / validation states (trace §4 goal_menu + goal_validation).
+- [ ] Widget present when a goal exists; absent when none.
+- [ ] Expand/collapse via `Ctrl+Shift+T`; `Esc` collapse/pause.
+- [ ] Command palette: bare summary, create, edit, pause, resume, clear-with-confirm.
+- [ ] No task tree / contracts / auditor surfaced (Codex-faithful).
+
+**Exit:** TUI matches `docs/ux/ux-design.md`; renders only from service state;
+TUI scenarios green.
 
 ---
 
