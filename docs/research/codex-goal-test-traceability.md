@@ -1,7 +1,7 @@
 # Test Case Inventory: Codex Goal System (translated for pi-secretary)
 
 **Project:** pi-secretary — Codex goal replicate
-**Document type:** Test Reference / Verification Spec
+**Document type:** Test Design Specification / Requirement Traceability Matrix
 **Status:** Draft
 **Date:** 2026-09-15
 **Source:** OpenAI Codex `codex-rs/` goal test suite (Rust)
