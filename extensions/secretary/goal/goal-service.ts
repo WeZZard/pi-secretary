@@ -192,6 +192,46 @@ export class GoalService {
   cancelContinuation(threadId: string): void {
     this.pendingContinuation.delete(threadId);
   }
+
+  // ---- accounting (used by the runtime) --------------------------------------
+
+  /** Charge token/time usage to a goal. Returns the updated goal or null. */
+  accountGoalUsage(
+    threadId: string,
+    timeDeltaSeconds: number,
+    tokenDelta: number,
+    mode: "active_only" | "active_or_complete" | "active_or_stopped",
+    expectedGoalId?: string,
+  ): ThreadGoal | null {
+    const outcome = this.db.accountThreadGoalUsage(
+      threadId,
+      timeDeltaSeconds,
+      tokenDelta,
+      mode,
+      expectedGoalId,
+    );
+    if (outcome.kind === "unchanged") return null;
+    this.emit(outcome.goal);
+    return outcome.goal;
+  }
+
+  /** Stop a goal to a terminal status (system-driven, e.g. usage limit/blocked). */
+  stopActiveGoal(
+    threadId: string,
+    status: "blocked" | "usage_limited" | "complete" | "paused",
+    expectedGoalId?: string,
+  ): ThreadGoal | null {
+    const current = this.db.getThreadGoal(threadId);
+    if (!current) return null;
+    const updated = this.db.updateThreadGoal(threadId, {
+      status,
+      expectedGoalId: expectedGoalId ?? current.goalId,
+    });
+    if (!updated) return null;
+    this.cancelContinuation(threadId);
+    this.emit(updated);
+    return updated;
+  }
 }
 
 export { TERMINAL_UPDATE_STATUSES };
