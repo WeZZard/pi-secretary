@@ -89,16 +89,21 @@ test("requestTerminalUpdate validates the expected goal id (stale rejection)", (
   assert.throws(() => svc.requestTerminalUpdate(THREAD, "complete", "agent", staleId), /version changed/);
 });
 
-test("editing a complete goal reactivates it (objective edit)", () => {
+test("objective-only edit preserves a complete goal's status; explicit active reactivates it", () => {
   const svc = setup();
   svc.createGoal(THREAD, "original");
   svc.requestTerminalUpdate(THREAD, "complete", "agent");
 
-  const outcome = svc.setGoal(THREAD, { objective: "revised" }, "user");
-  assert.equal(outcome.goal?.status, "active");
-  assert.equal(outcome.goal?.objective, "revised");
-  // usage preserved
-  assert.equal(outcome.goal?.tokensUsed, 0);
+  // objective-only edit preserves the terminal status (Codex precedence)
+  const preserve = svc.setGoal(THREAD, { objective: "revised" }, "user");
+  assert.equal(preserve.goal?.status, "complete");
+  assert.equal(preserve.goal?.objective, "revised");
+  assert.equal(preserve.goal?.tokensUsed, 0);
+
+  // explicit active status reactivates a completed goal
+  const reactivated = svc.setGoal(THREAD, { objective: "revised", status: "active" }, "user");
+  assert.equal(reactivated.goal?.status, "active");
+  assert.equal(reactivated.goal?.objective, "revised");
 });
 
 test("setGoal preserves usage and timestamps", () => {

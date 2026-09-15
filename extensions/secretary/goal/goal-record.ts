@@ -52,9 +52,18 @@ export function validateThreadGoalObjective(
 
 export function validateGoalBudget(
   tokenBudget: number | undefined,
+  max?: number,
 ): { ok: true } | { ok: false; error: string } {
-  if (tokenBudget !== undefined && tokenBudget <= 0) {
-    return { ok: false, error: "goal budgets must be positive when provided" };
+  if (tokenBudget !== undefined) {
+    if (!Number.isSafeInteger(tokenBudget) || tokenBudget <= 0) {
+      return { ok: false, error: "goal budgets must be positive when provided" };
+    }
+    if (max !== undefined && tokenBudget > max) {
+      return {
+        ok: false,
+        error: `goal budget must not exceed the configured maximum of ${max}`,
+      };
+    }
   }
   return { ok: true };
 }

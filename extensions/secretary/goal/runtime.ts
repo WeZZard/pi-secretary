@@ -36,6 +36,8 @@ export interface RuntimeCallbacks {
   injectSteering?(prompt: string): void;
   /** Whether goal tools/continuation are currently available for the thread. */
   toolsAvailable?(): boolean;
+  /** Whether the host (pi) is currently idle — no turn is streaming. */
+  isIdle?(): boolean;
 }
 
 const STOP_STATUS_BY_REASON: Record<ActiveGoalStopReason, ThreadGoalStatus> = {
@@ -50,6 +52,10 @@ export class GoalRuntime {
   private readonly enabled: boolean;
   readonly threadId: string;
   callbacks: RuntimeCallbacks;
+  /** True while a continuation turn has been requested but not yet admitted. */
+  private pendingContinuation = false;
+  /** Set when a continuation is admitted; the next started turn is automatic. */
+  private nextTurnIsContinuation = false;
 
   constructor(
     threadId: string,
@@ -85,6 +91,17 @@ export class GoalRuntime {
     if (goal?.status === "active") {
       this.accounting.markTurnGoalActive(turnId, goal.goalId);
     }
+    // If this turn is an admitted automatic continuation, mark it so the
+    // empty-response audit fires on it (Codex automatic-goal-turn tracking).
+    if (this.nextTurnIsContinuation) {
+      this.accounting.markGoalContinuation(turnId);
+      this.nextTurnIsContinuation = false;
+    }
+  }
+
+  /** Flag the next started turn as an automatic goal continuation (claim D). */
+  markNextTurnAsContinuation(): void {
+    this.nextTurnIsContinuation = true;
   }
 
   recordToolOutcome(
@@ -172,14 +189,14 @@ export class GoalRuntime {
 
   // ---- blocked / impasse audits ---------------------------------------------
 
-  /** True if the turn has hit the 3-consecutive-exec-failure blocked audit. */
+  /** Non-consuming: true if the turn has hit the exec-failure blocked audit. */
   executionFailureBlocked(turnId: string): boolean {
-    return this.accounting.executionFailureGoal(turnId) !== null;
+    return this.accounting.peekExecutionFailureGoal(turnId) !== null;
   }
 
-  /** True if the turn has hit the 3-consecutive-empty-response blocked audit. */
+  /** Non-consuming: true if the turn has hit the empty-response blocked audit. */
   emptyResponseBlocked(turnId: string): boolean {
-    return this.accounting.emptyResponseGoal(turnId) !== null;
+    return this.accounting.peekEmptyResponseGoal(turnId) !== null;
   }
 
   /**
@@ -234,6 +251,7 @@ export class GoalRuntime {
       status,
       activeGoal.goalId,
     );
+    this.pendingContinuation = false;
     this.accounting.clearActiveGoal();
     return updated;
   }
@@ -277,14 +295,26 @@ export class GoalRuntime {
       case "blocked":
       case "usage_limited":
       case "complete":
+        this.pendingContinuation = false;
         this.accounting.clearActiveGoal();
         break;
     }
     void previousStatus;
   }
 
+  /**
+   * Re-attempt idle continuation after a turn ends (host `agent_settled`).
+   * Call whenever the host becomes idle and the goal may still be active.
+   */
+  attemptContinuationIfIdle(): void {
+    if (!this.enabled) return;
+    if (this.pendingContinuation) return;
+    this.tryContinueIfIdle();
+  }
+
   applyExternalGoalClear(): void {
     if (!this.enabled) return;
+    this.pendingContinuation = false;
     this.accounting.clearActiveGoal();
   }
 
@@ -299,7 +329,14 @@ export class GoalRuntime {
     }
   }
 
+  /**
+   * Decide whether to admit a continuation turn. Guards: tools available,
+   * goal present and active, host idle (a turn is NOT already streaming), and
+   * no continuation already pending for this thread (Codex's once-at-a-time
+   * admission so repeated goal sets / edits don't enqueue duplicates).
+   */
   private tryContinueIfIdle(): void {
+    if (this.pendingContinuation) return;
     if (!(this.callbacks.toolsAvailable?.() ?? true)) {
       this.accounting.clearActiveGoal();
       return;
@@ -313,7 +350,37 @@ export class GoalRuntime {
       this.accounting.clearActiveGoal();
       return;
     }
+    if (this.callbacks.isIdle !== undefined && !this.callbacks.isIdle()) {
+      // A turn is streaming; don't queue a duplicate follow-up.
+      return;
+    }
+    this.pendingContinuation = true;
     this.callbacks.continueIfIdle?.(this.continuationPrompt(goal));
+  }
+
+  /** Mark that the pending continuation was admitted (a turn started). */
+  admitContinuation(): void {
+    this.pendingContinuation = false;
+  }
+
+  /** Release the pending-continuation guard (e.g. continuation was dropped). */
+  releaseContinuation(): void {
+    this.pendingContinuation = false;
+  }
+
+  /** Whether a continuation is currently queued for this runtime. */
+  hasPendingContinuation(): boolean {
+    return this.pendingContinuation;
+  }
+
+  /**
+   * Dispatch budget-limit steering, once per goal. Returns true if a steering
+   * prompt was sent this call (i.e. this is the first time the goal crossed).
+   */
+  dispatchBudgetLimitSteering(goal: ThreadGoal): boolean {
+    const first = this.accounting.markBudgetLimitReportedIfNew(goal.goalId);
+    if (first) this.callbacks.injectSteering?.(this.budgetLimitPrompt(goal));
+    return first;
   }
 
   // ---- steering prompts ------------------------------------------------------

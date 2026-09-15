@@ -146,13 +146,14 @@ export class GoalDb {
       throw new Error("goal budgets must not be negative");
     }
 
-    const existing = this.getThreadGoal(threadId);
-    if (existing && existing.status !== "complete") return null; // never replace an unfinished goal
-
+    // Atomic compare-and-apply: the upsert only replaces an existing goal when
+    // its status is 'complete' (Codex single-goal-per-thread). Because the
+    // conflict guard lives in the SQL predicate itself, a concurrent connection
+    // that has advanced the goal cannot be clobbered by a stale precheck.
     const now = Date.now();
     const goalId = crypto.randomUUID();
     const effectiveStatus = statusAfterBudgetLimit(status, tokenBudget, 0);
-    this.db
+    const row = this.db
       .prepare(
         `INSERT INTO thread_goals
            (thread_id, goal_id, objective, status, token_budget,
@@ -166,10 +167,15 @@ export class GoalDb {
            tokens_used = 0,
            time_used_seconds = 0,
            created_at_ms = excluded.created_at_ms,
-           updated_at_ms = excluded.updated_at_ms`,
+           updated_at_ms = excluded.updated_at_ms
+         WHERE thread_goals.status = 'complete'
+         RETURNING thread_id, goal_id, objective, status, token_budget,
+                   tokens_used, time_used_seconds, created_at_ms, updated_at_ms`,
       )
-      .run(threadId, goalId, objective, effectiveStatus, tokenBudget ?? null, now, now);
-    return this.getThreadGoal(threadId);
+      .get(threadId, goalId, objective, effectiveStatus, tokenBudget ?? null, now, now) as
+      | row
+      | undefined;
+    return row ? rowToGoal(row) : null;
   }
 
   /**
@@ -193,10 +199,12 @@ export class GoalDb {
     const objective = update.objective ?? current.objective;
 
     let finalStatus = nextStatus;
-    // Enforce terminal-status precedence: pause/block cannot override terminal.
+    // Codex status precedence: only budget_limited is protected from being
+    // overridden by pause/block (a complete goal may be re-edited to a new
+    // active goal via an explicit active status).
     if (
-      (nextStatus === "paused" || nextStatus === "blocked") &&
-      isTerminalStatus(current.status)
+      current.status === "budget_limited" &&
+      (nextStatus === "paused" || nextStatus === "blocked")
     ) {
       finalStatus = current.status;
     }
@@ -204,15 +212,22 @@ export class GoalDb {
       finalStatus = statusAfterBudgetLimit(finalStatus, nextBudget, current.tokensUsed);
     }
 
+    // Atomic compare-and-apply: the expected-goal-id guard is embedded in the
+    // UPDATE predicate so a concurrent connection that has replaced the goal
+    // cannot be clobbered by a stale write.
     const now = Date.now();
-    this.db
+    const row = this.db
       .prepare(
         `UPDATE thread_goals
          SET objective = ?, status = ?, token_budget = ?, updated_at_ms = ?
-         WHERE thread_id = ?`,
+         WHERE thread_id = ?
+           AND (? IS NULL OR goal_id = ?)
+         RETURNING thread_id, goal_id, objective, status, token_budget,
+                   tokens_used, time_used_seconds, created_at_ms, updated_at_ms`,
       )
-      .run(objective, finalStatus, nextBudget ?? null, now, threadId);
-    return this.getThreadGoal(threadId);
+      .get(objective, finalStatus, nextBudget ?? null, now, threadId,
+        update.expectedGoalId ?? null, update.expectedGoalId ?? null) as row | undefined;
+    return row ? rowToGoal(row) : null;
   }
 
   deleteThreadGoal(threadId: string): ThreadGoal | null {

@@ -161,3 +161,88 @@ test("goal token accounting uses input minus cached plus output", () => {
   assert.equal(r?.goal.tokensUsed, 270); // (100-30) + 200
   runtime.finishTurn("turn-0");
 });
+
+test("tryContinueIfIdle does not re-admit while idle=false (busy)", () => {
+  const { service, runtime } = setup();
+  const callbacks: string[] = [];
+  runtime.callbacks = {
+    continueIfIdle: (p: string) => callbacks.push(p),
+    toolsAvailable: () => true,
+    isIdle: () => false,
+  };
+  service.createGoal(THREAD, "busy objective");
+  const goal = service.getGoal(THREAD)!;
+  runtime.applyExternalGoalSet(goal, null);
+  assert.equal(callbacks.length, 0);
+  assert.equal(runtime.hasPendingContinuation(), false);
+});
+
+test("tryContinueIfIdle admits while idle and only once per runtime", () => {
+  const { service, runtime } = setup();
+  const callbacks: string[] = [];
+  runtime.callbacks = {
+    continueIfIdle: (p: string) => callbacks.push(p),
+    toolsAvailable: () => true,
+    isIdle: () => true,
+  };
+  service.createGoal(THREAD, "idle objective");
+  const goal = service.getGoal(THREAD)!;
+  runtime.applyExternalGoalSet(goal, null);
+  assert.equal(callbacks.length, 1);
+  // A second admission request while one is pending must not enqueue again.
+  runtime.applyExternalGoalSet(goal, null);
+  assert.equal(callbacks.length, 1);
+  // After admit, a subsequent request may enqueue again.
+  runtime.admitContinuation();
+  runtime.attemptContinuationIfIdle();
+  assert.equal(callbacks.length, 2);
+});
+
+test("attemptContinuationIfIdle re-admits after a turn settles", () => {
+  const { service, runtime } = setup();
+  const callbacks: string[] = [];
+  runtime.callbacks = {
+    continueIfIdle: (p: string) => callbacks.push(p),
+    toolsAvailable: () => true,
+    isIdle: () => true,
+  };
+  service.createGoal(THREAD, "do the thing");
+  const goal = service.getGoal(THREAD)!;
+  runtime.applyExternalGoalSet(goal, null);
+  assert.equal(callbacks.length, 1);
+  runtime.admitContinuation();
+  runtime.attemptContinuationIfIdle();
+  assert.equal(callbacks.length, 2);
+});
+
+test("dispatchBudgetLimitSteering reports once per crossed goal", () => {
+  const { service, runtime } = setup();
+  const callbacks: string[] = [];
+  runtime.callbacks = {
+    injectSteering: (p: string) => callbacks.push(p),
+  };
+  service.createGoal(THREAD, "budgeted", 100);
+  const goal = service.getGoal(THREAD)!;
+  const first = runtime.dispatchBudgetLimitSteering(goal);
+  assert.equal(first, true);
+  assert.equal(callbacks.length, 1);
+  assert.ok(callbacks[0].includes("token budget"));
+  // Same goal -> not reported again.
+  const second = runtime.dispatchBudgetLimitSteering(goal);
+  assert.equal(second, false);
+  assert.equal(callbacks.length, 1);
+});
+
+test("abort disposition accounts partial turn and clears without blocking", () => {
+  const { service, runtime } = setup();
+  service.createGoal(THREAD, "do the thing", 1000);
+  runtime.startTurn("t1", true, usage(0, 0));
+  runtime.recordTokenUsage("t1", usage(100, 50));
+  // Abort path dispatches clear_active and releases pending continuation.
+  runtime.releaseContinuation();
+  const r = runtime.accountActiveGoalProgress("t1", "turn-abort", "active_only", "clear_active");
+  assert.ok(r);
+  assert.equal(r.goal.status, "active");
+  assert.equal(r.goal.tokensUsed, 150);
+  runtime.finishTurn("t1");
+});

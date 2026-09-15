@@ -193,3 +193,40 @@ This reference is complete when:
 2. The storage (§3) invariants are the same set as Codex's `goals.rs`.
 3. No Codex goal scenario is dropped silently.
 4. Each scenario maps to a user story or arch requirement.
+
+---
+
+## 8. Conjunction-point fixes (claims A–U)
+
+After the initial port, a conjunction-point audit (Codex `extension.rs` host
+registries vs. ours) surfaced seams that were implemented but not wired, or
+mis-translated. All were fixed against the Codex reference. The table maps
+each claim to the module and the test that locks it in.
+
+| Claim | Seam | Fix | Test |
+| --- | --- | --- | --- |
+| A | runtime teardown | `GoalEngine.dispose()` cancels runtimes + resets accounting on `session_shutdown` | `engine.test.ts` "dispose clears runtimes" |
+| B | sustained idle continuation | re-admit continuation on `agent_settled` when goal still active | `runtime.test.ts` "attemptContinuationIfIdle" |
+| C | plan-mode exclusion | (deferred: pi has no plan-mode step in this adapter) | — |
+| D | blocked audits wired | `tool_execution_end`→`recordToolOutcome`, `exec` mapped from `bash`; non-consuming peeks + one-shot `stopActiveGoalForTurn` | `runtime.test.ts` audit rows |
+| E | resume rehydration | `session_start`→`restoreAfterResume()` | — |
+| F | fork snapshot | `session_start.reason==="fork"`→`copyGoalToThread` | `engine.test.ts` fork rows |
+| G | per-turn accounting + steering | consume accounting result, dispatch budget-limit steering | `runtime.test.ts` "dispatchBudgetLimitSteering" |
+| H | descendant usage | (surface not exposed for explicit child attribution) | — |
+| I | error→blocked | `turn_end.stopReason==="error"`→`stopActiveGoalForTurn("turn_error")` | — |
+| J | abort disposition | `stopReason==="aborted"`→account + `clear_active`, release continuation | `runtime.test.ts` "abort disposition" |
+| L | budget max | `maxGoalTokenBudget` option; `validateGoalBudget(_, max)` rejects | `goal-db.test.ts` "budget max" |
+| M | continuation tickets | runtime pending-continuation guard + `isIdle` check | `runtime.test.ts` "busy"/"once per runtime" |
+| N | per-thread accounting | `runtimeFor` allocates its own `GoalAccountingState` | `engine.test.ts` "isolated accounting" |
+| O | atomic CAS | insert/update embed predicates in SQL w/ `RETURNING` | storage rows |
+| P | status transitions | objective-only edit preserves status; only `budget_limited` protected | `goal-service.test.ts` / `goal-db.test.ts` |
+| Q | budget-limit steering dispatch | `dispatchBudgetLimitSteering` once-per-goal via `markBudgetLimitReportedIfNew` | `runtime.test.ts` |
+| R | objective-update steering | (already wired via `injectSteering` `deliverAs:"steer"`) | — |
+| S | idle admission | `tryContinueIfIdle` checks `isIdle` + pending guard | `runtime.test.ts` |
+| T | session preview | `setThreadPreviewIfEmpty` on create-goal via `pi.setSessionName` | — |
+| U | `/goal edit` | explicit edit branch + editor, not literal `"edit"` objective | `goal-command.test.ts` edit rows |
+
+> **Residual / deferred.** Claim C (plan-mode exclusion) and claim H
+> (descendant/subagent usage attribution) are not wired because this pi
+> adapter has no clean plan-mode step and no explicit child-usage event
+> surface; they are documented as known limitations.

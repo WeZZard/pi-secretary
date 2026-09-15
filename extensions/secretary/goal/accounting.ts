@@ -152,6 +152,25 @@ export class GoalAccountingState {
     return inner.consecutiveExecutionFailureTurns >= 3 ? goalId : null;
   }
 
+  /**
+   * Non-consuming version of `executionFailureGoal`: does not mutate the
+   * consecutive-failure counter, so callers can probe the audit without
+   * advancing it. The operational path (`stopActiveGoalForTurn`) still uses
+   * the consuming `executionFailureGoal` exactly once.
+   */
+  peekExecutionFailureGoal(turnId: string): string | null {
+    const inner = this.#inner;
+    const turn = inner.turns.get(turnId);
+    if (!turn) return null;
+    const goalId = turn.activeGoalId;
+    if (goalId === null) return null;
+    if (turn.successfulTool) return null;
+    if (!turn.failedExecution) return null;
+    const sameGoal = inner.executionFailureGoalId === goalId;
+    const count = sameGoal ? inner.consecutiveExecutionFailureTurns : 0;
+    return count + 1 >= 3 ? goalId : null;
+  }
+
   /** Nested `recordItem` port: mark activity / empty final. */
   recordItem(turnId: string, item: { hasText?: boolean; phase?: string | null }): void {
     const inner = this.#inner;
@@ -194,6 +213,23 @@ export class GoalAccountingState {
     }
     inner.consecutiveEmptyTurns += 1;
     return inner.consecutiveEmptyTurns >= 3 ? goalId : null;
+  }
+
+  /**
+   * Non-consuming version of `emptyResponseGoal`: returns the goal id when the
+   * audit would trip, without clearing `emptyFinal` or advancing the counter.
+   * Use before the operational `stopActiveGoalForTurn` consumes it exactly once.
+   */
+  peekEmptyResponseGoal(turnId: string): string | null {
+    const inner = this.#inner;
+    const automatic = inner.automaticGoalTurnId === turnId;
+    const turn = inner.turns.get(turnId);
+    if (!turn) return null;
+    const goalId = turn.activeGoalId;
+    if (goalId === null) return null;
+    const empty = automatic && turn.emptyFinal && !turn.hasActivity;
+    if (!empty) return null;
+    return inner.consecutiveEmptyTurns + 1 >= 3 ? goalId : null;
   }
 
   currentActiveGoalIdForTurn(turnId: string): string | null {

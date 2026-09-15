@@ -60,7 +60,8 @@ export function renderGoalDashboard(goal: ThreadGoal | null): GoalStatusLine {
  */
 export type GoalCommandResult =
   | { kind: "view"; body: string[] }
-  | { kind: "notify"; message: string; error?: boolean };
+  | { kind: "notify"; message: string; error?: boolean }
+  | { kind: "edit"; current: ThreadGoal };
 
 export function applyGoalCommand(
   engine: GoalEngine,
@@ -70,6 +71,14 @@ export function applyGoalCommand(
   const trimmed = args.trim();
   const lower = trimmed.toLowerCase();
 
+  if (lower === "edit") {
+    // Open an editor prefilled with the current objective, if one exists.
+    const current = engine.service.getGoal(threadId);
+    if (!current) {
+      return { kind: "notify", message: "No goal to edit; set one with `/goal <objective>`.", error: true };
+    }
+    return { kind: "edit", current };
+  }
   if (lower === "clear") {
     const prev = engine.service.getGoal(threadId);
     engine.service.clearGoal(threadId, "user");
@@ -92,11 +101,12 @@ export function applyGoalCommand(
     return { kind: "view", body: widget };
   }
 
-  // `/goal <objective>` sets (create or replace) the goal.
+  // `/goal <objective>` sets (create or replace) the goal as Active, matching
+  // Codex's draft behavior (a new objective reactivates a completed goal).
   try {
     const existing = engine.service.getGoal(threadId);
     const outcome = existing
-      ? engine.service.setGoal(threadId, { objective: trimmed }, "user")
+      ? engine.service.setGoal(threadId, { objective: trimmed, status: "active" }, "user")
       : engine.service.createGoal(threadId, trimmed);
     if (outcome.goal) {
       engine.runtimeFor(threadId).applyExternalGoalSet(outcome.goal, outcome.previousGoal);
@@ -105,6 +115,40 @@ export function applyGoalCommand(
       kind: "notify",
       message: outcome.goal ? `Goal set: ${outcome.goal.objective}` : "Goal set.",
     };
+  } catch (err) {
+    return { kind: "notify", message: (err as Error).message, error: true };
+  }
+}
+
+/**
+ * Apply an edited objective from the `/goal edit` dialog. Reactivates a
+ * completed goal (explicit active status, matching Codex's draft behavior),
+ * validates non-empty text, and re-runs the external-goal-set effect.
+ * Returns a notify result describing the outcome.
+ */
+export function applyGoalEdit(
+  engine: GoalEngine,
+  threadId: string,
+  newObjective: string,
+): GoalCommandResult {
+  const trimmed = newObjective.trim();
+  if (trimmed === "") {
+    return { kind: "notify", message: "Goal objective must not be empty.", error: true };
+  }
+  const previous = engine.service.getGoal(threadId);
+  if (!previous) {
+    return { kind: "notify", message: "No goal to edit.", error: true };
+  }
+  try {
+    const outcome = engine.service.setGoal(
+      threadId,
+      { objective: trimmed, status: "active" },
+      "user",
+    );
+    if (outcome.goal) {
+      engine.runtimeFor(threadId).applyExternalGoalSet(outcome.goal, outcome.previousGoal);
+    }
+    return { kind: "notify", message: `Goal edited: ${trimmed}` };
   } catch (err) {
     return { kind: "notify", message: (err as Error).message, error: true };
   }
@@ -153,6 +197,16 @@ export function registerGoalUI(pi: ExtensionAPI, engine: GoalEngine): void {
               "Set one with `/goal <objective>`, or ask the agent (it calls create_goal).",
             ];
         await ctx.ui.input("Goal", body.join("\n"));
+      } else if (result.kind === "edit") {
+        const edited = await ctx.ui.editor("Edit goal objective", result.current.objective);
+        if (edited === undefined) {
+          // Cancelled: nothing changes.
+          return;
+        }
+        const editResult = applyGoalEdit(engine, threadId, edited);
+        if (editResult.kind === "notify") {
+          ctx.ui.notify(editResult.message, editResult.error ? "error" : "info");
+        }
       } else {
         ctx.ui.notify(result.message, result.error ? "error" : "info");
       }

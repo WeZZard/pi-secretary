@@ -4,7 +4,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { GoalDb } from "../../extensions/secretary/goal/storage/goal-db.ts";
+import { GoalDb, validateGoalBudget } from "../../extensions/secretary/goal/storage/goal-db.ts";
 
 const THREAD = "thread-1";
 
@@ -147,7 +147,7 @@ test("concurrent partial updates preserve independent fields", () => {
   assert.equal(final.tokenBudget, 500);
 });
 
-test("pause/block cannot override a terminal status", () => {
+test("only budget_limited resists pause/block override", () => {
   const db = freshDb();
   db.insertThreadGoal(THREAD, "base", "active", 10);
   // push to budget_limited
@@ -164,11 +164,12 @@ test("pause/block cannot override a terminal status", () => {
   assert.ok(blocked);
   assert.equal(blocked.status, "budget_limited");
 
-  // terminal complete not clobbered by pause
+  // a complete goal MAY be re-edited to a new active status (Codex protects
+  // only budget_limited, not complete, from status override)
   db.replaceThreadGoal(THREAD, "complete goal", "complete");
   const pauseComplete = db.updateThreadGoal(THREAD, { status: "paused" });
   assert.ok(pauseComplete);
-  assert.equal(pauseComplete.status, "complete");
+  assert.equal(pauseComplete.status, "paused");
 });
 
 test("usage accounting mode scoping and concurrent delta addition", () => {
@@ -225,4 +226,14 @@ test("objective validation: empty and over-length rejected", () => {
 test("budget validation: negative rejected", () => {
   const db = freshDb();
   assert.throws(() => db.insertThreadGoal(THREAD, "base", "active", -5));
+});
+
+test("budget max: validateGoalBudget rejects above the configured max (claim L)", () => {
+  const ok = validateGoalBudget(100, 200);
+  assert.equal(ok.ok, true);
+  const over = validateGoalBudget(300, 200);
+  assert.equal(over.ok, false);
+  assert.match((over as any).error, /maximum/);
+  // omitted budget is allowed with no max
+  assert.equal(validateGoalBudget(undefined, 200).ok, true);
 });

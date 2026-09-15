@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { GoalEngine } from "../../extensions/secretary/goal-engine.ts";
-import { applyGoalCommand } from "../../extensions/secretary/goal-ui.ts";
+import { applyGoalCommand, applyGoalEdit } from "../../extensions/secretary/goal-ui.ts";
 
 const THREAD = "thread-1";
 
@@ -63,4 +63,37 @@ test("/goal pause transitions to paused; resume back to active", () => {
   assert.equal(e.service.getGoal(THREAD)!.status, "paused");
   applyGoalCommand(e, THREAD, "resume");
   assert.equal(e.service.getGoal(THREAD)!.status, "active");
+});
+
+test("/goal edit with no goal errors instead of setting objective to 'edit'", () => {
+  const e = engine();
+  const result = applyGoalCommand(e, THREAD, "edit");
+  assert.equal(result.kind, "notify");
+  assert.equal((result as any).error, true);
+  assert.equal(e.service.getGoal(THREAD), null);
+});
+
+test("/goal edit returns an edit request prefilled with the current objective", () => {
+  const e = engine();
+  applyGoalCommand(e, THREAD, "original objective");
+  const result = applyGoalCommand(e, THREAD, "edit");
+  assert.equal(result.kind, "edit");
+  assert.equal((result as any).current.objective, "original objective");
+});
+
+test("applyGoalEdit updates the objective (not the literal word 'edit')", () => {
+  const e = engine();
+  applyGoalCommand(e, THREAD, "original");
+  const result = applyGoalEdit(e, THREAD, "revised objective");
+  assert.equal(result.kind, "notify");
+  assert.equal(e.service.getGoal(THREAD)!.objective, "revised objective");
+});
+
+test("applyGoalEdit rejects an empty objective", () => {
+  const e = engine();
+  applyGoalCommand(e, THREAD, "original");
+  const result = applyGoalEdit(e, THREAD, "   ");
+  assert.equal(result.kind, "notify");
+  assert.equal((result as any).error, true);
+  assert.equal(e.service.getGoal(THREAD)!.objective, "original");
 });

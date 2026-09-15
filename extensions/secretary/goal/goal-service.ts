@@ -100,15 +100,10 @@ export class GoalService {
     const current = this.db.getThreadGoal(threadId);
     const previous = current;
 
-    let status: ThreadGoalStatus | undefined = request.status;
-    // Editing a terminal goal reactivates it, unless a terminal status is set.
-    if (
-      request.objective !== undefined &&
-      current &&
-      (current.status === "complete" || current.status === "budget_limited")
-    ) {
-      status = "active";
-    }
+    // Codex preserves the existing status on objective-only edits. An explicit
+    // `status` (e.g. "active" for a resume, or to reactivate a completed goal)
+    // is honored as-is; it is NOT auto-derived from an objective change.
+    const status: ThreadGoalStatus | undefined = request.status;
 
     const updated = this.db.updateThreadGoal(threadId, {
       objective: request.objective,
@@ -126,7 +121,7 @@ export class GoalService {
       previousGoal: previous,
       effect,
       steering:
-        request.objective !== undefined
+        request.objective !== undefined && updated.status === "active"
           ? "objective_updated"
           : updated.status === "budget_limited"
             ? "budget_limit"

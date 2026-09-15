@@ -32,12 +32,13 @@ export function executeCreateGoal(
   service: GoalService,
   threadId: string,
   params: { objective: string; token_budget?: number },
+  maxBudget?: number,
 ): GoalToolResponse {
   const objective = params.objective.trim();
   const validation = validateThreadGoalObjective(objective);
   if (!validation.ok) throw new GoalToolError(validation.error);
   const budget = params.token_budget;
-  const budgetValidation = validateGoalBudget(budget);
+  const budgetValidation = validateGoalBudget(budget, maxBudget);
   if (!budgetValidation.ok) throw new GoalToolError(budgetValidation.error);
 
   const outcome = service.createGoal(threadId, objective, budget);
