@@ -5,7 +5,7 @@
 **Status:** Draft
 **Date:** 2026-09-15
 **Source:** OpenAI Codex `codex-rs/` goal test suite (Rust)
-**Related:** `../arch/architecture.md` · `../../.plans/implementation-plan.md`
+**Related:** `../arch/architecture.md` · `../../.plans/2026-09-15T13-17-45Z-codex-goal-replicate.md`
 
 > **Scope.** This doc translates the **scenarios** of Codex's goal test suite
 > into the naming and structure of the pi-secretary TypeScript replicate. It
