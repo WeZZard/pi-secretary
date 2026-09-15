@@ -1,4 +1,5 @@
 import { defineTool, type AgentToolResult, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { GoalEngine } from "./goal-engine.ts";
 import { registerGoalUI } from "./goal-ui.ts";
@@ -23,41 +24,34 @@ import {
  * prompt-driven completion audit) presented through the pi-goal-x-style TUI
  * widget + status line.
  *
- * The goal engine (GoalEngine) is created lazily on first session/thread use
- * so it does not open a SQLite handle until a goal is actually needed, and is
- * closed on session shutdown.
+ * The engine is created eagerly at load so its tool, command, and UI
+ * registrations take effect immediately; the SQLite handle is closed on
+ * session shutdown.
  */
 export default function secretaryExtension(pi: ExtensionAPI): void {
-  let engine: GoalEngine | null = null;
-
-  const ensureEngine = (): GoalEngine => {
-    if (!engine) engine = createEngine();
-    return engine;
-  };
-
-  const createEngine = (): GoalEngine => {
-    const dbPath = defaultDbPath();
-    const eng = new GoalEngine({ dbPath, enabled: true });
-    registerGoalTools(pi, eng);
-    registerGoalUI(pi, eng);
-    wireRuntime(pi, eng);
-    return eng;
-  };
-
-  const defaultDbPath = (): string => {
-    const dir = process.env.PI_SECRETARY_DB_DIR ?? process.cwd();
-    return path.join(dir, "pi-secretary-goals.sqlite");
-  };
+  const engine = createEngine(pi);
 
   // Close the SQLite handle when the session ends.
   pi.on("session_shutdown", () => {
-    engine?.close();
-    engine = null;
+    engine.close();
   });
+}
 
-  // Warm the engine on first session so the widget has a goal to show without
-  // forcing a SQLite open for sessions that never use goals.
-  void ensureEngine;
+function createEngine(pi: ExtensionAPI): GoalEngine {
+  const dbPath = defaultDbPath();
+  const eng = new GoalEngine({ dbPath, enabled: true });
+  registerGoalTools(pi, eng);
+  registerGoalUI(pi, eng);
+  wireRuntime(pi, eng);
+  return eng;
+}
+
+function defaultDbPath(): string {
+  const dir =
+    process.env.PI_SECRETARY_DB_DIR ??
+    path.join(process.env.HOME ?? "", ".pi", "secretary");
+  mkdirSync(dir, { recursive: true });
+  return path.join(dir, "pi-secretary-goals.sqlite");
 }
 
 function threadIdFor(ctx: ExtensionContext): string | null {
