@@ -71,15 +71,19 @@ export function applyGoalCommand(
   const lower = trimmed.toLowerCase();
 
   if (lower === "clear") {
+    const prev = engine.service.getGoal(threadId);
     engine.service.clearGoal(threadId, "user");
+    if (prev) engine.runtimeFor(threadId).applyExternalGoalClear();
     return { kind: "notify", message: "Goal cleared." };
   }
   if (lower === "pause") {
-    engine.service.requestTerminalUpdate(threadId, "paused", "user");
+    const update = engine.service.requestTerminalUpdate(threadId, "paused", "user");
+    if (update.goal) engine.runtimeFor(threadId).applyExternalGoalSet(update.goal, update.previousGoal);
     return { kind: "notify", message: "Goal paused." };
   }
   if (lower === "resume") {
-    engine.service.setGoal(threadId, { status: "active" }, "user");
+    const update = engine.service.setGoal(threadId, { status: "active" }, "user");
+    if (update.goal) engine.runtimeFor(threadId).applyExternalGoalSet(update.goal, update.previousGoal);
     return { kind: "notify", message: "Goal resumed." };
   }
 
@@ -94,6 +98,9 @@ export function applyGoalCommand(
     const outcome = existing
       ? engine.service.setGoal(threadId, { objective: trimmed }, "user")
       : engine.service.createGoal(threadId, trimmed);
+    if (outcome.goal) {
+      engine.runtimeFor(threadId).applyExternalGoalSet(outcome.goal, outcome.previousGoal);
+    }
     return {
       kind: "notify",
       message: outcome.goal ? `Goal set: ${outcome.goal.objective}` : "Goal set.",

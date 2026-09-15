@@ -121,18 +121,24 @@ export function registerGoalTools(pi: ExtensionAPI, engine: GoalEngine): void {
 }
 
 /**
- * Wire runtime continuation/steering callbacks into the pi host. The actual
- * "start idle continuation" and "inject active steering" side effects are
- * stubbed here and intended to be backed by pi's turn-start mechanism.
+ * Wire runtime continuation/steering callbacks into the pi host.
+ *
+ * Idle continuation: dispatch the continuation prompt as a hidden follow-up
+ * message that triggers a new turn (Codex `continue_if_idle`). Active steering:
+ * inject the prompt into the running turn (Codex `inject_active_turn_steering`).
  */
 export function wireRuntime(pi: ExtensionAPI, engine: GoalEngine): void {
   engine.onContinueIfIdle = (_threadId, prompt) => {
-    void prompt;
-    void pi;
+    pi.sendMessage(
+      { customType: "secretary:goal", content: prompt, display: false, details: {} },
+      { triggerTurn: true, deliverAs: "followUp" },
+    );
   };
   engine.onInjectSteering = (_threadId, prompt) => {
-    void prompt;
-    void pi;
+    pi.sendMessage(
+      { customType: "secretary:goal", content: prompt, display: false, details: {} },
+      { triggerTurn: false, deliverAs: "steer" },
+    );
   };
 }
 
