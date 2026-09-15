@@ -19,7 +19,7 @@ export const getGoalToolSpec = {
     "Get the current goal for this thread, including status, budgets, token and elapsed-time usage, and remaining token budget.",
   promptSnippet: "Get the current goal and its status",
   parameters: Type.Object({}),
-} as const;
+};
 
 export const createGoalToolSpec = {
   name: CREATE_GOAL_TOOL_NAME,
@@ -36,7 +36,7 @@ export const createGoalToolSpec = {
     token_budget: Type.Optional(Type.Integer()),
   }),
   required: ["objective"],
-} as const;
+};
 
 export const updateGoalToolSpec = {
   name: UPDATE_GOAL_TOOL_NAME,
@@ -54,4 +54,4 @@ export const updateGoalToolSpec = {
     status: Type.String({ enum: ["complete", "blocked", "paused"] }),
   }),
   required: ["status"],
-} as const;
+};
