@@ -50,8 +50,10 @@ export function validateThreadGoalObjective(
   return { ok: true };
 }
 
-export function validateGoalBudget(tokenBudget: number): { ok: true } | { ok: false; error: string } {
-  if (tokenBudget <= 0) {
+export function validateGoalBudget(
+  tokenBudget: number | undefined,
+): { ok: true } | { ok: false; error: string } {
+  if (tokenBudget !== undefined && tokenBudget <= 0) {
     return { ok: false, error: "goal budgets must be positive when provided" };
   }
   return { ok: true };
