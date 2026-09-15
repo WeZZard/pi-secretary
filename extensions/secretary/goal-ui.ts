@@ -50,6 +50,60 @@ export function renderGoalDashboard(goal: ThreadGoal | null): GoalStatusLine {
 }
 
 /**
+ * Apply a `/goal` command argument string to the engine, matching Codex's
+ * slash command behavior:
+ *   - `/goal <objective>`    set (create or replace) the goal
+ *   - `/goal`                view the goal
+ *   - `/goal clear`          clear the goal
+ *   - `/goal pause|resume`   transition the goal status
+ * Pure and unit-testable; returns a describe result.
+ */
+export type GoalCommandResult =
+  | { kind: "view"; body: string[] }
+  | { kind: "notify"; message: string; error?: boolean };
+
+export function applyGoalCommand(
+  engine: GoalEngine,
+  threadId: string,
+  args: string,
+): GoalCommandResult {
+  const trimmed = args.trim();
+  const lower = trimmed.toLowerCase();
+
+  if (lower === "clear") {
+    engine.service.clearGoal(threadId, "user");
+    return { kind: "notify", message: "Goal cleared." };
+  }
+  if (lower === "pause") {
+    engine.service.requestTerminalUpdate(threadId, "paused", "user");
+    return { kind: "notify", message: "Goal paused." };
+  }
+  if (lower === "resume") {
+    engine.service.setGoal(threadId, { status: "active" }, "user");
+    return { kind: "notify", message: "Goal resumed." };
+  }
+
+  if (trimmed === "") {
+    const { widget } = renderGoalDashboard(engine.service.getGoal(threadId));
+    return { kind: "view", body: widget };
+  }
+
+  // `/goal <objective>` sets (create or replace) the goal.
+  try {
+    const existing = engine.service.getGoal(threadId);
+    const outcome = existing
+      ? engine.service.setGoal(threadId, { objective: trimmed }, "user")
+      : engine.service.createGoal(threadId, trimmed);
+    return {
+      kind: "notify",
+      message: outcome.goal ? `Goal set: ${outcome.goal.objective}` : "Goal set.",
+    };
+  } catch (err) {
+    return { kind: "notify", message: (err as Error).message, error: true };
+  }
+}
+
+/**
  * Register the goal UI: a `/goal` slash command for view/create/update/clear,
  * and live widget/status updates driven by goal_updated events.
  */
@@ -75,57 +129,25 @@ export function registerGoalUI(pi: ExtensionAPI, engine: GoalEngine): void {
 
   pi.registerCommand("goal", {
     description:
-      "Show or manage the current thread goal (view | create <text> | clear | complete | blocked | paused).",
+      "Set or view the goal for a long-running task. `/goal <objective>` sets a goal; `/goal` views it; `/goal clear|edit|pause|resume` control it.",
     handler: async (args, ctx: ExtensionCommandContext) => {
       latestUi = ctx.ui;
-      const threadId = ctx.sessionManager.getSessionFile() ?? ctx.sessionManager.getSessionId();
+      const threadId =
+        ctx.sessionManager.getSessionFile() ?? ctx.sessionManager.getSessionId();
       engine.setThreadId(threadId);
-      const [verb, ...rest] = args.trim().split(/\s+/);
-      const target = rest.join(" ");
 
-      switch (verb) {
-        case "": {
-          const goal = engine.service.getGoal(threadId);
-          const { widget } = renderGoalDashboard(goal);
-          const help = widget.length
-            ? widget
-            : [
-                "No goal for this thread.",
-                "",
-                "Create one by asking the agent (it calls create_goal), or:",
-                "  /goal create <objective>   ",
-              ];
-          await ctx.ui.input("Goal", help.join("\n"));
-          break;
-        }
-        case "create": {
-          if (!target) {
-            ctx.ui.notify("Usage: /goal create <objective>", "warning");
-            return;
-          }
-          try {
-            engine.service.createGoal(threadId, target);
-            ctx.ui.notify("Goal created.", "info");
-          } catch (err) {
-            ctx.ui.notify((err as Error).message, "error");
-          }
-          break;
-        }
-        case "clear":
-          engine.service.clearGoal(threadId, "user");
-          ctx.ui.notify("Goal cleared.", "info");
-          break;
-        case "complete":
-        case "blocked":
-        case "paused":
-          engine.service.requestTerminalUpdate(threadId, verb, "user");
-          ctx.ui.notify(`Goal ${verb}.`, "info");
-          break;
-        default:
-          ctx.ui.notify(
-            "Usage: /goal [create <text> | clear | complete | blocked | paused]",
-            "warning",
-          );
+      const result = applyGoalCommand(engine, threadId, args);
+      if (result.kind === "view") {
+        const body = result.body.length
+          ? result.body
+          : [
+              "No goal is currently set.",
+              "",
+              "Set one with `/goal <objective>`, or ask the agent (it calls create_goal).",
+            ];
+        await ctx.ui.input("Goal", body.join("\n"));
+      } else {
+        ctx.ui.notify(result.message, result.error ? "error" : "info");
       }
     },
   });
