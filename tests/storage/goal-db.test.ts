@@ -63,6 +63,19 @@ test("insert does not replace an existing goal", () => {
   assert.equal(db.getThreadGoal(THREAD)!.objective, "first goal");
 });
 
+test("insert replaces an existing completed goal", () => {
+  const db = freshDb();
+  const first = db.insertThreadGoal(THREAD, "first goal", "active");
+  assert.ok(first);
+  db.updateThreadGoal(THREAD, { status: "complete" });
+  const second = db.insertThreadGoal(THREAD, "second goal", "active");
+  assert.ok(second);
+  assert.equal(second.objective, "second goal");
+  assert.equal(second.goalId !== first.goalId, true);
+  // usage reset for the new goal
+  assert.equal(second.tokensUsed, 0);
+});
+
 test("insert applies budget-limit immediately", () => {
   const db = freshDb();
   const goal = db.insertThreadGoal(THREAD, "insert budget", "active", 0);

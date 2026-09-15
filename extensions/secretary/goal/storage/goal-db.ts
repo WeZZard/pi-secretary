@@ -131,8 +131,8 @@ export class GoalDb {
   }
 
   /**
-   * Insert a new goal for a thread. Fails (null) if any goal already exists —
-   * Codex's single-goal-per-thread invariant.
+   * Insert a new goal for a thread. Replaces an existing goal ONLY if it is
+   * complete (Codex single-goal-per-thread semantics); otherwise returns null.
    */
   insertThreadGoal(
     threadId: string,
@@ -146,7 +146,8 @@ export class GoalDb {
       throw new Error("goal budgets must not be negative");
     }
 
-    if (this.getThreadGoal(threadId)) return null; // never replace on insert
+    const existing = this.getThreadGoal(threadId);
+    if (existing && existing.status !== "complete") return null; // never replace an unfinished goal
 
     const now = Date.now();
     const goalId = crypto.randomUUID();
@@ -156,7 +157,16 @@ export class GoalDb {
         `INSERT INTO thread_goals
            (thread_id, goal_id, objective, status, token_budget,
             tokens_used, time_used_seconds, created_at_ms, updated_at_ms)
-         VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?)
+         ON CONFLICT(thread_id) DO UPDATE SET
+           goal_id = excluded.goal_id,
+           objective = excluded.objective,
+           status = excluded.status,
+           token_budget = excluded.token_budget,
+           tokens_used = 0,
+           time_used_seconds = 0,
+           created_at_ms = excluded.created_at_ms,
+           updated_at_ms = excluded.updated_at_ms`,
       )
       .run(threadId, goalId, objective, effectiveStatus, tokenBudget ?? null, now, now);
     return this.getThreadGoal(threadId);
