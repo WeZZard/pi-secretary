@@ -41,9 +41,9 @@ flowchart TD
         T_UPDATE[update_goal]
     end
     subgraph UI / commands
-        CMD[/goal namespace]
-        WIDGET[Above-editor widget + dashboard]
-        STATUS[Status line]
+        CMD["/goal namespace"]
+        WIDGET["Above-editor widget + dashboard"]
+        STATUS["Status line"]
     end
     subgraph Service
         SVC[GoalService<br/>sole mutation boundary]
@@ -328,9 +328,9 @@ flowchart LR
         RT[GoalRuntime]
     end
     subgraph UI
-        WID[goal widget + dashboard]
-        STAT[status line]
-        CMD[/goal commands]
+        WID["goal widget + dashboard"]
+        STAT["status line"]
+        CMD["/goal commands"]
     end
     DB -- "ThreadGoalUpdated" --> WID
     RT -- "steering" --> MODEL[Model]
