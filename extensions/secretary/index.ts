@@ -1,6 +1,7 @@
 import { defineTool, type AgentToolResult, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import path from "node:path";
 import { GoalEngine } from "./goal-engine.ts";
+import { registerGoalUI } from "./goal-ui.ts";
 import {
   executeCreateGoal,
   executeGetGoal,
@@ -38,6 +39,7 @@ export default function secretaryExtension(pi: ExtensionAPI): void {
     const dbPath = defaultDbPath();
     const eng = new GoalEngine({ dbPath, enabled: true });
     registerGoalTools(pi, eng);
+    registerGoalUI(pi, eng);
     wireRuntime(pi, eng);
     return eng;
   };

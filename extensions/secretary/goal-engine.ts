@@ -48,6 +48,9 @@ export class GoalEngine {
     this.db = GoalDb.open(options.dbPath);
     this.service = new GoalService(this.db);
     this.accounting = new GoalAccountingState();
+    this.service.onGoalUpdated((goal) => {
+      this.onGoalChanged?.(goal);
+    });
   }
 
   close(): void {
@@ -79,4 +82,6 @@ export class GoalEngine {
   onContinueIfIdle?: (threadId: string, prompt: string) => void;
   /** Steering side effect, injected by the host (pi) adapter. */
   onInjectSteering?: (threadId: string, prompt: string) => void;
+  /** Called whenever the active goal changes, to update the TUI dashboard. */
+  onGoalChanged?: (goal: import("./goal/goal-record.ts").ThreadGoal | null) => void;
 }
