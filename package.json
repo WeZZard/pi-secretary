@@ -44,7 +44,9 @@
   "scripts": {
     "check": "tsc --noEmit",
     "test": "node --experimental-strip-types --test --test-concurrency=1 tests/**/*.test.ts",
-    "test:serial": "node --experimental-strip-types --test --test-concurrency=1 tests/**/*.test.ts"
+    "test:serial": "node --experimental-strip-types --test --test-concurrency=1 tests/**/*.test.ts",
+    "lint:mermaid": "mmlint $(find docs -name '*.md' -type f | sort)",
+    "verify": "npm run check && npm run test && npm run lint:mermaid"
   },
   "publishConfig": {
     "access": "public"
