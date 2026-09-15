@@ -140,6 +140,76 @@ export function wireRuntime(pi: ExtensionAPI, engine: GoalEngine): void {
       { triggerTurn: false, deliverAs: "steer" },
     );
   };
+
+  wireAccounting(pi, engine);
+}
+
+/**
+ * Charge per-turn token usage to the active goal (Codex goal accounting).
+ * On `turn_start` we baseline the turn; on `turn_end` we read the assistant
+ * message's `usage`, charge the delta to the active goal, and finish the turn.
+ * Plan-mode / usage-less turns are skipped (no charge).
+ */
+function wireAccounting(pi: ExtensionAPI, engine: GoalEngine): void {
+  pi.on("turn_start", (event, ctx) => {
+    const threadId = threadIdFor(ctx);
+    const goal = engine.service.getGoal(threadId);
+    if (goal?.status !== "active") return;
+    const runtime = engine.runtimeFor(threadId);
+    runtime.startTurn(`turn-${event.turnIndex}`, true, zeroTokenUsage());
+  });
+
+  pi.on("turn_end", (event, ctx) => {
+    const threadId = threadIdFor(ctx);
+    const goal = engine.service.getGoal(threadId);
+    if (goal?.status !== "active") return;
+    const runtime = engine.runtimeFor(threadId);
+    const turnId = `turn-${event.turnIndex}`;
+    const message = event.message as { role?: string; usage?: UsageLike } | undefined;
+    if (message && message.role === "assistant" && message.usage) {
+      runtime.recordTokenUsage(turnId, convertUsage(message.usage));
+    }
+    const result = runtime.accountActiveGoalProgress(
+      turnId,
+      "turn-end",
+      "active_only",
+      "keep_active",
+    );
+    void result;
+    runtime.finishTurn(turnId);
+  });
+}
+
+interface UsageLike {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  reasoning?: number;
+  totalTokens?: number;
+}
+
+function zeroTokenUsage() {
+  return {
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    cacheWriteInputTokens: 0,
+    outputTokens: 0,
+    reasoningOutputTokens: 0,
+    totalTokens: 0,
+  };
+}
+
+function convertUsage(usage: UsageLike) {
+  return {
+    inputTokens: usage.input ?? 0,
+    cachedInputTokens: usage.cacheRead ?? 0,
+    cacheWriteInputTokens: usage.cacheWrite ?? 0,
+    outputTokens: usage.output ?? 0,
+    reasoningOutputTokens: usage.reasoning ?? 0,
+    totalTokens:
+      usage.totalTokens ?? (usage.input ?? 0) + (usage.output ?? 0),
+  };
 }
 
 function formatGoal(

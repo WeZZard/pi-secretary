@@ -123,3 +123,41 @@ test("budget limit prompt is available through the runtime", () => {
   const p = runtime.budgetLimitPrompt(goal);
   assert.ok(p.includes("has reached its token budget"));
 });
+
+test("goal token accounting accumulates across turns and budget-limits", () => {
+  const { service, runtime, accounting } = setup();
+  service.createGoal(THREAD, "do the thing", 300);
+
+  // Turn 1: (input 100 - cacheRead 0) + output 100 = 200
+  runtime.startTurn("turn-0", true, usage(0, 0));
+  runtime.recordTokenUsage("turn-0", usage(100, 100));
+  const r0 = runtime.accountActiveGoalProgress("turn-0", "turn-end", "active_only", "keep_active");
+  assert.equal(r0?.goal.tokensUsed, 200);
+  assert.equal(r0?.goal.status, "active");
+  runtime.finishTurn("turn-0");
+
+  // Turn 2: adds 150 -> 350, but budget is 300 -> budget_limited
+  runtime.startTurn("turn-1", true, usage(0, 0));
+  runtime.recordTokenUsage("turn-1", usage(50, 100));
+  const r1 = runtime.accountActiveGoalProgress("turn-1", "turn-end", "active_only", "keep_active");
+  assert.equal(r1?.goal.tokensUsed, 350);
+  assert.equal(r1?.goal.status, "budget_limited");
+  runtime.finishTurn("turn-1");
+});
+
+test("goal token accounting uses input minus cached plus output", () => {
+  const { service, runtime } = setup();
+  service.createGoal(THREAD, "do the thing", 100000);
+  runtime.startTurn("turn-0", true, usage(0, 0));
+  runtime.recordTokenUsage("turn-0", {
+    inputTokens: 100,
+    cachedInputTokens: 30,
+    cacheWriteInputTokens: 0,
+    outputTokens: 200,
+    reasoningOutputTokens: 0,
+    totalTokens: 300,
+  });
+  const r = runtime.accountActiveGoalProgress("turn-0", "turn-end", "active_only", "keep_active");
+  assert.equal(r?.goal.tokensUsed, 270); // (100-30) + 200
+  runtime.finishTurn("turn-0");
+});
