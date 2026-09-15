@@ -1,5 +1,12 @@
 {
   "extensions": [
     "../extensions/secretary/index.ts"
+  ],
+  "packages": [
+    {
+      "source": "npm:pi-goal-x",
+      "autoload": false,
+      "extensions": ["-extensions/goal.ts"]
+    }
   ]
 }
