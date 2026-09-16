@@ -40,12 +40,6 @@ export interface RuntimeCallbacks {
   isIdle?(): boolean;
 }
 
-const STOP_STATUS_BY_REASON: Record<ActiveGoalStopReason, ThreadGoalStatus> = {
-  turn_error: "blocked",
-  usage_limit: "usage_limited",
-  empty_response: "blocked",
-};
-
 export class GoalRuntime {
   private readonly service: GoalService;
   private readonly accounting: GoalAccountingState;
@@ -56,6 +50,7 @@ export class GoalRuntime {
   private pendingContinuation = false;
   /** Set when a continuation is admitted; the next started turn is automatic. */
   private nextTurnIsContinuation = false;
+  private accountingInProgress = false;
 
   constructor(
     threadId: string,
@@ -126,6 +121,13 @@ export class GoalRuntime {
 
   finishTurn(turnId: string): void {
     this.accounting.finishTurn(turnId);
+    if (this.service.getGoal(this.threadId)?.status !== "active") this.accounting.clearActiveGoal();
+  }
+
+  /** Charge known usage before a tool result or a clear, retaining late-turn attribution. */
+  checkpoint(): void {
+    const turnId = this.accounting.currentTurnId();
+    if (turnId) this.accountActiveGoalProgress(turnId, "checkpoint", "active_or_stopped", "keep_active");
   }
 
   // ---- accounting application ------------------------------------------------
@@ -137,28 +139,31 @@ export class GoalRuntime {
     mode: GoalAccountingMode,
     disposition: BudgetLimitedGoalDisposition,
   ): AccountedGoalProgress | null {
-    const snapshot = this.accounting.progressSnapshot(turnId, Date.now());
-    if (!snapshot) return null;
-    const previousStatus = this.service.getGoal(this.threadId)?.status;
-    const outcome = this.service.accountGoalUsage(
-      this.threadId,
-      snapshot.timeDeltaSeconds,
-      snapshot.tokenDelta,
-      mode,
-      snapshot.expectedGoalId,
-    );
-    if (!outcome) {
-      this.accounting.resetIdleProgressBaselineAndClearActiveGoal(Date.now());
-      return null;
+    if (this.accountingInProgress) return null;
+    this.accountingInProgress = true;
+    try {
+      const snapshot = this.accounting.progressSnapshot(turnId, Date.now());
+      if (!snapshot) return null;
+      const outcome = this.service.accountGoalUsage(
+        this.threadId,
+        snapshot.timeDeltaSeconds,
+        snapshot.tokenDelta,
+        mode,
+        snapshot.expectedGoalId,
+      );
+      if (!outcome) {
+        this.accounting.resetIdleProgressBaselineAndClearActiveGoal(Date.now());
+        return null;
+      }
+      if (mode === "active_or_stopped" && disposition === "keep_active") {
+        this.accounting.markProgressAccountedPreservingTurn(turnId, snapshot, outcome.status);
+      } else {
+        this.accounting.markProgressAccountedForStatus(turnId, snapshot, outcome.status, disposition);
+      }
+      return { goal: outcome, goalId: outcome.goalId };
+    } finally {
+      this.accountingInProgress = false;
     }
-    this.accounting.markProgressAccountedForStatus(
-      turnId,
-      snapshot,
-      outcome.status,
-      disposition,
-    );
-    void previousStatus;
-    return { goal: outcome, goalId: outcome.goalId };
   }
 
   /** Account idle (no active turn) progress against the active goal. */
@@ -167,24 +172,30 @@ export class GoalRuntime {
     mode: GoalAccountingMode,
     disposition: BudgetLimitedGoalDisposition,
   ): AccountedGoalProgress | null {
-    const snapshot = this.accounting.idleProgressSnapshot(Date.now());
-    if (!snapshot) {
-      this.accounting.resetIdleProgressBaselineAndClearActiveGoal(Date.now());
-      return null;
+    if (this.accountingInProgress) return null;
+    this.accountingInProgress = true;
+    try {
+      const snapshot = this.accounting.idleProgressSnapshot(Date.now());
+      if (!snapshot) {
+        this.accounting.resetIdleProgressBaselineAndClearActiveGoal(Date.now());
+        return null;
+      }
+      const outcome = this.service.accountGoalUsage(
+        this.threadId,
+        snapshot.timeDeltaSeconds,
+        snapshot.tokenDelta,
+        mode,
+        snapshot.expectedGoalId,
+      );
+      if (!outcome) {
+        this.accounting.resetIdleProgressBaselineAndClearActiveGoal(Date.now());
+        return null;
+      }
+      this.accounting.markIdleProgressAccountedForStatus(snapshot, outcome.status, disposition);
+      return { goal: outcome, goalId: outcome.goalId };
+    } finally {
+      this.accountingInProgress = false;
     }
-    const outcome = this.service.accountGoalUsage(
-      this.threadId,
-      snapshot.timeDeltaSeconds,
-      snapshot.tokenDelta,
-      mode,
-      snapshot.expectedGoalId,
-    );
-    if (!outcome) {
-      this.accounting.resetIdleProgressBaselineAndClearActiveGoal(Date.now());
-      return null;
-    }
-    this.accounting.markIdleProgressAccountedForStatus(snapshot, outcome.status, disposition);
-    return { goal: outcome, goalId: outcome.goalId };
   }
 
   // ---- blocked / impasse audits ---------------------------------------------
@@ -208,7 +219,7 @@ export class GoalRuntime {
     if (accountingGoalId === null) return null;
 
     let status: ThreadGoalStatus;
-    let expectedGoalId: string | null = null;
+    let expectedGoalId: string | null = accountingGoalId;
     switch (reason) {
       case "turn_error":
         status = "blocked";
@@ -264,6 +275,10 @@ export class GoalRuntime {
    */
   applyExternalGoalSet(goal: ThreadGoal, previousGoal: ThreadGoal | null): void {
     if (!this.enabled) return;
+    if (previousGoal && (previousGoal.goalId !== goal.goalId || previousGoal.status !== goal.status ||
+        previousGoal.objective !== goal.objective || previousGoal.tokenBudget !== goal.tokenBudget)) {
+      this.releaseContinuation();
+    }
     this.accounting.resetEmptyResponses();
     const replacedExistingGoal =
       previousGoal !== null && previousGoal.goalId !== goal.goalId;
@@ -271,12 +286,14 @@ export class GoalRuntime {
       previousGoal !== null && !replacedExistingGoal ? previousGoal.status : null;
     const objectiveChanged =
       previousGoal !== null && !replacedExistingGoal && previousGoal.objective !== goal.objective;
+    if (objectiveChanged || replacedExistingGoal || previousStatus !== goal.status) this.accounting.resetFailureAudit();
 
     switch (goal.status) {
       case "active": {
         if (this.accounting.currentTurnId() !== null) {
           this.accounting.markCurrentTurnGoalActive(goal.goalId);
         } else {
+          this.accounting.resetIdleProgressBaselineAndClearActiveGoal(Date.now());
           this.accounting.markIdleGoalActive(goal.goalId);
         }
         if (objectiveChanged) {
@@ -285,18 +302,13 @@ export class GoalRuntime {
         this.tryContinueIfIdle();
         break;
       }
-      case "budget_limited": {
-        if (this.accounting.currentTurnId() === null) {
-          this.accounting.clearActiveGoal();
-        }
-        break;
-      }
+      case "budget_limited":
       case "paused":
       case "blocked":
       case "usage_limited":
       case "complete":
         this.pendingContinuation = false;
-        this.accounting.clearActiveGoal();
+        this.accounting.suspendGoal();
         break;
     }
     void previousStatus;
@@ -323,6 +335,7 @@ export class GoalRuntime {
     if (!this.enabled) return;
     const goal = this.service.getGoal(this.threadId);
     if (goal?.status === "active") {
+      this.accounting.resetIdleProgressBaselineAndClearActiveGoal(Date.now());
       this.accounting.markIdleGoalActive(goal.goalId);
     } else {
       this.accounting.clearActiveGoal();
@@ -366,6 +379,7 @@ export class GoalRuntime {
   /** Release the pending-continuation guard (e.g. continuation was dropped). */
   releaseContinuation(): void {
     this.pendingContinuation = false;
+    this.nextTurnIsContinuation = false;
   }
 
   /** Whether a continuation is currently queued for this runtime. */

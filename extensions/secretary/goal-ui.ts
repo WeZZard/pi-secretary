@@ -13,6 +13,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { type ThreadGoal } from "./goal/goal-record.ts";
 import { type GoalEngine } from "./goal-engine.ts";
+import { type GoalReceipt } from "./goal/ordering.ts";
 
 export interface GoalStatusLine {
   /** Status-bar text (short). */
@@ -67,6 +68,8 @@ export function applyGoalCommand(
   engine: GoalEngine,
   threadId: string,
   args: string,
+  expectedGoalId?: string,
+  receipt?: GoalReceipt,
 ): GoalCommandResult {
   const trimmed = args.trim();
   const lower = trimmed.toLowerCase();
@@ -80,20 +83,20 @@ export function applyGoalCommand(
     return { kind: "edit", current };
   }
   if (lower === "clear") {
-    const prev = engine.service.getGoal(threadId);
-    engine.service.clearGoal(threadId, "user");
-    if (prev) engine.runtimeFor(threadId).applyExternalGoalClear();
-    return { kind: "notify", message: "Goal cleared." };
+    const outcome = engine.service.clearGoal(threadId, "user", expectedGoalId, receipt);
+    return outcome.goal
+      ? { kind: "notify", message: "Goal changed; it was not cleared. Inspect it and try again.", error: true }
+      : { kind: "notify", message: outcome.previousGoal ? "Goal cleared." : "No current goal to clear." };
   }
   if (lower === "pause") {
-    const update = engine.service.requestTerminalUpdate(threadId, "paused", "user");
-    if (update.goal) engine.runtimeFor(threadId).applyExternalGoalSet(update.goal, update.previousGoal);
-    return { kind: "notify", message: "Goal paused." };
+    const update = engine.service.requestTerminalUpdate(threadId, "paused", "user", expectedGoalId, receipt);
+    return { kind: "notify", message: update.goal?.status === "paused"
+      ? "Goal paused." : `Goal remains ${update.goal?.status}; it was not paused.` };
   }
   if (lower === "resume") {
-    const update = engine.service.setGoal(threadId, { status: "active" }, "user");
-    if (update.goal) engine.runtimeFor(threadId).applyExternalGoalSet(update.goal, update.previousGoal);
-    return { kind: "notify", message: "Goal resumed." };
+    const update = engine.service.setGoal(threadId, { status: "active" }, "user", receipt);
+    return { kind: "notify", message: update.goal?.status === "active"
+      ? "Goal resumed." : `Cannot resume: goal remains ${update.goal?.status}; no token budget is available.` };
   }
 
   if (trimmed === "") {
@@ -106,14 +109,11 @@ export function applyGoalCommand(
   try {
     const existing = engine.service.getGoal(threadId);
     const outcome = existing
-      ? engine.service.setGoal(threadId, { objective: trimmed, status: "active" }, "user")
-      : engine.service.createGoal(threadId, trimmed);
-    if (outcome.goal) {
-      engine.runtimeFor(threadId).applyExternalGoalSet(outcome.goal, outcome.previousGoal);
-    }
+      ? engine.service.setGoal(threadId, { objective: trimmed, status: "active" }, "user", receipt)
+      : engine.service.createGoal(threadId, trimmed, undefined, "user", receipt);
     return {
       kind: "notify",
-      message: outcome.goal ? `Goal set: ${outcome.goal.objective}` : "Goal set.",
+      message: outcome.goal ? `Goal [${outcome.goal.status}]: ${outcome.goal.objective}` : "No current goal.",
     };
   } catch (err) {
     return { kind: "notify", message: (err as Error).message, error: true };
@@ -130,6 +130,7 @@ export function applyGoalEdit(
   engine: GoalEngine,
   threadId: string,
   newObjective: string,
+  receipt?: GoalReceipt,
 ): GoalCommandResult {
   const trimmed = newObjective.trim();
   if (trimmed === "") {
@@ -144,11 +145,9 @@ export function applyGoalEdit(
       threadId,
       { objective: trimmed, status: "active" },
       "user",
+      receipt,
     );
-    if (outcome.goal) {
-      engine.runtimeFor(threadId).applyExternalGoalSet(outcome.goal, outcome.previousGoal);
-    }
-    return { kind: "notify", message: `Goal edited: ${trimmed}` };
+    return { kind: "notify", message: `Goal [${outcome.goal?.status}]: ${trimmed}` };
   } catch (err) {
     return { kind: "notify", message: (err as Error).message, error: true };
   }
@@ -158,9 +157,14 @@ export function applyGoalEdit(
  * Register the goal UI: a `/goal` slash command for view/create/update/clear,
  * and live widget/status updates driven by goal_updated events.
  */
-export function registerGoalUI(pi: ExtensionAPI, engine: GoalEngine): void {
-  // Stash the latest UI so goal_updated events can refresh the dashboard
-  // without each having its own ExtensionContext.
+export function registerGoalUI(pi: ExtensionAPI, engine: GoalEngine): {
+  bind(ctx: ExtensionContext): void;
+  refresh(): void;
+  unavailable(): void;
+  dispose(): void;
+} {
+  // Session lifecycle binding is independent of command invocation.
+  let disposed = false;
   let latestUi: {
     setStatus(key: string, text: string | undefined): void;
     setWidget(key: string, content: string[] | undefined): void;
@@ -176,40 +180,79 @@ export function registerGoalUI(pi: ExtensionAPI, engine: GoalEngine): void {
     latestUi.setWidget("secretary:goal", widget.length ? widget : undefined);
   };
 
-  engine.onGoalChanged = () => refresh();
+  const bind = (ctx: ExtensionContext): void => {
+    if (!disposed) latestUi = ctx.hasUI ? ctx.ui : null;
+  };
+  const unavailable = (): void => {
+    latestUi?.setStatus("secretary:goal", "goal status unavailable");
+    latestUi?.setWidget("secretary:goal", ["Goal status is unavailable; this does not establish that it was cleared."]);
+  };
 
   pi.registerCommand("goal", {
     description:
       "Set or view the goal for a long-running task. `/goal <objective>` sets a goal; `/goal` views it; `/goal clear|edit|pause|resume` control it.",
     handler: async (args, ctx: ExtensionCommandContext) => {
-      latestUi = ctx.ui;
       const threadId =
         ctx.sessionManager.getSessionFile() ?? ctx.sessionManager.getSessionId();
-      engine.setThreadId(threadId);
-
-      const result = applyGoalCommand(engine, threadId, args);
-      if (result.kind === "view") {
-        const body = result.body.length
-          ? result.body
-          : [
-              "No goal is currently set.",
-              "",
-              "Set one with `/goal <objective>`, or ask the agent (it calls create_goal).",
-            ];
-        await ctx.ui.input("Goal", body.join("\n"));
-      } else if (result.kind === "edit") {
-        const edited = await ctx.ui.editor("Edit goal objective", result.current.objective);
-        if (edited === undefined) {
-          // Cancelled: nothing changes.
-          return;
+      let receipt: GoalReceipt | undefined;
+      try {
+        const expected = engine.service.getGoal(threadId);
+        receipt = engine.service.ordering.receive(threadId, "command", expected?.goalId ?? null);
+        if (disposed) return;
+        bind(ctx);
+        engine.setThreadId(threadId);
+        const isCurrent = () => !disposed && engine.getThreadId() === threadId;
+        if (args.trim().toLowerCase() === "clear" && expected) {
+          engine.service.ordering.resolve(receipt);
+          receipt = undefined;
+          if (!await ctx.ui.confirm("Clear goal?", expected.objective)) return;
+          receipt = engine.service.ordering.receive(threadId, "dialog", expected.goalId);
+          if (!isCurrent()) return;
+          if (engine.service.getGoal(threadId)?.goalId !== expected.goalId) {
+            ctx.ui.notify("Goal changed while confirmation was open; inspect it and try again.", "warning");
+            return;
+          }
         }
-        const editResult = applyGoalEdit(engine, threadId, edited);
-        if (editResult.kind === "notify") {
-          ctx.ui.notify(editResult.message, editResult.error ? "error" : "info");
+        const result = applyGoalCommand(engine, threadId, args, expected?.goalId, receipt);
+        if (result.kind === "view") {
+          if (receipt) engine.service.ordering.resolve(receipt);
+          receipt = undefined;
+          const body = result.body.length ? result.body : [
+            "No goal is currently set.", "",
+            "Set one with `/goal <objective>`, or ask the agent (it calls create_goal).",
+          ];
+          await ctx.ui.input("Goal", body.join("\n"));
+          if (!isCurrent()) return;
+        } else if (result.kind === "edit") {
+          if (receipt) engine.service.ordering.resolve(receipt);
+          receipt = undefined;
+          const edited = await ctx.ui.editor("Edit goal objective", result.current.objective);
+          if (edited === undefined) return;
+          receipt = engine.service.ordering.receive(threadId, "dialog", result.current.goalId);
+          if (!isCurrent()) return;
+          if (engine.service.getGoal(threadId)?.goalId !== result.current.goalId) {
+            ctx.ui.notify("Goal changed while the editor was open; inspect it and try again.", "warning");
+            return;
+          }
+          const editResult = applyGoalEdit(engine, threadId, edited, receipt);
+          if (editResult.kind === "notify") ctx.ui.notify(editResult.message, editResult.error ? "error" : "info");
+        } else {
+          ctx.ui.notify(result.message, result.error ? "error" : "info");
         }
-      } else {
-        ctx.ui.notify(result.message, result.error ? "error" : "info");
+        refresh();
+      } catch (error) {
+        if (disposed) return;
+        try { refresh(); } catch { unavailable(); }
+        ctx.ui.notify((error as Error).message, "error");
+      } finally {
+        if (receipt) engine.service.ordering.resolve(receipt);
       }
     },
   });
+  return {
+    bind,
+    refresh,
+    unavailable,
+    dispose: () => { disposed = true; latestUi = null; },
+  };
 }

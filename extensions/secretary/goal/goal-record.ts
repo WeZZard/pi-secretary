@@ -8,7 +8,7 @@
 export type ThreadGoalStatus =
   | "active" // only status that continues
   | "paused" // user-initiated
-  | "blocked" // model impasse (3 consecutive turns)
+  | "blocked" // audited model impasse or unrecovered runtime failure
   | "usage_limited" // system usage limit
   | "budget_limited" // system token budget reached
   | "complete"; // verified achievement

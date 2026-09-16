@@ -8,6 +8,7 @@
 
 import { type ThreadGoal, validateGoalBudget, validateThreadGoalObjective } from "../goal-record.ts";
 import { GoalService } from "../goal-service.ts";
+import type { GoalReceipt } from "../ordering.ts";
 import {
   CREATE_GOAL_TOOL_NAME,
   UPDATE_GOAL_TOOL_NAME,
@@ -33,6 +34,7 @@ export function executeCreateGoal(
   threadId: string,
   params: { objective: string; token_budget?: number },
   maxBudget?: number,
+  receipt?: GoalReceipt,
 ): GoalToolResponse {
   const objective = params.objective.trim();
   const validation = validateThreadGoalObjective(objective);
@@ -41,7 +43,7 @@ export function executeCreateGoal(
   const budgetValidation = validateGoalBudget(budget, maxBudget);
   if (!budgetValidation.ok) throw new GoalToolError(budgetValidation.error);
 
-  const outcome = service.createGoal(threadId, objective, budget);
+  const outcome = service.createGoal(threadId, objective, budget, "agent", receipt);
   return goalResponse(outcome.goal, false);
 }
 
@@ -50,13 +52,15 @@ export function executeUpdateGoal(
   service: GoalService,
   threadId: string,
   params: { status: "complete" | "blocked" | "paused" },
+  receipt?: GoalReceipt,
+  originIntentSeq?: number,
 ): GoalToolResponse {
   const status = params.status;
   const goal = service.getGoal(threadId);
   if (!goal) {
     throw new GoalToolError("cannot update goal because this thread has no goal");
   }
-  const outcome = service.requestTerminalUpdate(threadId, status, "agent", goal.goalId);
+  const outcome = service.requestTerminalUpdate(threadId, status, "agent", goal.goalId, receipt, originIntentSeq);
   return goalResponse(outcome.goal, status === "complete");
 }
 

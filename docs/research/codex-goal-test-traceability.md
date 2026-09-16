@@ -4,6 +4,7 @@
 **Document type:** Test Design Specification / Requirement Traceability Matrix
 **Status:** Draft
 **Date:** 2026-09-15
+**Updated:** 2026-09-16
 **Source:** OpenAI Codex `codex-rs/` goal test suite (Rust)
 **Related:** `../arch/architecture.md` · `../../.plans/2026-09-15T13:17:45Z-codex-goal-replicate.md`
 
@@ -15,9 +16,10 @@
 >
 > **Why translation, not copy.** Codex's tests are Rust integration tests
 > against `codex_state` and a `GoalExtensionHarness`. Our replicate is
-> TypeScript and the modules do not exist yet. The scenarios below are the
-> authoritative behavior contract; they will be turned into runnable
-> TypeScript tests in their owning phase.
+> TypeScript. The original scenario inventory is retained below; it is not
+> proof that every ported scenario is implemented. Section 9 records the
+> current synchronization evidence. Section 10 records verification of
+> the revised intent-ordering contract, which supersedes the host-admission prerequisite.
 
 ---
 
@@ -200,8 +202,10 @@ This reference is complete when:
 
 After the initial port, a conjunction-point audit (Codex `extension.rs` host
 registries vs. ours) surfaced seams that were implemented but not wired, or
-mis-translated. All were fixed against the Codex reference. The table maps
-each claim to the module and the test that locks it in.
+mis-translated. The table below records the historical fixes claimed by that
+port; the later notification audit found that component tests did not prove
+several production wiring claims. Section 9 supersedes those claims for
+synchronization, error recovery, fork inheritance, and host admission.
 
 | Claim | Seam | Fix | Test |
 | --- | --- | --- | --- |
@@ -230,3 +234,54 @@ each claim to the module and the test that locks it in.
 > (descendant/subagent usage attribution) are not wired because this pi
 > adapter has no clean plan-mode step and no explicit child-usage event
 > surface; they are documented as known limitations.
+
+---
+
+## 9. Goal synchronization implementation evidence
+
+- The implementation is tested against Pi 0.85.1 with isolated databases, session directories, in-memory credentials, and deterministic local providers. No live goal or paid API request is used by these tests.
+- The authoritative technical contract is [Architecture §13](../arch/architecture.md#13-goal-state-synchronization-contract). User-visible outcomes are defined by US-D3 and US-D4; implementation mechanisms are not user-story criteria.
+- Test names below identify runnable synchronization evidence. Section 10 records the additional ordering cases; required host-port and disabled-automation assumptions have been replaced with positive continuation tests.
+
+| Requirement or regression | Runnable evidence | Scope of evidence |
+| --- | --- | --- |
+| Committed changes preserve thread identity, revisions, and control generations. | `tests/service/goal-service.test.ts` tests typed changes, semantic no-ops, observer failures, and clear checkpointing. | These tests exercise the actual service and in-memory storage. |
+| Fork import preserves identity, budget, usage, and timestamps. | `tests/storage/goal-db.test.ts` import cases and `tests/integration/goal-synchronization.test.ts` “fork imports full snapshot”. | These tests verify storage and adapter initialization, not an interactive fork UI. |
+| Tool creation displays the goal without a prior command. | `tests/integration/goal-synchronization.test.ts` “tool create initializes UI” and `tests/host/goal-host.test.ts` “real Pi host synchronizes”. | The latter uses actual SDK tool execution and provider context. |
+| Pause and clear agree across interface and agent context. | `tests/integration/goal-synchronization.test.ts` “pause and clear agree” and the real-host synchronization case. | The tests preserve historical messages while removing obsolete extension context from outgoing requests. |
+| Constrained command feedback describes the actual result. | `tests/integration/goal-synchronization.test.ts` “exhausted-budget resume and pause never claim success”. | Storage, confirmation, dashboard, and model snapshot are checked together. |
+| Stopped states and unavailable state are not mistaken for active or absent. | `tests/integration/goal-synchronization.test.ts` restored-status, read-failure, and renderer-failure cases. | The tests include headless operation and isolated notification failures. |
+| Model-visible quantities and untrusted objective framing remain bounded. | `tests/prompts/goal-snapshot.test.ts`. | The tests check promised tool fields, known/unknown stop cause, escaping, and legacy overlength objectives. |
+| Terminal turns retain usage without charging a replacement or recreating a cleared goal. | `tests/integration/goal-synchronization.test.ts` terminal-tool and creation-baseline cases, plus storage stopped-accounting cases. | The originating turn is finalized through the actual adapter hooks. |
+| Thread-local revisions and same-ID objective changes cannot retain stale intent. | `tests/integration/goal-synchronization.test.ts` “revision cursors” and “late failure audit”. | These regressions were found during implementation review and reproduced before correction. |
+| Accounting observers cannot charge a delta twice through reentrancy. | `tests/integration/goal-synchronization.test.ts` “reentrant accounting listeners”. | The test reenters a runtime checkpoint during a committed accounting event. |
+| Successful retry and compaction recovery do not persist an intermediate blocker. | `tests/host/goal-host.test.ts` real retry and context-overflow compaction cases. | These tests execute Pi's actual recovery loop with a deterministic provider. |
+| Exhausted recovery blocks only after settlement; cancellation is not an impasse. | `tests/host/goal-host.test.ts` exhausted-retry and context-abort cases. | The abort case observes the captured signal even when Pi reports `stopReason: "error"`. |
+| Lifecycle initialization produces the selected session's state. | `tests/host/goal-host.test.ts` startup restoration and `session_start` reload/new/resume/fork cases. | These test the real SDK initialization handlers, not a full interactive runtime replacement. |
+| Local dispatch and originating intent prevent obsolete work from changing current goals. | `tests/integration/goal-admission.test.ts`. | These exercise the real installer and local scheduler without an injected host-admission port. |
+| Stock Pi runs automatic continuation while preserving user input across newer decisions. | `tests/host/goal-host.test.ts` automatic startup/command, stale-action, and queued-question cases. | The mixed-user abort test remains evidence against blanket cancellation; no upstream change is required. |
+
+- `npm test` includes the component, adapter, and host test files above. `npm run check` also checks their TypeScript types.
+- Automatic goal continuation and automatic budget wrap-up now use existing Pi facilities. The [former handoff](../../.handoff/pi-host-automatic-goal-admission.md) is superseded; [Architecture §13.5](../arch/architecture.md#135-intent-ordering-and-continuation-dispatch) defines the implemented ordering contract.
+- Broader native-parity claims, plan-mode exclusion, descendant usage attribution, expanded dashboard interactions, and full interactive session replacement are not established by this synchronization evidence.
+
+## 10. Intent-ordering verification
+
+- The following cases are implemented through [Phases R1–R4](../../.plans/2026-09-16-11-13-goal-state-synchronization.md#4-phase-r1--record-input-ui-publication-and-accepted-intent). They extend the baseline rather than relying on its passing count as proof of ordering.
+
+| Scenario | Verified assertion | Runnable evidence |
+| --- | --- | --- |
+| A goal decision arrives after UI publication but before pending work is dispatched. | The decision retains its receipt order, and the old pending work is discarded. | `tests/integration/goal-admission.test.ts` covers pre-dispatch decisions and publication captured before the input-triggered repaint. |
+| A decision arrives after work was dispatched. | Already-started work may finish, but no subsequent stale action or late control result overrides the new decision. | `tests/host/goal-host.test.ts` covers stale sentinel actions, late goal updates after tool preflight, and preservation of queued status questions. |
+| An earlier message finishes processing after a newer accepted decision. | Processing completion does not give the earlier message newer authority. | `tests/service/goal-ordering.test.ts` rejects earlier receipts; the real-host delayed-input case rejects a late completion result after a newer pause. |
+| Resume is a valid no-op because the goal is still active. | The new intent supersedes an older failure even without a new state revision. | Service, adapter, and real-host no-op resume cases preserve newer intent without a state revision; the adapter also covers late cancellation. |
+| Input is a status question, unrelated message, cancelled dialog, or invalid goal change. | No goal intent or implicit resumption is created; pending work is reassessed only after the input's disposition is known. | `tests/integration/goal-admission.test.ts` covers status questions, cancelled/invalid dialogs, fresh submissions after a system outcome, and ambiguous-input recovery. |
+| Timestamps tie or the wall clock moves backwards. | Sequence ordering and originating intent still determine precedence. | `tests/service/goal-ordering.test.ts` uses injected tied and backwards clocks; host races use deferred barriers. |
+| UI publication fails or the session is headless. | The controller does not invent a displayed-state reference or human acknowledgment. | Headless and failed-publication adapter cases verify an absent publication reference without losing current goal state. |
+| An already-submitted wake-up becomes obsolete. | Current state reaches the model, user input is preserved, and no obsolete goal action or wake-up loop follows. Zero provider calls is not required. | The real-host stale-wakeup case allows provider execution with current paused state; positive startup and command tests prove automatic dispatch. |
+| Late usage arrives with a superseded completion or error judgment. | Eligible usage is accounted without restoring old intent, recreating a cleared goal, or charging a replacement. | Terminal accounting, delayed-user replacement, superseded automatic work, and reentrant accounting cases verify correct attribution. |
+| A new epoch or a later budget exhaustion occurs. | Old requests are not replayed, and a legitimate new wrap-up is not lost or duplicated. | Adapter cases cover old-epoch rejection, budget deduplication across reload, a later exhaustion, and stale markers that do not consume a summary. |
+
+- Successful-retry, compaction, signal-abort, UI/context, and accounting regressions remain in the suite alongside the new provenance checks.
+- Review regressions additionally prevent historical same-text context from consuming a new receipt, prevent an unauthorized budget marker from counting as delivery, and prevent late cancellation from suppressing a newer activation.
+- Tests characterize the controller and real SDK behavior on Pi 0.85.1. They do not claim full physical-terminal testing or unambiguous provenance for arbitrary external message transformations; ambiguous goal changes are refused rather than guessed.

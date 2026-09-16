@@ -7,18 +7,10 @@
  * widget + status line. On shutdown it closes the SQLite handle.
  */
 
-import { defineTool, type ExtensionAPI, type ExtensionContext, type AgentToolResult } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
 import { GoalDb } from "./goal/storage/goal-db.ts";
 import { GoalService } from "./goal/goal-service.ts";
 import { GoalAccountingState } from "./goal/accounting.ts";
 import { GoalRuntime } from "./goal/runtime.ts";
-import {
-  executeCreateGoal,
-  executeGetGoal,
-  executeUpdateGoal,
-  GoalToolError,
-} from "./goal/tools/goal-tool-executors.ts";
 
 export interface GoalEngineOptions {
   /** Path to the SQLite database holding thread goals. */
@@ -53,9 +45,18 @@ export class GoalEngine {
     this.db = GoalDb.open(options.dbPath);
     this.service = new GoalService(this.db);
     this.accounting = new GoalAccountingState();
-    this.service.onGoalUpdated((goal) => {
-      this.onGoalChanged?.(goal);
+    this.service.onGoalChanged((event) => {
+      const runtime = this.runtimeFor(event.threadId);
+      if (event.reason !== "accounting") {
+        if (event.goal) runtime.applyExternalGoalSet(event.goal, event.previousGoal);
+        else runtime.applyExternalGoalClear();
+      } else if (event.goal?.status !== event.previousGoal?.status) {
+        runtime.releaseContinuation();
+      }
     });
+    this.service.beforeGoalClear = (threadId) => {
+      this.runtimeFor(threadId).checkpoint();
+    };
   }
 
   /** Close the SQLite handle. Idempotent. */
@@ -83,18 +84,7 @@ export class GoalEngine {
    */
   copyGoalToThread(sourceThreadId: string, targetThreadId: string): import("./goal/goal-record.ts").ThreadGoal | null {
     const source = this.service.getGoal(sourceThreadId);
-    if (!source) return null;
-    // Seed the target only if it has no unfinished goal.
-    if (this.service.getGoal(targetThreadId) &&
-        !Object.is(this.service.getGoal(targetThreadId)!.status, "complete")) {
-      return null;
-    }
-    return this.db.replaceThreadGoal(
-      targetThreadId,
-      source.objective,
-      source.status,
-      source.tokenBudget,
-    );
+    return source ? this.service.importGoal(source, targetThreadId) : null;
   }
 
   setThreadId(threadId: string | null): void {
@@ -116,7 +106,8 @@ export class GoalEngine {
       runtime = new GoalRuntime(threadId, this.service, accounting, {
         continueIfIdle: (prompt) => this.onContinueIfIdle?.(threadId, prompt),
         injectSteering: (prompt) => this.onInjectSteering?.(threadId, prompt),
-        toolsAvailable: () => this.options.enabled !== false,
+        toolsAvailable: () => this.options.enabled !== false && (this.hostToolsAvailable?.() ?? false),
+        isIdle: () => this.hostIsIdle?.() ?? false,
       });
       // Keep `engine.accounting` pointing at the most recent runtime's state so
       // a single-thread adapter (the common case) continues to read the right
@@ -136,6 +127,7 @@ export class GoalEngine {
   onContinueIfIdle?: (threadId: string, prompt: string) => void;
   /** Steering side effect, injected by the host (pi) adapter. */
   onInjectSteering?: (threadId: string, prompt: string) => void;
-  /** Called whenever the active goal changes, to update the TUI dashboard. */
-  onGoalChanged?: (goal: import("./goal/goal-record.ts").ThreadGoal | null) => void;
+  /** Host predicates are fail-closed until a fresh session context is bound. */
+  hostIsIdle?: () => boolean;
+  hostToolsAvailable?: () => boolean;
 }

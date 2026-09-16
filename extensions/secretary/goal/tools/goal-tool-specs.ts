@@ -18,6 +18,9 @@ export const getGoalToolSpec = {
   description:
     "Get the current goal for this thread, including status, budgets, token and elapsed-time usage, and remaining token budget.",
   promptSnippet: "Get the current goal and its status",
+  promptGuidelines: [
+    "Use get_goal before answering a question about the current goal status; do not infer status from remaining work or historical assistant messages.",
+  ],
   parameters: Type.Object({}),
 };
 

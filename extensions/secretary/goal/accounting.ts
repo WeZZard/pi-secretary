@@ -336,6 +336,30 @@ export class GoalAccountingState {
     inner.consecutiveEmptyTurns = 0;
   }
 
+  resetFailureAudit(): void {
+    const inner = this.#inner;
+    inner.executionFailureGoalId = null;
+    inner.consecutiveExecutionFailureTurns = 0;
+    this.resetEmptyResponses();
+    const turn = inner.currentTurnId ? inner.turns.get(inner.currentTurnId) : undefined;
+    if (turn) { turn.failedExecution = false; turn.successfulTool = false; turn.emptyFinal = false; }
+  }
+
+  /** Stop idle charging without losing the identity of an in-flight turn. */
+  suspendGoal(): void {
+    this.#inner.wallClock.activeGoalId = null;
+    this.#inner.wallClock.lastAccountedAt = Date.now();
+    this.#inner.executionFailureGoalId = null;
+    this.#inner.consecutiveExecutionFailureTurns = 0;
+    this.resetEmptyResponses();
+  }
+
+  /** Preserve the originating turn for late usage after a terminal update. */
+  markProgressAccountedPreservingTurn(turnId: string, snapshot: GoalProgressSnapshot, status: string): void {
+    this.markProgressAccountedForStatus(turnId, snapshot, "active", "keep_active");
+    if (status !== "active") this.suspendGoal();
+  }
+
   progressSnapshot(turnId: string, now: number): GoalProgressSnapshot | null {
     const inner = this.#inner;
     const turn = inner.turns.get(turnId);

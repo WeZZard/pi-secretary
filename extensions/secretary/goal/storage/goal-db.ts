@@ -91,9 +91,7 @@ export class GoalDb {
   ): ThreadGoal | null {
     const validation = validateThreadGoalObjective(objective);
     if (!validation.ok) throw new Error(validation.error);
-    if (tokenBudget !== undefined && tokenBudget < 0) {
-      throw new Error("goal budgets must not be negative");
-    }
+    validateStoredBudget(tokenBudget);
 
     const existing = this.getThreadGoal(threadId);
     if (existing && !isTerminalStatus(existing.status)) {
@@ -142,9 +140,7 @@ export class GoalDb {
   ): ThreadGoal | null {
     const validation = validateThreadGoalObjective(objective);
     if (!validation.ok) throw new Error(validation.error);
-    if (tokenBudget !== undefined && tokenBudget < 0) {
-      throw new Error("goal budgets must not be negative");
-    }
+    validateStoredBudget(tokenBudget);
 
     // Atomic compare-and-apply: the upsert only replaces an existing goal when
     // its status is 'complete' (Codex single-goal-per-thread). Because the
@@ -178,6 +174,26 @@ export class GoalDb {
     return row ? rowToGoal(row) : null;
   }
 
+  /** Atomic fork import: preserve every source field except thread identity. */
+  importThreadGoal(sourceGoal: ThreadGoal, targetThreadId: string): ThreadGoal | null {
+    const result = this.db.prepare(`
+      INSERT INTO thread_goals
+        (thread_id, goal_id, objective, status, token_budget, tokens_used,
+         time_used_seconds, created_at_ms, updated_at_ms)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(thread_id) DO UPDATE SET
+        goal_id = excluded.goal_id, objective = excluded.objective,
+        status = excluded.status, token_budget = excluded.token_budget,
+        tokens_used = excluded.tokens_used, time_used_seconds = excluded.time_used_seconds,
+        created_at_ms = excluded.created_at_ms, updated_at_ms = excluded.updated_at_ms
+      WHERE thread_goals.status = 'complete'
+      RETURNING *
+    `).get(targetThreadId, sourceGoal.goalId, sourceGoal.objective, sourceGoal.status,
+      sourceGoal.tokenBudget ?? null, sourceGoal.tokensUsed, sourceGoal.timeUsedSeconds,
+      sourceGoal.createdAt, sourceGoal.updatedAt) as row | undefined;
+    return result ? rowToGoal(result) : null;
+  }
+
   /**
    * Update fields of an existing goal. `expectedGoalId` guards against a
    * replaced goal version (compare-and-apply). Returns the updated goal, or
@@ -192,6 +208,12 @@ export class GoalDb {
     if (update.expectedGoalId !== undefined && current.goalId !== update.expectedGoalId) {
       return null; // stale version
     }
+
+    if (update.objective !== undefined) {
+      const validation = validateThreadGoalObjective(update.objective);
+      if (!validation.ok) throw new Error(validation.error);
+    }
+    validateStoredBudget(update.tokenBudget ?? undefined);
 
     const nextStatus = update.status ?? current.status;
     const nextBudget =
@@ -212,6 +234,10 @@ export class GoalDb {
       finalStatus = statusAfterBudgetLimit(finalStatus, nextBudget, current.tokensUsed);
     }
 
+    if (objective === current.objective && finalStatus === current.status && nextBudget === current.tokenBudget) {
+      return current;
+    }
+
     // Atomic compare-and-apply: the expected-goal-id guard is embedded in the
     // UPDATE predicate so a concurrent connection that has replaced the goal
     // cannot be clobbered by a stale write.
@@ -230,11 +256,11 @@ export class GoalDb {
     return row ? rowToGoal(row) : null;
   }
 
-  deleteThreadGoal(threadId: string): ThreadGoal | null {
-    const current = this.getThreadGoal(threadId);
-    if (!current) return null;
-    this.db.prepare(`DELETE FROM thread_goals WHERE thread_id = ?`).run(threadId);
-    return current;
+  deleteThreadGoal(threadId: string, expectedGoalId?: string): ThreadGoal | null {
+    const result = this.db.prepare(`DELETE FROM thread_goals
+      WHERE thread_id = ? AND (? IS NULL OR goal_id = ?) RETURNING *`)
+      .get(threadId, expectedGoalId ?? null, expectedGoalId ?? null) as row | undefined;
+    return result ? rowToGoal(result) : null;
   }
 
   /** Cascade delete when a thread is deleted. */
@@ -255,6 +281,7 @@ export class GoalDb {
     mode: GoalAccountingMode,
     expectedGoalId?: string,
   ): GoalAccountingOutcome {
+    if (timeDeltaSeconds === 0 && tokenDelta === 0) return { kind: "unchanged" };
     const current = this.getThreadGoal(threadId);
     if (!current) return { kind: "unchanged" };
     if (expectedGoalId !== undefined && current.goalId !== expectedGoalId) {
@@ -272,15 +299,19 @@ export class GoalDb {
       finalStatus = statusAfterBudgetLimit(finalStatus, current.tokenBudget, tokensUsed);
     }
 
+    // This read/compute/write sequence is a synchronous single-controller
+    // critical section, not a transaction spanning independent controllers.
     const now = Date.now();
-    this.db
+    const result = this.db
       .prepare(
         `UPDATE thread_goals
          SET tokens_used = ?, time_used_seconds = ?, status = ?, updated_at_ms = ?
-         WHERE thread_id = ?`,
+         WHERE thread_id = ? AND goal_id = ?
+         RETURNING *`,
       )
-      .run(tokensUsed, timeUsedSeconds, finalStatus, now, threadId);
-    return { kind: "updated", goal: this.getThreadGoal(threadId)! };
+      .get(tokensUsed, timeUsedSeconds, finalStatus, now, threadId,
+        expectedGoalId ?? current.goalId) as row | undefined;
+    return result ? { kind: "updated", goal: rowToGoal(result) } : { kind: "unchanged" };
   }
 
   private canAccountForMode(status: ThreadGoalStatus, mode: GoalAccountingMode): boolean {
@@ -294,9 +325,19 @@ export class GoalDb {
           isActiveStatus(status) ||
           status === "complete" ||
           status === "blocked" ||
-          status === "paused"
+          status === "paused" ||
+          status === "budget_limited" ||
+          status === "usage_limited"
         );
     }
+  }
+}
+
+// Storage accepts zero for the existing immediate-budget-limit semantics.
+// User-facing positive-only policy remains in validateGoalBudget.
+function validateStoredBudget(budget: number | undefined): void {
+  if (budget !== undefined && (!Number.isSafeInteger(budget) || budget < 0)) {
+    throw new Error("goal budgets must be non-negative safe integers");
   }
 }
 

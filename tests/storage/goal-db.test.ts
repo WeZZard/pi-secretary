@@ -237,3 +237,68 @@ test("budget max: validateGoalBudget rejects above the configured max (claim L)"
   // omitted budget is allowed with no max
   assert.equal(validateGoalBudget(undefined, 200).ok, true);
 });
+
+test("conditional delete returns only the actual deleted snapshot", () => {
+  const db = freshDb();
+  const goal = db.insertThreadGoal(THREAD, "base", "active")!;
+  assert.equal(db.deleteThreadGoal(THREAD, "stale"), null);
+  assert.deepEqual(db.getThreadGoal(THREAD), goal);
+  assert.deepEqual(db.deleteThreadGoal(THREAD, goal.goalId), goal);
+  assert.equal(db.deleteThreadGoal(THREAD, goal.goalId), null);
+});
+
+test("atomic fork import preserves all snapshot fields and only replaces complete", () => {
+  const db = freshDb();
+  const source = { ...db.insertThreadGoal(THREAD, "source", "active", 50)!,
+    tokensUsed: 25, timeUsedSeconds: 12, createdAt: 100, updatedAt: 200 };
+  for (const status of ["active", "paused", "blocked", "usage_limited", "budget_limited", "complete"] as const) {
+    const target = `target-${status}`;
+    const existing = db.insertThreadGoal(target, "target", status)!;
+    const imported = db.importThreadGoal(source, target);
+    if (status === "complete") {
+      assert.deepEqual(imported, { ...source, threadId: target });
+    } else {
+      assert.equal(imported, null);
+      assert.deepEqual(db.getThreadGoal(target), existing);
+    }
+  }
+  assert.deepEqual(db.importThreadGoal(source, "new"), { ...source, threadId: "new" });
+});
+
+test("update validates objective and budget without changing storage", () => {
+  const db = freshDb();
+  const goal = db.insertThreadGoal(THREAD, "base", "active", 100)!;
+  for (const objective of ["  ", "x".repeat(4001)]) {
+    assert.throws(() => db.updateThreadGoal(THREAD, { objective }));
+  }
+  for (const tokenBudget of [-1, NaN, Infinity, 0.1, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => db.updateThreadGoal(THREAD, { tokenBudget }));
+  }
+  assert.deepEqual(db.getThreadGoal(THREAD), goal);
+  assert.equal(db.updateThreadGoal(THREAD, { tokenBudget: null })?.tokenBudget, undefined);
+  assert.equal(db.updateThreadGoal(THREAD, { tokenBudget: 0 })?.status, "budget_limited");
+});
+
+test("no-op update and zero accounting retain timestamps", () => {
+  const db = freshDb();
+  const source = { ...db.insertThreadGoal(THREAD, "base", "active")!, updatedAt: 123 };
+  db.importThreadGoal(source, "fork");
+  assert.deepEqual(db.updateThreadGoal("fork", { objective: "base" }), { ...source, threadId: "fork" });
+  assert.equal(db.accountThreadGoalUsage("fork", 0, 0, "active_only").kind, "unchanged");
+  assert.deepEqual(db.getThreadGoal("fork"), { ...source, threadId: "fork" });
+});
+
+test("budget and usage limited goals accept final in-flight accounting only in stopped mode", () => {
+  const db = freshDb();
+  for (const status of ["budget_limited", "usage_limited"] as const) {
+    const goal = db.insertThreadGoal(status, "base", status)!;
+    assert.equal(db.accountThreadGoalUsage(status, 1, 5, "active_only").kind, "unchanged");
+    assert.equal(db.accountThreadGoalUsage(status, 1, 5, "active_or_complete").kind, "unchanged");
+    assert.equal(db.accountThreadGoalUsage(status, 1, 5, "active_or_stopped", "stale").kind, "unchanged");
+    const result = db.accountThreadGoalUsage(status, 2, 7, "active_or_stopped", goal.goalId);
+    assert.equal(result.kind, "updated");
+    assert.equal(db.getThreadGoal(status)?.tokensUsed, 7);
+    assert.equal(db.getThreadGoal(status)?.timeUsedSeconds, 2);
+    assert.equal(db.getThreadGoal(status)?.status, status);
+  }
+});
