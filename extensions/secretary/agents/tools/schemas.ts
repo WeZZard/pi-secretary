@@ -1,6 +1,6 @@
 import { Type, type Static } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
-import { MODEL_ALIASES } from "../configuration.ts";
+import { MODEL_ALIASES, type AgentConfiguration } from "../configuration.ts";
 
 export const agentSchema = Type.Object({
   description: Type.String(),
@@ -13,6 +13,21 @@ export const agentSchema = Type.Object({
   team_name: Type.Optional(Type.String({ deprecated: true, description: "Deprecated; ignored." })),
   mode: Type.Optional({ ...StringEnum(["acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"]), deprecated: true, description: "Deprecated; ignored." }),
 }, { additionalProperties: false });
+
+/** Advertise only configured overrides. An absent mapping must not invite model guesses. */
+export function createAgentSchema(modelAliases: AgentConfiguration["modelAliases"]): typeof agentSchema {
+  const aliases = MODEL_ALIASES.filter(alias => modelAliases[alias] !== undefined);
+  const properties: Record<string, unknown> = { ...agentSchema.properties };
+  if (aliases.length) {
+    properties.model = Type.Optional(StringEnum(aliases, {
+      description: "Optional configured model override. Normally omit this field to use the agent definition's model or inherit the parent model. Do not override the definition unless the user requests it.",
+    }));
+  } else {
+    delete properties.model;
+  }
+  // The handler accepts the baseline superset; the advertised JSON Schema is narrower.
+  return { ...agentSchema, properties } as typeof agentSchema;
+}
 
 export const sendMessageSchema = Type.Object({
   to: Type.String({ minLength: 1, maxLength: 300, pattern: "^[^\\r\\n\\u2028\\u2029]+$" }),

@@ -11,7 +11,12 @@ import { runFeatures, deferred, tick, type ScenarioBindings } from "./support.ts
 
 const bindings: ScenarioBindings = {
   "ACC-SA-07-01": async ({ t }) => {
-    const h = await configurationHarness(t); await h.start();
+    const h = await configurationHarness(t);
+    await h.put(join(h.userDir, "secretary.json"), JSON.stringify({ agents: { modelAliases: {
+      sonnet: "test-provider/reviewer-model", opus: "test-provider/reviewer-model",
+      haiku: "test-provider/reviewer-model", fable: "test-provider/reviewer-model",
+    } } }));
+    await h.start();
     const schema = h.tools.get("Agent").parameters;
     assert.deepEqual(schema.properties.model.enum, ["sonnet", "opus", "haiku", "fable"]);
     assert.ok(!schema.required.includes("model"));

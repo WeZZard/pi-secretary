@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Value } from "typebox/value";
-import { agentSchema, sendMessageSchema, taskStopSchema, taskOutputSchema } from "../../extensions/secretary/agents/tools/schemas.ts";
+import { agentSchema, createAgentSchema, sendMessageSchema, taskStopSchema, taskOutputSchema } from "../../extensions/secretary/agents/tools/schemas.ts";
 
 test("Agent contract is strict without resume or turn-limit inputs", () => {
   const valid = { prompt: "Do work", description: "Task" };
@@ -13,6 +13,21 @@ test("Agent contract is strict without resume or turn-limit inputs", () => {
   assert.equal(Value.Check(agentSchema, { ...valid, name: "a-1_A" }), true);
   assert.equal(Object.hasOwn(agentSchema.properties.model, "default"), false);
   assert.equal(Object.hasOwn(agentSchema.properties.run_in_background, "default"), false);
+});
+
+test("Agent advertises no model override without configured aliases", () => {
+  const schema = createAgentSchema({});
+  assert.equal(Object.hasOwn(schema.properties, "model"), false);
+  assert.equal(Value.Check(schema, { prompt: "Do work", description: "Task" }), true);
+  assert.equal(Value.Check(schema, { prompt: "Do work", description: "Task", model: "sonnet" }), false);
+  assert.equal(Object.hasOwn(agentSchema.properties, "model"), true, "The baseline schema is not mutated");
+});
+
+test("Agent advertises only explicitly configured model aliases", () => {
+  const schema = createAgentSchema({ opus: "test/configured-model" });
+  assert.deepEqual(Reflect.get(schema.properties.model, "enum"), ["opus"]);
+  assert.equal(Value.Check(schema, { prompt: "Do work", description: "Task", model: "sonnet" }), false);
+  assert.equal(Value.Check(schema, { prompt: "Do work", description: "Task", model: "opus" }), true);
 });
 
 test("SendMessage enforces string-only profile and display bounds", () => {

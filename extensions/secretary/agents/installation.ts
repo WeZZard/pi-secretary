@@ -9,7 +9,7 @@ import { formatAgentOutcome } from "./presentation.ts";
 import { AgentRepository, acquireParentLock } from "./storage/agent-repository.ts";
 import { discoverAgents, resolveAgentModel } from "./registry.ts";
 import { loadAgentConfiguration } from "./configuration.ts";
-import { agentSchema, sendMessageSchema, taskStopSchema, taskOutputSchema, type AgentInput } from "./tools/schemas.ts";
+import { createAgentSchema, sendMessageSchema, taskStopSchema, taskOutputSchema, type AgentInput } from "./tools/schemas.ts";
 import { registerAgentUI } from "./ui/commands.ts";
 import { TERMINAL_STATUSES, type AgentRun, type GoalOrigin } from "./records.ts";
 
@@ -122,7 +122,7 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
         waitSignature = signature; return true;
       };
       if (!registered) {
-        pi.registerTool(defineTool({ name: "Agent", label: "Agent", description: "Delegate one task to a child session. Background execution is the default in TUI/RPC. Use SendMessage to guide or resume, TaskStop to stop, and TaskOutput or read on the output path for results. Forks, teams, nesting and remote execution are unsupported.", parameters: agentSchema,
+        pi.registerTool(defineTool({ name: "Agent", label: "Agent", description: "Delegate one task to a child session. Background execution is the default in TUI/RPC. Use SendMessage to guide or resume, TaskStop to stop, and TaskOutput or read on the output path for results. Use the model configured by the agent definition, or inherit the parent model. Do not invent a model override. Forks, teams, nesting and remote execution are unsupported.", parameters: createAgentSchema(config.modelAliases),
           prepareArguments: args => (args && typeof args === "object" && "mode" in args && args.mode === "manual" ? { ...args, mode: "default" } : args) as AgentInput,
           async execute(id, params, signal, onUpdate, toolCtx) {
             const config = loadAgentConfiguration(toolCtx.cwd, getAgentDir(), toolCtx.isProjectTrusted());

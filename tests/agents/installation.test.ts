@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { test } from "node:test";
 import secretaryExtension from "../../extensions/secretary/index.ts";
 import { runInChildSession } from "../../extensions/secretary/agents/child-context.ts";
@@ -27,12 +28,25 @@ test("session activation registers canonical schemas once, without background or
   for (const name of names) assert.equal(h.tools.get(name).parameters.type, "object");
   const agent = h.tools.get("Agent");
   assert.deepEqual(agent.parameters.required, ["description", "prompt"]);
-  assert.equal(Object.hasOwn(agent.parameters.properties.model, "default"), false);
+  assert.equal(Object.hasOwn(agent.parameters.properties, "model"), false);
   assert.equal(Object.hasOwn(agent.parameters.properties.run_in_background, "default"), false);
   assert.equal(agent.prepareArguments({ ...task, mode: "manual" }).mode, "default");
   await h.start();
   assert.equal(h.tools.get("Agent"), agent);
   assert.equal(h.calls.length, 0);
+});
+
+test("project custom agent uses its configured pi model without exposing Claude aliases", async (t) => {
+  const h = await agentHarness(t);
+  const directory = join(h.root, ".pi", "agents");
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, "project-worker.md"), "---\nname: project-worker\ndescription: Project task\nmodel: installer-test/fixture\ntools: [read]\n---\n");
+  await h.start();
+  assert.equal(Object.hasOwn(h.tools.get("Agent").parameters.properties, "model"), false);
+  const outcome = await h.tool("Agent", { ...task, subagent_type: "project-worker", run_in_background: false });
+  assert.equal(outcome.details.status, "succeeded");
+  assert.match(outcome.content[0].text, /Model: installer-test\/fixture/);
+  assert.equal(h.calls.length, 1);
 });
 
 test("headless background and unsupported launches reject before provider execution", async (t) => {
