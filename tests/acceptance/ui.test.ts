@@ -1,0 +1,271 @@
+import assert from "node:assert/strict";
+import { visibleWidth } from "@earendil-works/pi-tui";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { runFeatures, deferred, tick, type ScenarioBindings } from "./support.ts";
+import { UIHarness, adapter, durableService, markdown, plain, port, snapshot } from "./ui-harness.ts";
+import { agentHarness } from "../support/agent-harness.ts";
+import { renderResult } from "../../extensions/secretary/agents/tools/rendering.ts";
+import { transcriptWindow } from "../../extensions/secretary/agents/ui/transcript.ts";
+import type { RunStatus } from "../../extensions/secretary/agents/records.ts";
+
+const bindings: ScenarioBindings = {
+  "ACC-SA-02-01": async ({ t }) => {
+    const installed = await agentHarness(t, { mode: "rpc" });
+    const stream = createAssistantMessageEventStream(), started = deferred<void>();
+    installed.ctx.modelRegistry.registerProvider(installed.ctx.model.provider, { api: installed.ctx.model.api, baseUrl: installed.ctx.model.baseUrl, apiKey: "fake", models: [installed.ctx.model], streamSimple() { started.resolve(); return stream; } });
+    await installed.start();
+    try {
+      const result = await installed.tool("Agent", { prompt: "Inspect", description: "Background inspection", run_in_background: true });
+      await started.promise;
+      const historical = plain(renderResult(result, { expanded: true, isPartial: false }).render(160));
+      assert.match(historical, /Launch accepted; execution is not yet complete/);
+      const current = (await installed.tool("TaskOutput", { task_id: result.details.runId, block: false })).details;
+      assert.equal(current.status, "running");
+      const record = snapshot(current.agentId, "parent"); record.run = current;
+      const ui = new UIHarness([record]); ui.send({ type: "fleet", editorEmpty: true });
+      assert.match(plain(ui.fleet.render(160)), /running/);
+      assert.doesNotMatch(plain(ui.fleet.render(160)), /succeeded|completed/);
+      assert.equal(plain(renderResult(result, { expanded: true, isPartial: false }).render(160)), historical);
+      assert.equal(installed.sent.length, 0, "No completion announcement while the child is running");
+    } finally {
+      const model = installed.ctx.model;
+      stream.push({ type: "done", reason: "stop", message: { role: "assistant", api: model.api, provider: model.provider, model: model.id, content: [], stopReason: "stop", timestamp: Date.now(), usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } } }); stream.end(); await tick();
+    }
+  },
+  "ACC-SA-02-02": async ({ t }) => {
+    for (const key of ["\x1b[B", "\x1b[D"]) {
+      let loads = 0;
+      const h = adapter(t, port({ transcript: async id => { loads++; return `## assistant\nSelected ${id}`; } }));
+      assert.match(h.fleet(), /active agents/);
+      h.prompt(true); h.prompt(true);
+      assert.equal(h.input(key), undefined); h.prompt(false); assert.equal(h.input(key), undefined); h.prompt(false);
+      assert.deepEqual(h.input(key), { consume: true }); assert.match(h.fleet(), /> main/);
+      h.input("\x1b[B"); h.input("\r"); await tick();
+      assert.equal(h.opens, 1); assert.equal(loads, 1); assert.match(h.render(), /a · test\/model · running/);
+      assert.equal(h.input("\x1b[B"), undefined, "Open custom UI owns input, not Fleet's terminal hook");
+      assert.equal(h.modelTurns, 0); h.inspector!.handleInput("\x1b"); await tick();
+      assert.equal(h.closes, 1); assert.equal(h.editor, "");
+    }
+  },
+  "ACC-SA-02-03": ({ t }) => {
+    const h = adapter(t); h.editor = "Unsent draft 界";
+    for (const key of ["\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D", "j", "k"]) {
+      assert.equal(h.input(key), undefined, "Host editor must receive ordinary input");
+      assert.equal(h.editor, "Unsent draft 界"); assert.equal(h.opens, 0); assert.doesNotMatch(h.fleet(), /> main/);
+    }
+    assert.equal(h.modelTurns, 0);
+  },
+  "ACC-SA-02-04": async ({ t }) => {
+    const service = await durableService(t), id = service.service.list()[0]!.agent.agentId;
+    const h = adapter(t, service.port); h.editor = "Main draft";
+    const closed = h.command(id); await tick(); assert.ok(h.inspector);
+    h.inspector.handleInput("\x1b"); await closed;
+    assert.equal(h.editor, "Main draft"); assert.equal(h.inspector, undefined); assert.equal(h.closes, 1);
+    assert.equal(service.service.run(id).status, "running"); assert.equal(h.input("j"), undefined);
+  },
+  "ACC-SA-02-05": async () => {
+    const h = new UIHarness().ready(); assert.equal(h.transcript().follow, "following");
+    h.render(60); // A real inspector measures its viewport before receiving scroll input.
+    h.inspector.handleInput("\x1b[5~"); const before = { ...h.transcript() };
+    assert.equal(before.follow, "paused"); assert.ok(before.anchorEntryId);
+    const window = plain(transcriptWindow(before, 60, 8));
+    const load = h.select("a");
+    await h.execute(load, port({ transcript: async () => `<!-- secretary-entry:prefix -->\n## user\nEarlier inserted content\n\n${markdown}\n## assistant\nNew arrival` }));
+    assert.equal(h.transcript().anchorEntryId, before.anchorEntryId); assert.equal(h.transcript().anchorOffset, before.anchorOffset);
+    assert.equal(h.transcript().follow, "paused"); assert.equal(plain(transcriptWindow(h.transcript(), 60, 8)), window);
+    h.send({ type: "scroll", delta: 10000, pageSize: 8 }); assert.equal(h.transcript().follow, "following");
+    assert.match(plain(transcriptWindow(h.transcript(), 60, 8)), /New arrival/);
+  },
+  "ACC-SA-02-06": () => {
+    const h = new UIHarness().ready(); h.compose("Draft survives completion"); const dialog = h.state.dialog;
+    const final = snapshot(); final.run!.status = "succeeded";
+    const effects = h.send({ type: "snapshot", epoch: "e" }, [final]);
+    assert.deepEqual(h.state.dialog, dialog); assert.ok(!effects.some(e => e.type === "focus" || e.type === "operate"));
+    h.inspector.handleInput("\x1b"); assert.equal(h.state.navigation.kind, "inspector");
+    assert.match(h.render(), /a · test\/model · succeeded/); assert.match(h.render(), /Output: \/output\/a.txt/);
+  },
+  "ACC-SA-02-07": ({ text }) => {
+    const row: [string, RunStatus, RegExp][] = [["an unrecovered provider error", "failed", /failed/], ["a supported execution limit", "partial", /partial/], ["confirmed cancellation", "cancelled", /cancelled/], ["interruption after process death", "interrupted", /interrupted/]];
+    const example = row.find(([given]) => text.includes(`ends with ${given}.`)); assert.ok(example, "Examples row must have an explicit status mapping");
+    const record = snapshot(); record.run!.status = example[1];
+    const h = new UIHarness([record]).ready();
+    assert.match(h.render(), example[2]); assert.doesNotMatch(h.render(), /succeeded|successful completion/);
+    h.send({ type: "escape" });
+    // Re-activate so terminal outcomes are not hidden by the intentional inspector dismissal.
+    h.send({ type: "activate", parentId: "p", epoch: "fresh", viewId: "fresh" }, [record]); h.send({ type: "fleet", editorEmpty: true });
+    const fleet = plain(h.fleet.render(120)); assert.match(fleet, example[2]); assert.doesNotMatch(fleet, /succeeded|successful completion/);
+  },
+  "ACC-SA-02-08": () => {
+    const h = new UIHarness().ready(); h.inspector.handleInput("\x1b[5~"); const before = structuredClone(h.state.navigation);
+    assert.match(h.render(140), / │ /);
+    for (const width of [72, 38]) {
+      const lines = h.inspector.render(width); assert.ok(lines.every(line => visibleWidth(line) <= width));
+      assert.doesNotMatch(plain(lines), / │ /); assert.match(plain(lines), /a · test\/model/);
+      assert.deepEqual(h.state.navigation, before);
+    }
+    h.inspector.handleInput("s"); assert.equal(h.state.dialog.kind, "composing"); h.inspector.handleInput("\x1b");
+    h.inspector.handleInput("D");
+    const confirmation = structuredClone(h.state).dialog;
+    assert.equal(confirmation.kind, "confirming");
+    if (confirmation.kind === "confirming") assert.equal(confirmation.target.action === "stop" && confirmation.target.runId, "a-run");
+    assert.ok(!h.effects.some(e => e.type === "operate"));
+  },
+  "ACC-SA-02-09": async ({ t }) => {
+    const attacks = { "CSI clear screen": "\x1b[2J", "OSC clipboard BEL": "\x1b]52;c;Y2xpcGJvYXJk\x07", "OSC title ST": "\x1b]0;forged title\x1b\\", "DCS payload": "\x1bPmalicious payload\x1b\\", "C1 CSI": "\x9b2J" };
+    for (const [name, attack] of Object.entries(attacks)) await t.test(name, () => {
+      const h = new UIHarness().ready(`## Tool result: shell\nReadable before ${attack} readable after`);
+      h.inspector.handleInput("x");
+      const rendered = h.inspector.render(120).join("\n");
+      assert.ok(!rendered.includes(attack));
+      assert.doesNotMatch(rendered, /Y2xpcGJvYXJk|forged title|malicious payload/);
+      assert.match(plain([rendered]), /Readable before.*readable after/);
+      assert.ok(!h.effects.some(e => e.type === "operate"));
+    });
+  },
+  "ACC-SA-02-10": () => {
+    const record = snapshot(); record.run!.goal = { threadId: "p", goalId: "g", sessionEpoch: "e", intentSeq: 1, controlGeneration: 1 };
+    const h = new UIHarness([record]).ready(); const inspector = h.render();
+    h.send({ type: "escape" }); h.send({ type: "fleet", editorEmpty: true });
+    for (const surface of [inspector, plain(h.fleet.render(140))]) {
+      assert.doesNotMatch(surface, /(?:context|window).*\b0(?:%|\s*tokens?)|\b0%/i);
+      assert.doesNotMatch(surface, /context|window|budget|token usage/i, "The current snapshot API exposes neither context nor goal-budget measurements; omit rather than invent either");
+    }
+  },
+  "ACC-SA-UI-01": async ({ t }) => {
+    const service = await durableService(t), id = service.service.list()[0]!.agent.agentId;
+    const h = adapter(t, service.port); h.editor = "Original main draft";
+    const closed = h.command(id); await tick(); h.inspector!.handleInput("s"); h.inspector!.handleInput("unsent guidance");
+    assert.match(h.render(), /unsent guidance/); h.inspector!.handleInput("\x1b");
+    assert.ok(h.inspector); assert.equal(h.closes, 0); assert.match(h.render(), /Transcript/); assert.deepEqual(service.delivered, []);
+    assert.equal(service.service.run(id).status, "running"); h.inspector!.handleInput("\x1b"); await closed;
+    assert.equal(h.editor, "Original main draft"); assert.equal(h.input("k"), undefined); assert.equal(service.service.run(id).status, "running");
+  },
+  "ACC-SA-UI-02": async () => {
+    const h = new UIHarness(), a = deferred<string>(), b = deferred<string>();
+    const p = port({ transcript: id => id === "a" ? a.promise : b.promise });
+    const first = h.execute(h.open("a"), p), loadB = h.select("b"), second = h.execute(loadB, p);
+    assert.equal(loadB.type, "load");
+    if (loadB.type === "load") for (const stale of [{ epoch: "old" }, { viewId: "old" }, { requestId: "old" }]) {
+      const waiting = h.state;
+      assert.deepEqual(h.send({ ...loadB, type: "transcript", text: "Wrong correlation", ...stale }), []);
+      assert.equal(h.state, waiting);
+    }
+    b.resolve("## assistant\nB visible"); await second; const before = h.state; const count = h.effects.length;
+    a.resolve("## assistant\nA stale"); await first;
+    assert.equal(h.state, before); assert.match(h.render(), /B visible/); assert.doesNotMatch(h.render(), /A stale/);
+    assert.ok(!h.effects.slice(count).some(e => e.type === "focus"));
+    assert.equal(h.state.navigation.kind === "inspector" && h.state.navigation.detail.kind !== "list" && h.state.navigation.detail.agentId, "b");
+  },
+  "ACC-SA-UI-03": async ({ t }) => {
+    const service = await durableService(t), h = new UIHarness(service.service.list()).ready(), ack = deferred<void>(); let calls = 0;
+    const p = port({ ...service.port, message: async (...args) => { calls++; const result = await service.port.message(...args); await ack.promise; return result; } });
+    h.compose(); const op = h.submit(), pending = h.execute(op, p);
+    h.inspector.handleInput("\r"); h.inspector.handleInput("\r");
+    assert.equal(h.state.dialog.kind, "submitting"); assert.match(h.render(), /Waiting for acceptance/);
+    assert.equal(h.effects.filter(e => e.type === "operate").length, 1); assert.equal(calls, 1);
+    ack.resolve(); await pending; assert.equal(service.starts(), 2); assert.deepEqual(service.delivered, ["Check the edge cases"]);
+    assert.equal(service.repository.guidance(service.service.run(op.operation.agentId).runId).length, 1);
+  },
+  "ACC-SA-UI-04": async () => {
+    const h = new UIHarness().ready(); h.compose("Original guidance");
+    await h.execute(h.submit(), port({ message: async () => { throw Object.assign(new Error("Recipient unavailable; revise recipient or retry after recovery."), { definitive: true }); } }));
+    assert.equal(h.state.dialog.kind, "composing"); assert.match(h.render(), /Original guidance/); assert.match(h.render(), /revise recipient/); assert.doesNotMatch(h.render(), /accepted|Recorded acceptance/);
+    assert.deepEqual(h.state.pending, {}); h.inspector.handleInput("!");
+    assert.equal(h.state.dialog.kind === "composing" && h.state.dialog.draft, "!Original guidance");
+  },
+  "ACC-SA-UI-05": async ({ t }) => {
+    const service = await durableService(t), h = new UIHarness(service.service.list()).ready(); let calls = 0;
+    const p = port({ ...service.port, message: async (...args) => { calls++; await service.port.message(...args); throw new Error("Acknowledgment connection lost"); } });
+    h.compose("Keep this target and text"); const op = h.submit(); await h.execute(op, p);
+    assert.equal(h.state.dialog.kind, "uncertain"); assert.match(h.render(180), /Keep this target and text/); assert.match(h.render(180), new RegExp(op.operation.agentId));
+    h.inspector.handleInput("\r"); h.send({ type: "submit", operationId: "replacement" });
+    h.inspector.handleInput("\x1b"); h.inspector.handleInput("s"); assert.equal(h.state.dialog.kind, "uncertain");
+    const receipt = h.effects.find(e => e.type === "receipt"); assert.ok(receipt); assert.deepEqual(receipt.operation, op.operation);
+    await h.execute(receipt, p); assert.equal(h.state.dialog.kind, "closed"); assert.match(h.render(180), /Operation acceptance is recorded/);
+    assert.deepEqual(h.state.pending, {}); assert.equal(calls, 1); assert.equal(service.starts(), 2); assert.deepEqual(service.delivered, ["Keep this target and text"]);
+  },
+  "ACC-SA-UI-06": async ({ t }) => {
+    const service = await durableService(t), h = new UIHarness(service.service.list()).ready(), ack = deferred<void>(); let calls = 0;
+    h.compose("First operation"); const op = h.submit();
+    const pending = h.execute(op, port({ ...service.port, message: async (...args) => { calls++; const result = await service.port.message(...args); await ack.promise; return result; } }));
+    h.inspector.handleInput("\x1b"); const b = service.service.list()[1]!.agent.agentId;
+    await h.execute(h.select(b), service.port); h.compose("New unrelated draft");
+    const dialog = h.state.dialog, before = h.effects.length;
+    ack.resolve(); await pending;
+    assert.deepEqual(h.state.dialog, dialog); assert.match(h.render(180), /New unrelated draft/); assert.ok(!h.effects.slice(before).some(e => e.type === "focus"));
+    assert.equal(calls, 1); assert.equal(service.starts(), 2);
+    const originalRun = service.service.run(op.operation.agentId);
+    assert.equal(service.repository.guidance(originalRun.runId)[0]?.text, "First operation"); assert.ok(service.service.receipt(op.operation.id));
+    assert.equal(originalRun.parentId, "p"); assert.deepEqual(service.delivered, ["First operation"]);
+  },
+  "ACC-SA-UI-07": () => {
+    const h = new UIHarness().ready(); h.compose("Unsent follow-up"); assert.match(h.render(), /Queue guidance/); const before = h.state.dialog;
+    const final = snapshot(); final.run!.status = "succeeded";
+    const effects = h.send({ type: "snapshot", epoch: "e" }, [final]);
+    assert.deepEqual(h.state.dialog, before); assert.match(h.render(), /Resume conversation: a/); assert.match(h.render(), /Unsent follow-up/);
+    assert.ok(!effects.some(e => e.type === "operate" || e.type === "focus")); assert.deepEqual(h.state.pending, {});
+  },
+  "ACC-SA-UI-08": () => {
+    for (const next of [{ status: "succeeded" as const }, { runId: "b-run", status: "running" as const }]) {
+      const h = new UIHarness().ready(); h.inspector.handleInput("D"); assert.match(h.render(), /Run: a-run/);
+      const changed = snapshot(); Object.assign(changed.run!, next);
+      const effects = h.send({ type: "snapshot", epoch: "e" }, [changed]);
+      assert.equal(h.state.dialog.kind, "closed"); assert.match(h.state.feedback!, /target.*no longer eligible.*No operation was sent/i);
+      h.inspector.handleInput("\r"); assert.ok(!h.effects.some(e => e.type === "operate"));
+      assert.ok(effects.some(e => e.type === "focus" && e.target === "inspector"));
+    }
+  },
+  "ACC-SA-UI-09": async () => {
+    const h = new UIHarness().ready(); h.inspector.handleInput("D"); const dialog = structuredClone(h.state.dialog);
+    const changed = snapshot(); changed.run!.revision = 20; changed.run!.output += "ordinary progress";
+    h.send({ type: "snapshot", epoch: "e" }, [changed]); assert.deepEqual(h.state.dialog, dialog);
+    const calls: string[][] = []; const operation = h.submit();
+    await h.execute(operation, port({ stop: async (runId, operationId) => { calls.push([runId, operationId]); } }));
+    assert.deepEqual(calls, [["a-run", operation.operation.id]]);
+  },
+  "ACC-SA-UI-10": async ({ t }) => {
+    const service = await durableService(t), load = deferred<string>(), ack = deferred<void>();
+    const id = service.service.list()[0]!.agent.agentId; let operationId = "";
+    const h = adapter(t, port({ ...service.port, transcript: () => load.promise, message: async (target, text, op) => { operationId = op; const result = await service.port.message(target, text, op); await ack.promise; return result; } }));
+    const first = h.command(id); await tick(); h.inspector!.handleInput("s"); h.inspector!.handleInput("Old-parent guidance"); h.inspector!.handleInput("\r"); await tick();
+    assert.ok(operationId); h.replaceSession("new-parent", "New session draft"); await first;
+    const opens = h.opens; load.resolve("## assistant\nOld parent transcript"); ack.resolve(); await tick();
+    assert.equal(h.opens, opens); assert.equal(h.inspector, undefined); assert.equal(h.editor, "New session draft"); assert.equal(h.input("\x1b[B"), undefined);
+    assert.equal(service.repository.guidance(service.service.run(id).runId)[0]?.text, "Old-parent guidance"); assert.equal(service.service.run(id).parentId, "p"); assert.ok(service.service.receipt(operationId));
+    assert.equal(h.modelTurns, 0);
+  },
+  "ACC-SA-UI-11": () => {
+    const h = new UIHarness().ready(); h.inspector.handleInput("\x1b[5~"); const before = structuredClone(h.transcript());
+    const window = plain(transcriptWindow(before, 60, 5)); h.height = 22; h.inspector.render(60);
+    const final = snapshot(); final.run!.status = "succeeded";
+    h.send({ type: "snapshot", epoch: "e" }, [final]);
+    assert.deepEqual(h.transcript(), before); assert.equal(plain(transcriptWindow(h.transcript(), 60, 5)), window);
+    const load = h.select("a"); assert.equal(load.type, "load"); if (load.type === "load") h.send({ ...load, type: "transcript", text: `${markdown}\nFinal output` });
+    assert.equal(h.transcript().follow, "paused"); assert.equal(h.transcript().anchorEntryId, before.anchorEntryId);
+    h.send({ type: "scroll", delta: 10000, pageSize: 10 }); assert.equal(h.transcript().follow, "following");
+    assert.match(plain(transcriptWindow(h.transcript(), 60, 10)), /Final output/);
+  },
+  "ACC-SA-UI-12": async ({ t }) => {
+    const record = snapshot(); record.run!.status = "succeeded"; let cleanups = 0;
+    const h = adapter(t, port({ list: () => [record], cleanup: async () => { cleanups++; } })); h.editor = "Draft originating editor";
+    const closed = h.command("cleanup a"); await tick(); assert.match(h.render(), /Confirm cleanup: a/); assert.doesNotMatch(h.render(), /Agents ·/);
+    h.inspector!.handleInput("\x1b"); await closed;
+    assert.equal(h.editor, "Draft originating editor"); assert.equal(h.inspector, undefined); assert.equal(h.closes, 1); assert.equal(cleanups, 0); assert.equal(h.input("j"), undefined);
+    const reducer = new UIHarness([record]); reducer.send({ type: "control", action: "cleanup", agentId: "a" });
+    assert.equal(reducer.state.navigation.kind, "editor"); assert.ok(reducer.send({ type: "escape" }).some(e => e.type === "focus" && e.target === "editor"));
+  },
+  "ACC-SA-UI-13": async () => {
+    const h = new UIHarness(); await h.execute(h.open("a"), port({ transcript: async () => { throw new Error("Transcript file missing: a.jsonl"); } }));
+    assert.match(h.render(), /a · test\/model/); assert.match(h.render(), /Transcript file missing: a.jsonl/); assert.match(h.render(), /r retries/);
+    assert.equal(h.state.navigation.kind === "inspector" && h.state.navigation.detail.kind !== "list" && h.state.navigation.detail.agentId, "a");
+    h.inspector.handleInput("r"); const retry = h.effects.filter(e => e.type === "load").at(-1)!; assert.equal(retry.type === "load" && retry.agentId, "a");
+    await h.execute(retry, port({ transcript: async () => "## assistant\nA recovered" })); assert.match(h.render(), /A recovered/);
+    h.inspector.handleInput("j"); const next = h.effects.filter(e => e.type === "load").at(-1)!;
+    assert.equal(next.type === "load" && next.agentId, "b"); await h.execute(next, port());
+    h.inspector.handleInput("\x1b"); assert.equal(h.state.navigation.kind, "editor");
+  },
+};
+runFeatures(["agent-inspection", "ui-state-machine"], bindings, {
+  "agent-inspection": "4f3964c0a4578ddce199cf317c50c91dd7a27675d3f7d5dd04de11ad68ac6aea",
+  "ui-state-machine": "85dd0b30f525f9ebc739bdb2dbbcd33ac226d4b16695323d366a9b8ea5c301c8",
+});

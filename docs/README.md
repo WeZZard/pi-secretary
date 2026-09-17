@@ -12,6 +12,23 @@
 | [Implementation plans](../.plans/) | Implementers and reviewers organize delivery against an agreed design. | Include file targets, dependencies, tasks, tests, exit criteria, rollout, and citations to design decisions. | Do not introduce a new product behavior or technical protocol without updating and citing its owning design document. |
 | [Research](research/) | Readers evaluate evidence, comparisons, and unresolved questions. | Include observations, sources, uncertainty, and recommendations. | Do not present an observation about current code as an approved product requirement. |
 
+## Subagent design documents
+
+- The [subagent research report](research/subagent-system-comparison.md) records the source comparison and its verification limits.
+- The [subagent requirements](user-stories/subagents.md) define the confirmed constraints and observable acceptance criteria.
+- The [subagent interaction design](ux/subagents.md) defines FleetView, inspection, messaging, cancellation, and recovery from the user's perspective.
+- The [subagent technical design](arch/subagents.md) defines the tool contracts, runtime, persistence, worktrees, and goal integration.
+- The [subagent BDD acceptance specifications](../doc/acceptance/README.md) describe observable behavior in Gherkin and trace scenarios to the requirements. They distinguish confirmed constraints from proposed policies.
+- The [subagent implementation plan](../.plans/2026-09-17-subagent-support.md) sequences delivery, cites the owning design sections, and assigns acceptance coverage and release gates.
+- These documents describe a draft feature. They do not claim that subagent support is implemented.
+
+## Generated test artifacts
+
+- Follow the [test artifact policy](testing/test-artifacts.md) and the corresponding project rule in [CLAUDE.md](../CLAUDE.md).
+- Keep specifications, reproducible test inputs, intentional baselines, and concise verification conclusions in version control.
+- Keep recordings, logs, generated reports, and derived screen views under ignored `test-results/` or in CI artifact storage. Do not archive run output under the documentation directories.
+- Link to reproduction procedures or CI artifact identifiers rather than ignored local output files, which are absent from clean clones.
+
 ## Direction of justification
 
 - Start with the required outcome, describe the interaction, choose the technical mechanism, and then plan the work.

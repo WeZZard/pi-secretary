@@ -260,6 +260,15 @@ export class GoalService {
     return outcome.goal;
   }
 
+  /** Idempotent attribution for child work, including late usage after a pause. */
+  accountAgentUsage(eventId: string, threadId: string, goalId: string, tokenDelta: number): ThreadGoal | null {
+    const previous = this.getGoal(threadId);
+    const outcome = this.db.accountAgentUsage(eventId, threadId, goalId, tokenDelta);
+    if (outcome.kind === "unchanged") return null;
+    this.emit(threadId, previous, outcome.goal, "system", "accounting");
+    return outcome.goal;
+  }
+
   stopActiveGoal(threadId: string, status: "blocked" | "usage_limited" | "complete" | "paused",
     expectedGoalId?: string, stopCause?: GoalStopCause, originIntentSeq?: number): ThreadGoal | null {
     if (originIntentSeq !== undefined && originIntentSeq !== this.ordering.intentSeq(threadId)) return null;

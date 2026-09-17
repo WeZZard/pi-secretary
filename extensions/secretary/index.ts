@@ -7,15 +7,18 @@ import { executeCreateGoal, executeGetGoal, executeUpdateGoal, type GoalToolResp
 import { createGoalToolSpec, getGoalToolSpec, updateGoalToolSpec } from "./goal/tools/goal-tool-specs.ts";
 import { GoalSynchronization, threadIdFor, type WorkBasis } from "./goal/synchronization.ts";
 import { formatGoalSnapshot } from "./goal/steering.ts";
+import { inChildSession } from "./agents/child-context.ts";
+import { installAgentSupport } from "./agents/installation.ts";
 
 export default function secretaryExtension(pi: ExtensionAPI): void {
+  if (inChildSession()) return;
   const dir = process.env.PI_SECRETARY_DB_DIR ?? path.join(process.env.HOME ?? "", ".pi", "secretary");
   mkdirSync(dir, { recursive: true });
-  installSecretary(pi, new GoalEngine({ dbPath: path.join(dir, "pi-secretary-goals.sqlite"), enabled: true }));
+  installSecretary(pi, new GoalEngine({ dbPath: path.join(dir, "pi-secretary-goals.sqlite"), enabled: true }), { agentsRoot: dir });
 }
 
 /** Injectable storage permits tests to exercise the actual installer without touching user goals. */
-export function installSecretary(pi: ExtensionAPI, engine: GoalEngine): GoalSynchronization {
+export function installSecretary(pi: ExtensionAPI, engine: GoalEngine, options: { agentsRoot?: string } = {}): GoalSynchronization {
   const ui = registerGoalUI(pi, engine);
   const sync = new GoalSynchronization(pi, engine, ui);
   registerGoalTools(pi, engine, sync);
@@ -41,8 +44,10 @@ export function installSecretary(pi: ExtensionAPI, engine: GoalEngine): GoalSync
       return { block: true, reason: "Budget wrap-up authorizes reporting and read-only evidence, not new substantive goal work.", terminate: true };
     }
   });
-  pi.on("session_shutdown", () => {
+  const agents = options.agentsRoot ? installAgentSupport(pi, engine, sync, options.agentsRoot) : undefined;
+  pi.on("session_shutdown", async () => {
     sync.dispose();
+    if (agents && !await agents.shutdown()) return; // Do not close storage under a live child.
     engine.dispose();
     engine.close();
   });

@@ -30,6 +30,13 @@ CREATE TABLE IF NOT EXISTS thread_goals (
   updated_at_ms    INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_thread_goals_thread ON thread_goals(thread_id);
+CREATE TABLE IF NOT EXISTS secretary_agent_goal_usage (
+  event_id TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL,
+  goal_id TEXT NOT NULL,
+  token_delta INTEGER NOT NULL,
+  applied INTEGER NOT NULL
+);
 `;
 
 export interface GoalUpdate {
@@ -59,8 +66,31 @@ export class GoalDb {
     return new GoalDb(db);
   }
 
+  /** Shared synchronous connection; repositories do not own its lifetime. */
+  get connection(): DatabaseSync { return this.db; }
+
   close(): void {
     this.db.close();
+  }
+
+  /** Source-event marker and goal update commit together before observers run. */
+  accountAgentUsage(eventId: string, threadId: string, goalId: string, tokenDelta: number): GoalAccountingOutcome {
+    if (!eventId || !Number.isSafeInteger(tokenDelta) || tokenDelta < 0) throw new Error("Invalid child usage event.");
+    this.db.exec("SAVEPOINT secretary_agent_accounting");
+    try {
+      const inserted = this.db.prepare(`INSERT OR IGNORE INTO secretary_agent_goal_usage
+        (event_id, thread_id, goal_id, token_delta, applied) VALUES (?, ?, ?, ?, 0)`)
+        .run(eventId, threadId, goalId, tokenDelta);
+      const result: GoalAccountingOutcome = inserted.changes
+        ? this.accountThreadGoalUsage(threadId, 0, tokenDelta, "active_or_stopped", goalId)
+        : { kind: "unchanged" };
+      if (result.kind === "updated") this.db.prepare("UPDATE secretary_agent_goal_usage SET applied = 1 WHERE event_id = ?").run(eventId);
+      this.db.exec("RELEASE secretary_agent_accounting");
+      return result;
+    } catch (error) {
+      this.db.exec("ROLLBACK TO secretary_agent_accounting; RELEASE secretary_agent_accounting");
+      throw error;
+    }
   }
 
   // ---- reads ------------------------------------------------------------------

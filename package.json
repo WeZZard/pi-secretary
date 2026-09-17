@@ -29,15 +29,17 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": ">=0.83.0 <0.86.0",
+    "@earendil-works/pi-ai": "0.85.1",
     "@earendil-works/pi-coding-agent": "0.85.1",
-    "@earendil-works/pi-tui": ">=0.83.0 <0.86.0",
+    "@earendil-works/pi-tui": "0.85.1",
     "typebox": "^1.3.11"
   },
   "devDependencies": {
+    "@cucumber/gherkin": "42.0.1",
     "@earendil-works/pi-ai": "^0.85.1",
     "@earendil-works/pi-coding-agent": "0.85.1",
     "@earendil-works/pi-tui": "^0.85.1",
+    "@xterm/headless": "6.0.0",
     "typebox": "^1.3.11",
     "typescript": "^5.9.3"
   },
@@ -45,8 +47,13 @@
     "check": "tsc --noEmit",
     "test": "node --experimental-strip-types --test --test-concurrency=1 tests/**/*.test.ts",
     "test:serial": "node --experimental-strip-types --test --test-concurrency=1 tests/**/*.test.ts",
+    "test:subagents": "node --experimental-strip-types --test --test-concurrency=1 tests/agents/*.test.ts",
+    "test:acceptance": "node --experimental-strip-types --test --test-concurrency=1 tests/acceptance/*.test.ts",
+    "record:tui": "python3 scripts/record-agent-tui.py",
+    "render:tui": "node --experimental-strip-types scripts/render-tui-recording.ts",
+    "lint:acceptance": "node --experimental-strip-types scripts/check-acceptance.ts",
     "lint:mermaid": "mmlint $(find docs -name '*.md' -type f | sort)",
-    "verify": "npm run check && npm run test && npm run lint:mermaid"
+    "verify": "npm run check && npm run test && npm run lint:mermaid && npm run lint:acceptance"
   },
   "publishConfig": {
     "access": "public"

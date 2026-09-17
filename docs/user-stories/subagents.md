@@ -1,0 +1,132 @@
+# Subagent Support: Requirements
+
+**Document type:** Software requirements specification.
+
+**Status:** Draft for review. No subagent implementation is claimed.
+
+**Related documents:** [Research](../research/subagent-system-comparison.md), [interaction design](../ux/subagents.md), and [technical design](../arch/subagents.md).
+
+## 1. Purpose and Confirmed Constraints
+
+Secretary will let a parent agent delegate work to child agents while the user can observe and control that work.
+
+The following constraints were confirmed during design discussion:
+
+- Claude Code provides the reference for tool names and input schemas.
+- nicobailon/pi-subagents provides the reference for the TUI.
+- tintinweb/pi-subagents provides an implementation reference for pi integration.
+- Child execution stops when pi exits. Saved conversations may be resumed explicitly later.
+- The `Agent.model` field retains Claude Code's alias enum. Configuration outside the tool schema maps aliases to pi models.
+- The initial scope includes core delegation, custom agent definitions, worktree isolation, output retrieval, and agent inspection.
+- Conversation forks, nested delegation, agent teams, remote execution, scheduling, and workflow orchestration are deferred.
+
+The remaining choices in the linked design documents are proposed defaults. They are not additional user approvals.
+
+## 2. User Stories and Acceptance Criteria
+
+### SA-01: Delegate a bounded task
+
+As a parent agent, I want to delegate a task without changing my own conversation, model, or tools.
+
+- The launch operation reports the selected agent type and resolved model.
+- A background launch returns an identifier before execution completes.
+- A foreground launch returns the outcome after execution completes.
+- An unknown agent type or unavailable model produces an actionable error rather than a silent fallback.
+- Fresh child sessions receive their task and applicable project instructions, but not the parent's conversation history.
+- Launching a child does not create a goal implicitly.
+
+### SA-02: Observe concurrent work
+
+As a user, I want to see which agents are queued, starting, running, stopping, or finished while continuing to use the main editor.
+
+- FleetView shows current-session work without requiring repeated model tool calls.
+- I can open an agent's task, transcript, result, and worktree information.
+- A historical launch result does not falsely report that background execution has completed.
+- Failures, partial results, and cancellation remain distinguishable from successful completion.
+- The inspector remains open if the selected agent finishes.
+
+### SA-03: Guide and resume an agent
+
+As a user or parent agent, I want to send guidance to an existing agent rather than creating a different conversation accidentally.
+
+- The same recipient identifier addresses an agent while it runs and after it finishes.
+- Acknowledgment states whether guidance was queued or a new execution was accepted.
+- Acknowledgment does not claim that the model has followed the guidance.
+- A finished resumable agent continues its saved conversation in the background.
+- Two simultaneous follow-up requests cannot execute the same session concurrently.
+- Missing history, changed permissions, or unavailable worktrees cause explicit recovery guidance rather than a fresh-session fallback.
+
+### SA-04: Stop work without losing evidence
+
+As a user or parent agent, I want to stop selected work without aborting unrelated agents or the main conversation.
+
+- A stop request identifies its target and reports when cancellation is still pending.
+- Cancellation preserves available output and changes to files.
+- Closing the inspector does not cancel work.
+- Stopping an already finished run does not stop a later run by accident.
+- No automatic restart follows user cancellation.
+
+### SA-05: Retain and recover conversations
+
+As a user, I want to inspect past work and explicitly resume supported agents after restarting pi.
+
+- Exiting, reloading, or switching the parent session stops that parent's active child executions.
+- Restoring a parent session restores its agent records without automatically restarting children.
+- An interrupted process is not reported as a successful execution.
+- Another session cannot obtain control of an agent merely by knowing its name.
+- Deleted or corrupted session files produce a clear error.
+
+### SA-06: Isolate repository changes
+
+As a user, I want an agent to work in its own Git worktree without overwriting my checkout.
+
+- Worktree launches report the branch, path, and base commit used.
+- Uncommitted parent changes are not silently copied, stashed, or committed.
+- Agent changes are not automatically merged or committed by the host.
+- A worktree containing changes or agent commits is retained.
+- Cleanup does not delete unrelated worktrees or discard modifications without confirmation.
+- Worktree isolation is not described as a security sandbox.
+
+### SA-07: Use custom agents and pi models
+
+As a user, I want reusable agent definitions with predictable tool and model selection.
+
+- Trusted project definitions can override user definitions and packaged definitions.
+- The selected definition's source is visible in inspection.
+- Explicit model aliases resolve through configuration; missing mappings do not select a different model silently.
+- Omitting a model override supports inheritance from the parent when the definition supplies no model.
+- Agent definitions cannot bypass the parent's tool or permission restrictions.
+
+### SA-08: Account for delegated goal work
+
+As a user with an active goal, I want delegated usage included without changing the meaning of my goal budget.
+
+- Descendant usage uses the existing goal-budget formula.
+- Usage is attributed to the goal that authorized the execution, not whichever goal happens to exist when a result arrives.
+- Duplicate callbacks and restoration do not charge the same usage twice.
+- Finishing a child does not complete or resume a goal automatically.
+- Old child results cannot override a newer pause, objective change, clear, or replacement goal.
+- Background children do not cause repeated automatic delegation while the parent is waiting for their results.
+
+### SA-09: Use tools without a terminal
+
+As a client using print, JSON, or RPC mode, I want explicit execution and error behavior without a hidden interactive dependency.
+
+- Tool execution does not require FleetView or an inspector.
+- Operations requiring interactive confirmation fail clearly when confirmation is unavailable.
+- Background work does not silently disappear at normal headless completion; the supported headless waiting policy is tested and documented.
+
+## 3. Compatibility and Scope
+
+- The proposed baseline is Claude Code 2.1.272, as inspected in the research report.
+- Initial tool names are `Agent`, `SendMessage`, `TaskStop`, and `TaskOutput`.
+- Keeping `TaskOutput` is a proposed compatibility choice even though current Claude documentation deprecates it.
+- Existing pi built-in tools keep their names. This feature does not rename `read` to `Read` or emulate the entire Claude Code environment.
+- The design promises a documented subset of Claude Code behavior, not complete Claude Code compatibility.
+- External terminal panes, invisible model calls for mentions, agent-definition editing wizards, and workflow engines are outside this release.
+
+## 4. Acceptance and Approval
+
+- Requirements are validated through the scenarios linked from the technical design.
+- Passing tests does not establish visual conformance; TUI interaction review is separate.
+- The confirmed constraints in Section 1 are approved inputs. The remaining detailed policies require review before implementation begins.

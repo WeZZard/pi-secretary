@@ -5,3 +5,7 @@ dist/
 npm-debug.log*
 *.swp
 .reviews/
+.plans/
+
+# Generated test-run output. Keep specifications and intentional baselines in Git.
+/test-results/

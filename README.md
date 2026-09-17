@@ -1,6 +1,6 @@
 # pi-secretary
 
-A Pi extension for one persistent goal per session, with goal tools, `/goal` commands, and a goal widget and footer.
+A Pi extension for persistent goals and controlled subagent execution, with goal commands, agent tools, and a terminal inspector.
 
 ## Implementation status
 
@@ -37,6 +37,54 @@ pi install git:github.com/WeZZard/pi-secretary
 - Goals are stored in `~/.pi/secretary/pi-secretary-goals.sqlite` by default. `PI_SECRETARY_DB_DIR` selects a different directory.
 - The tests use temporary or in-memory storage and deterministic local providers; they do not use your live goals or paid API requests.
 
+## Subagent controls
+
+| Interface | Purpose |
+| --- | --- |
+| `Agent` | The parent delegates a task with `prompt`, `description`, and an optional agent type, model alias, name, or worktree request. |
+| `SendMessage` | The parent sends guidance to a running child or explicitly resumes an eligible saved agent. |
+| `TaskStop` | The parent requests cancellation of a Secretary-owned execution without rolling back files. |
+| `TaskOutput` | The parent reads current output or waits for a captured run. Cancelling the wait does not cancel the child. |
+| `/agents` | The user opens the agent list and transcript inspector. |
+| `/agents stop <id-or-name>` | The user confirms cancellation of the selected execution. |
+| `/agents cleanup <id-or-name>` | The user confirms conservative cleanup of an unchanged, idle worktree. |
+
+- Background execution is the default in persistent TUI and RPC sessions. Print and JSON mode default to foreground execution and reject explicit background requests and idle-agent resumption.
+- Child sessions stop when pi exits or replaces the parent session. Saved conversations do not continue in a detached supervisor and are not automatically restarted.
+- `general-purpose` is resumable. Packaged `Explore` and `Plan` are one-shot definitions with read-only tools.
+- Trusted project definitions in `.pi/agents/` override user definitions in the pi agent directory's `agents/` folder. Definitions use Markdown and supported YAML frontmatter; unsupported behavioral fields fail validation.
+- The public tool schemas follow the documented Claude Code 2.1.272 subset. Conversation forks, teams, remote execution, nested delegation, and workflow orchestration are not implemented.
+- If another extension provides one of the same control tools, Secretary refuses delegation registration instead of silently overriding it. Disable the conflicting extension before reloading.
+- FleetView appears below the editor. Down or Left activates it from an empty editor. The inspector supports guidance, stop confirmation, transcript scrolling, and tool-detail expansion without replacing the goal widget.
+- Worktrees use the captured parent `HEAD` commit and do not include uncommitted parent changes. They remain available for inspection and resumption until explicit cleanup; the host never auto-commits or merges their changes.
+- A Git worktree and a tool allowlist are not security sandboxes. Noncooperative tools and external detached jobs have the cancellation limits described in the design.
+
+### Model and execution configuration
+
+- Global configuration is read from `secretary.json` in the pi agent directory, which defaults to `~/.pi/agent/`.
+- Trusted project configuration in `.pi/secretary.json` overrides global agent settings.
+- Explicit model aliases require exact pi model mappings. Omitting the model uses the definition's model or inherits the parent model.
+- The following model identifier is an example placeholder and must be replaced with an available configured model.
+
+```json
+{
+  "agents": {
+    "modelAliases": {
+      "sonnet": "your-provider/your-model"
+    },
+    "maxConcurrent": 4,
+    "maxQueued": 16,
+    "shutdownTimeoutMs": 5000
+  }
+}
+```
+
+- Agent metadata shares Secretary's database, and artifacts live below its `agents/` directory. `PI_SECRETARY_DB_DIR` controls the root.
+- Parent sessions have exclusive execution ownership. A conflict or unverifiable stale lock refuses execution; timestamps alone do not grant ownership.
+- Failed worktree allocations and uncertain cleanup can retain artifacts for manual recovery. They are not force-deleted.
+- Runtime compatibility is tested against pi 0.85.1. Parent-only inline tools that cannot be rediscovered for a child fail explicitly rather than silently disappearing.
+- See the [subagent software design](docs/arch/subagents.md), [BDD specifications](doc/acceptance/README.md), and [implementation evidence](docs/research/subagent-implementation-evidence.md) for scope and verification limits.
+
 ## Development
 
 ```bash
@@ -44,10 +92,19 @@ npm install
 npm run check
 npm test
 npm run lint:mermaid
+npm run lint:acceptance
+npm run test:subagents
+npm run test:acceptance
 npm pack --dry-run
 ```
 
 - `npm test` includes component, adapter integration, and real Pi SDK host tests.
+- `npm run test:subagents` runs the implemented agent tests with temporary storage, disposable Git repositories, and deterministic providers.
+- `npm run lint:acceptance` checks Gherkin syntax and scenario identities without executing behavior.
+- `npm run test:acceptance` executes every current scenario and Examples row through production-backed scenario adapters. Reviewed source hashes make specification changes require assertion review.
+- `npm run record:tui` records an isolated real pi terminal walkthrough into a new ignored `test-results/tui/<run-id>/` directory. `npm run render:tui -- <printed-output-path>` replays and checks its terminal grids.
+- The [TUI recording procedure](doc/acceptance/tui-recording.md) explains reproduction and artifact contents. Automated terminal assertions do not constitute human visual approval.
+- Follow the [test artifact policy](docs/testing/test-artifacts.md): commit specifications, fixtures, and intentional baselines, but keep generated recordings and reports in ignored local output or CI artifact storage.
 - The host tests run against Pi 0.85.1 and cover positive automatic dispatch, stale actions and late results, delayed input, preserved queued questions, retry/compaction recovery, and reporting-only budget wrap-up.
 - See [the documentation guide](docs/README.md) for the responsibilities of requirements, UX, architecture, and implementation plans.
 

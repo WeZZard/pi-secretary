@@ -66,6 +66,8 @@ export class GoalSynchronization {
   private readonly turns = new Map<string, WorkBasis>();
   private currentTurn?: string;
   private budget?: BudgetRecord;
+  /** Optional admission check for unchanged outstanding child dependencies. */
+  canContinueWithChildren?: () => boolean;
 
   constructor(pi: ExtensionAPI, engine: GoalEngine, ui: UI) {
     this.pi = pi; this.engine = engine; this.ui = ui;
@@ -250,6 +252,7 @@ export class GoalSynchronization {
         const request: AutomaticRequest = { ...basis, goalId: goal.goalId, requestId: crypto.randomUUID(), kind,
           dispatchSeq: this.engine.service.ordering.stamp(threadId).sequence };
         if (!this.requestIsCurrent(request)) return;
+        if (kind === "continuation" && this.canContinueWithChildren && !this.canContinueWithChildren()) return;
         this.dispatched = request;
         if (kind === "budget_wrap_up") this.recordBudget({ threadId, goalId: goal.goalId, budget: goal.tokenBudget, state: "dispatched", requestId: request.requestId });
         submitted = true;
