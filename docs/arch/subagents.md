@@ -250,7 +250,9 @@ interface AgentOperationResult {
 
 ### 5.1 Discovery and trust
 
-Definitions use Markdown with YAML frontmatter. Discovery order, from highest to lowest precedence, is:
+Definitions use Markdown with YAML frontmatter. The Markdown body is an optional custom role prompt; metadata-only definitions and whitespace-only bodies are valid. An empty body contributes no custom role prompt, while the normal pi instructions, applicable project instructions, and delegated task remain in effect. This does not make the `Agent.prompt` task argument optional.
+
+Discovery order, from highest to lowest precedence, is:
 
 1. Trusted project definitions are read from `<project>/<CONFIG_DIR_NAME>/agents/`.
 2. User definitions are read from `<getAgentDir()>/agents/`.

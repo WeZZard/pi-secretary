@@ -28,8 +28,7 @@ function definition(content: string, source: string): AgentDefinition {
   for (const key of Object.keys(data)) if (!fields.has(key)) throw new Error(`${source}: unsupported agent field ${key}`);
   if (typeof data.name !== "string" || !safeName.test(data.name) || ["__proto__", "constructor", "prototype"].includes(data.name)) throw new Error(`${source}: invalid agent name`);
   if (typeof data.description !== "string" || !data.description.trim()) throw new Error(`${source}: description must be nonempty`);
-  if (!body.trim()) throw new Error(`${source}: agent prompt must be nonempty`);
-  const result: AgentDefinition = { name: data.name, description: data.description, prompt: body, source, hash: hash(content), resumable: true };
+  const result: AgentDefinition = { name: data.name, description: data.description, prompt: body.trim() ? body : "", source, hash: hash(content), resumable: true };
   for (const key of ["tools", "disallowedTools"] as const) if (Object.hasOwn(data, key)) result[key] = tools(data[key], `${source}: ${key}`);
   if (Object.hasOwn(data, "model")) {
     if (typeof data.model !== "string" || !(data.model === "inherit" || isAlias(data.model) || isExactModelIdentifier(data.model))) throw new Error(`${source}: invalid model; expected alias, inherit, or provider/modelId`);

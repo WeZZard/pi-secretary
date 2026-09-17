@@ -59,6 +59,22 @@ pi install git:github.com/WeZZard/pi-secretary
 - Worktrees use the captured parent `HEAD` commit and do not include uncommitted parent changes. They remain available for inspection and resumption until explicit cleanup; the host never auto-commits or merges their changes.
 - A Git worktree and a tool allowlist are not security sandboxes. Noncooperative tools and external detached jobs have the cancellation limits described in the design.
 
+### Metadata-only custom agents
+
+A custom agent's Markdown body is optional. For example, `.pi/agents/general-purpose.md` can contain only frontmatter:
+
+```markdown
+---
+name: general-purpose
+description: General-purpose delegated work.
+model: inherit
+---
+```
+
+- This definition adds no custom role prompt. Empty and whitespace-only bodies are both accepted.
+- The child still receives pi's system instructions, applicable project instructions, and its delegated task.
+- The `prompt` argument on an `Agent` call remains required and nonempty. It specifies the task, not the optional role prompt in the definition file.
+
 ### Model and execution configuration
 
 - Global configuration is read from `secretary.json` in the pi agent directory, which defaults to `~/.pi/agent/`.

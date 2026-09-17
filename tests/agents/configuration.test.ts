@@ -62,6 +62,22 @@ test("discovery precedence, capabilities, and stable independent snapshots", (t)
   assert.equal(old.prompt, "User prompt");
 });
 
+for (const scope of ["user", "project"] as const) {
+  test(`${scope} agent definitions can override general-purpose without a role prompt`, (t) => {
+    const { cwd, agentDir, put } = fixture(t);
+    const path = scope === "user" ? join(agentDir, "agents", "general-purpose.md")
+      : join(cwd, CONFIG_DIR_NAME, "agents", "general-purpose.md");
+    for (const suffix of ["", "\n", "\n\n  \t\n"]) {
+      put(path, `---\nname: general-purpose\ndescription: General-purpose work without an extra role prompt.\nmodel: inherit\n---${suffix}`);
+      const agent = discoverAgents(cwd, agentDir, scope === "project").get("general-purpose")!;
+      assert.equal(agent.prompt, "");
+      assert.equal(agent.source, path);
+      assert.equal(agent.model, "inherit");
+      assert.equal(agent.resumable, true);
+    }
+  });
+}
+
 test("discovery rejects duplicate names, bad YAML, unsupported behaviors", (t) => {
   const { cwd, agentDir, put } = fixture(t);
   const path = join(agentDir, "agents", "one.md");

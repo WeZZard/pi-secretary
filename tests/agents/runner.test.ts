@@ -85,6 +85,17 @@ test("SDK child inherits public provider, project instructions, role, tools, and
   await child.dispose(); await child.dispose();
 });
 
+test("SDK child permits an empty role prompt while retaining project instructions and task context", async (t) => {
+  const f = await fixture(t);
+  f.agent.definition.prompt = "";
+  const child = await f.start();
+  assert.equal((await child.result).status, "succeeded");
+  assert.match(f.calls[0]!.systemPrompt!, /Project instruction sentinel/);
+  assert.match(f.calls[0]!.systemPrompt!, /You are a child agent/);
+  assert.doesNotMatch(f.calls[0]!.systemPrompt!, /Role sentinel/);
+  assert.match(JSON.stringify(f.calls[0]!.messages), /Task sentinel/);
+});
+
 test("resume uses saved conversation but output and usage belong to latest run", async (t) => {
   const f = await fixture(t, ["first", "second"]);
   const first = await f.start(); await first.result; await first.dispose();

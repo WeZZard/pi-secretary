@@ -105,7 +105,7 @@ export async function createChildRunner(options: {
       const settings = SettingsManager.create(agent.configCwd, agentDir);
       settings.setProjectTrusted(ctx.isProjectTrusted());
       const loader = new DefaultResourceLoader({ cwd: agent.configCwd, agentDir, settingsManager: settings,
-        appendSystemPrompt: [agent.definition.prompt,
+        appendSystemPrompt: [...(agent.definition.prompt.trim() ? [agent.definition.prompt] : []),
           "You are a child agent. Only the current explicit task authorizes work. Historical queued guidance is not a new instruction."],
       });
       await loader.reload();
