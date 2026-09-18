@@ -198,6 +198,55 @@ test("reentrant accounting listeners cannot charge an uncommitted baseline twice
   assert.equal(nested, true); assert.equal(h.engine.service.getGoal(h.state.threadId)?.tokensUsed, 10);
 });
 
+test("goal tools render calls and results with the specified formats", async (t) => {
+  const h = goalHarness(); t.after(() => h.close()); await h.start();
+  const theme: any = { fg: (_c: string, text: string) => text, bold: (text: string) => text };
+  const render = (component: any) => component.render(80).map((line: string) => line.trimEnd()).join("\n").trimEnd();
+
+  const create = h.tools.get("create_goal");
+  assert.equal(render(create.renderCall({ objective: "Ship the widget", token_budget: 25000 }, theme)),
+    "Create Goal: Ship the widget, 25K tokens");
+  assert.equal(render(create.renderCall({ objective: "Ship the widget" }, theme)), "Create Goal: Ship the widget");
+  assert.equal(render(create.renderResult({ content: [{ type: "text", text: "x" }], details: { goal: null, remaining_tokens: null } }, { expanded: false, isPartial: false }, theme)), "Goal created.");
+  assert.equal(render(create.renderResult({ content: [{ type: "text", text: "objective must not be empty" }], details: undefined }, { expanded: false, isPartial: false }, theme)),
+    "Error: objective must not be empty");
+
+  const update = h.tools.get("update_goal");
+  assert.equal(render(update.renderCall({ status: "complete" }, theme)), "Completed Goal");
+  assert.equal(render(update.renderCall({ status: "paused" }, theme)), "Paused Goal");
+  await h.tool("create_goal", { objective: "Report format", token_budget: 25000 });
+  h.engine.service.requestTerminalUpdate(h.state.threadId, "complete", "agent");
+  const goal = h.engine.service.getGoal(h.state.threadId)!;
+  const result = (expanded: boolean) => render(update.renderResult(
+    { content: [{ type: "text", text: "x" }], details: { goal, remaining_tokens: 25000 } },
+    { expanded, isPartial: false }, theme));
+  assert.equal(result(false), "Completed Goal. Consumed 0 tokens; Used 0 sec; Budget 25K tokens");
+  assert.equal(result(true), `Completed Goal. Consumed 0 tokens; Used 0 sec; Budget 25K tokens\n\nObjective: Report format`);
+  const noBudget = { ...goal, tokenBudget: undefined };
+  assert.equal(render(update.renderResult({ content: [{ type: "text", text: "x" }], details: { goal: noBudget, remaining_tokens: null } },
+    { expanded: false, isPartial: false }, theme)), "Completed Goal. Consumed 0 tokens; Used 0 sec");
+  assert.equal(render(update.renderResult({ content: [{ type: "text", text: "no goal" }], details: undefined },
+    { expanded: false, isPartial: false }, theme)), "Error: no goal");
+});
+
+test("the first user message after completion hides the widget until the goal changes", async (t) => {
+  const h = goalHarness(); t.after(() => h.close()); await h.start();
+  await h.tool("create_goal", { objective: "Hide after done" });
+  assert.match(h.state.widget?.[0] ?? "", /▶ Goal: active/);
+  h.state.idle = false; await h.emit("turn_start");
+  await h.emit("message_end", { message: assistant("toolUse", 5) });
+  await h.tool("update_goal", { status: "complete" });
+  await h.emit("turn_end", { message: assistant("toolUse", 5) });
+  assert.match(h.state.widget?.[0] ?? "", /⏹ Goal: complete/);
+  await h.emit("input", { source: "interactive", text: "Next task please" });
+  h.sync.refresh();
+  assert.equal(h.state.widget, undefined, "the first message after completion hides the widget");
+  h.sync.refresh();
+  assert.equal(h.state.widget, undefined, "per-request refreshes do not repaint the hidden widget");
+  await h.tool("create_goal", { objective: "New work" });
+  assert.match(h.state.widget?.[0] ?? "", /▶ Goal: active/, "a new goal repaints the widget");
+});
+
 test("renderer and diagnostic failures do not suppress authoritative model context", async (t) => {
   const h = goalHarness(); t.after(() => h.close()); await h.start();
   h.ctx.ui.setWidget = () => { throw new Error("renderer failed"); };

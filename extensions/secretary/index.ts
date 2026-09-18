@@ -1,10 +1,12 @@
-import { defineTool, type AgentToolResult, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { defineTool, type AgentToolResult, type ExtensionAPI, type ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { GoalEngine } from "./goal-engine.ts";
-import { registerGoalUI } from "./goal-ui.ts";
+import { registerGoalUI, STATUS_COLORS, abbreviateTokens, elapsedText } from "./goal-ui.ts";
 import { executeCreateGoal, executeGetGoal, executeUpdateGoal, type GoalToolResponse } from "./goal/tools/goal-tool-executors.ts";
 import { createGoalToolSpec, getGoalToolSpec, updateGoalToolSpec } from "./goal/tools/goal-tool-specs.ts";
+import type { ThreadGoal } from "./goal/goal-record.ts";
 import { GoalSynchronization, threadIdFor, type WorkBasis } from "./goal/synchronization.ts";
 import { formatGoalSnapshot } from "./goal/steering.ts";
 import { inChildSession } from "./agents/child-context.ts";
@@ -65,22 +67,59 @@ export function registerGoalTools(pi: ExtensionAPI, engine: GoalEngine, sync: Go
       response.goal ? engine.service.getLastChange(response.goal.threadId)?.stopCause : undefined) }],
     details: response,
   });
-  pi.registerTool(defineTool({
+
+  // A thrown executor error reaches renderResult without details; success always sets them.
+  const errorText = (theme: Theme, result: AgentToolResult<GoalToolResponse | undefined>): Text | undefined => {
+    if (result.details !== undefined) return undefined;
+    const text = result.content[0];
+    return new Text(theme.fg("error", `Error: ${text?.type === "text" ? text.text : ""}`), 0, 0);
+  };
+  const UPDATE_ACTIONS: Record<string, string> = { complete: "Completed", blocked: "Blocked", paused: "Paused" };
+  const updateSummary = (goal: ThreadGoal, nowMs: number): string => {
+    const parts = [`Consumed ${abbreviateTokens(goal.tokensUsed)} tokens`, `Used ${elapsedText(goal, nowMs)}`];
+    if (goal.tokenBudget !== undefined) parts.push(`Budget ${abbreviateTokens(goal.tokenBudget)} tokens`);
+    return parts.join("; ");
+  };
+
+  pi.registerTool(defineTool<typeof getGoalToolSpec.parameters, GoalToolResponse>({
     ...getGoalToolSpec,
     async execute(_id, _params, _signal, _onUpdate, ctx) {
       return result(executeGetGoal(engine.service, threadOf(ctx)));
     },
   }));
-  pi.registerTool(defineTool({
+  pi.registerTool(defineTool<typeof createGoalToolSpec.parameters, GoalToolResponse>({
     ...createGoalToolSpec,
+    renderCall(args, theme) {
+      const budget = args.token_budget !== undefined ? `, ${abbreviateTokens(args.token_budget)} tokens` : "";
+      return new Text(theme.fg("toolTitle", theme.bold("Create Goal: ")) + theme.fg("text", args.objective + budget), 0, 0);
+    },
+    renderResult(rendered, _options, theme) {
+      return errorText(theme, rendered) ?? new Text(theme.fg("success", "Goal created."), 0, 0);
+    },
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const response = executeCreateGoal(engine.service, threadOf(ctx), params, engine.maxGoalTokenBudget(), sync.userDecision());
       if (response.goal && !pi.getSessionName()) pi.setSessionName(response.goal.objective.slice(0, 80));
       return result(response);
     },
   }));
-  pi.registerTool(defineTool({
+  pi.registerTool(defineTool<typeof updateGoalToolSpec.parameters, GoalToolResponse>({
     ...updateGoalToolSpec,
+    renderCall(args, theme) {
+      const action = UPDATE_ACTIONS[args.status] ?? args.status;
+      const color = STATUS_COLORS[args.status as ThreadGoal["status"]] ?? "toolTitle";
+      return new Text(theme.fg(color, theme.bold(`${action} Goal`)), 0, 0);
+    },
+    renderResult(rendered, options, theme) {
+      const failure = errorText(theme, rendered);
+      if (failure) return failure;
+      const goal = rendered.details?.goal;
+      if (!goal) return new Text(theme.fg("muted", "No current goal."), 0, 0);
+      const action = UPDATE_ACTIONS[goal.status] ?? "Updated";
+      const color = STATUS_COLORS[goal.status] ?? "text";
+      let text = theme.fg(color, `${action} Goal. ${updateSummary(goal, Date.now())}`);
+      if (options.expanded) text += `\n\nObjective: ${goal.objective}`;
+      return new Text(text, 0, 0);
+    },
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const threadId = threadOf(ctx);
       const receipt = params.status === "paused" ? sync.userDecision() : undefined;

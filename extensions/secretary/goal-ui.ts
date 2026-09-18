@@ -11,6 +11,7 @@ import {
   type ExtensionAPI,
   type ExtensionCommandContext,
   type ExtensionContext,
+  type ThemeColor,
 } from "@earendil-works/pi-coding-agent";
 import { type ThreadGoal, type ThreadGoalStatus } from "./goal/goal-record.ts";
 import { type GoalEngine } from "./goal-engine.ts";
@@ -31,7 +32,7 @@ const STATUS_ICONS: Record<ThreadGoalStatus, string> = {
 };
 
 /** Severity colors (theme keys): running/success/muted/resource-warning/error semantics. */
-export const STATUS_COLORS: Record<ThreadGoalStatus, string> = {
+export const STATUS_COLORS: Record<ThreadGoalStatus, ThemeColor> = {
   active: "accent",
   paused: "muted",
   complete: "success",
@@ -281,6 +282,11 @@ export function registerGoalUI(pi: ExtensionAPI, engine: GoalEngine): {
 
   const clearTick = (): void => { if (tick) clearInterval(tick); tick = undefined; };
 
+  // After a goal completes, the first user message hides the widget. The hide
+  // latches until the goal changes (id or status), so per-request refreshes do
+  // not repaint it.
+  let hiddenGoal: { goalId: string; status: ThreadGoalStatus } | undefined;
+
   const goalComponent = (goal: ThreadGoal) => (tui: { requestRender(force?: boolean): void }, theme: { fg(color: string, text: string): string }) => {
     const leading = `${STATUS_ICONS[goal.status]} Goal: ${goal.status}`;
     const color = STATUS_COLORS[goal.status];
@@ -299,9 +305,17 @@ export function registerGoalUI(pi: ExtensionAPI, engine: GoalEngine): {
       ? engine.service.getGoal(engine.getThreadId()!) ?? null
       : null;
     if (!latestUi) return;
-    if (!goal) { clearTick(); latestUi.setWidget("secretary:goal", undefined); return; }
+    if (!goal) { hiddenGoal = undefined; clearTick(); latestUi.setWidget("secretary:goal", undefined); return; }
+    if (hiddenGoal && (hiddenGoal.goalId !== goal.goalId || hiddenGoal.status !== goal.status)) hiddenGoal = undefined;
+    if (hiddenGoal) { clearTick(); latestUi.setWidget("secretary:goal", undefined); return; }
     latestUi.setWidget("secretary:goal", goalComponent(goal));
   };
+
+  pi.on("input", () => {
+    const threadId = engine.getThreadId();
+    const goal = threadId ? engine.service.getGoal(threadId) : null;
+    if (goal?.status === "complete") hiddenGoal = { goalId: goal.goalId, status: goal.status };
+  });
 
   const bind = (ctx: ExtensionContext): void => {
     if (!disposed) latestUi = ctx.hasUI ? ctx.ui : null;
