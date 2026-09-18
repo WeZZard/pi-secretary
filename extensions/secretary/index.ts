@@ -93,8 +93,15 @@ export function registerGoalTools(pi: ExtensionAPI, engine: GoalEngine, sync: Go
       const budget = args.token_budget !== undefined ? `, ${abbreviateTokens(args.token_budget)} tokens` : "";
       return new Text(theme.fg("toolTitle", theme.bold("Create Goal: ")) + theme.fg("text", args.objective + budget), 0, 0);
     },
-    renderResult(rendered, _options, theme) {
-      return errorText(theme, rendered) ?? new Text(theme.fg("success", "Goal created."), 0, 0);
+    renderResult(rendered, options, theme) {
+      const failure = errorText(theme, rendered);
+      if (failure) return failure;
+      const goal = rendered.details?.goal;
+      if (!goal) return new Text(theme.fg("muted", "No goal was created."), 0, 0);
+      const color = STATUS_COLORS[goal.status];
+      let text = theme.fg(color, `Created Goal. ${updateSummary(goal, Date.now())}`);
+      if (options.expanded) text += `\n\nObjective: ${goal.objective}`;
+      return new Text(text, 0, 0);
     },
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const response = executeCreateGoal(engine.service, threadOf(ctx), params, engine.maxGoalTokenBudget(), sync.userDecision());

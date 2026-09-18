@@ -207,7 +207,9 @@ test("goal tools render calls and results with the specified formats", async (t)
   assert.equal(render(create.renderCall({ objective: "Ship the widget", token_budget: 25000 }, theme)),
     "Create Goal: Ship the widget, 25K tokens");
   assert.equal(render(create.renderCall({ objective: "Ship the widget" }, theme)), "Create Goal: Ship the widget");
-  assert.equal(render(create.renderResult({ content: [{ type: "text", text: "x" }], details: { goal: null, remaining_tokens: null } }, { expanded: false, isPartial: false }, theme)), "Goal created.");
+  assert.equal(render(create.renderResult({ content: [{ type: "text", text: "x" }],
+    details: { goal: { threadId: "t", goalId: "g", objective: "Ship the widget", status: "active", tokensUsed: 0, timeUsedSeconds: 0, createdAt: Date.now(), updatedAt: 0 },
+      remaining_tokens: null } }, { expanded: false, isPartial: false }, theme)), "Created Goal. Consumed 0 tokens; Used 0 sec");
   assert.equal(render(create.renderResult({ content: [{ type: "text", text: "objective must not be empty" }], details: undefined }, { expanded: false, isPartial: false }, theme)),
     "Error: objective must not be empty");
 
