@@ -83,14 +83,12 @@ export function registerGoalTools(pi: ExtensionAPI, engine: GoalEngine, sync: Go
 
   pi.registerTool(defineTool<typeof getGoalToolSpec.parameters, GoalToolResponse>({
     ...getGoalToolSpec,
-    renderShell: "self",
     async execute(_id, _params, _signal, _onUpdate, ctx) {
       return result(executeGetGoal(engine.service, threadOf(ctx)));
     },
   }));
   pi.registerTool(defineTool<typeof createGoalToolSpec.parameters, GoalToolResponse>({
     ...createGoalToolSpec,
-    renderShell: "self",
     renderCall(args) {
       const budget = args.token_budget !== undefined ? `, ${abbreviateTokens(args.token_budget)} tokens` : "";
       return new Text(`Create Goal: ${args.objective}${budget}`, 0, 0);
@@ -115,7 +113,6 @@ export function registerGoalTools(pi: ExtensionAPI, engine: GoalEngine, sync: Go
   }));
   pi.registerTool(defineTool<typeof updateGoalToolSpec.parameters, GoalToolResponse>({
     ...updateGoalToolSpec,
-    renderShell: "self",
     renderCall(args) {
       const action = UPDATE_ACTIONS[args.status] ?? args.status;
       const threadId = engine.getThreadId();
