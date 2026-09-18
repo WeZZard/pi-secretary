@@ -8,6 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { TestContext } from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { AgentService, type LaunchSpec } from "../../extensions/secretary/agents/service.ts";
+import { defaultAgentUi } from "../../extensions/secretary/agents/configuration.ts";
 import { AgentRepository } from "../../extensions/secretary/agents/storage/agent-repository.ts";
 import { WorktreeManager } from "../../extensions/secretary/agents/worktrees.ts";
 import { formatAgentOutcome } from "../../extensions/secretary/agents/presentation.ts";
@@ -31,7 +32,7 @@ async function fixture(t: TestContext) {
   const holds = new Map<string, ReturnType<typeof deferred<Awaited<RunningChild["result"]>>>>();
   const starts = new Map<string, ReturnType<typeof deferred<void>>>();
   const service = new AgentService({ parentId: "parent", root: artifacts, repository: repo,
-    config: { modelAliases: {}, maxConcurrent: 1, maxQueued: 8, shutdownTimeoutMs: 1000 },
+    config: { modelAliases: {}, ui: defaultAgentUi(), maxConcurrent: 1, maxQueued: 8, shutdownTimeoutMs: 1000 },
     ctx: { cwd: root, mode: "tui" } as ExtensionContext,
     runner: async ({ agent, run, hooks }) => {
       const session = join(artifacts, `${agent.agentId}.jsonl`);

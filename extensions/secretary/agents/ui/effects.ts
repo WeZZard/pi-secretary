@@ -1,9 +1,11 @@
-import type { AgentSnapshot } from "../records.ts";
+import type { AgentRowView, AgentSnapshot } from "../records.ts";
 import type { Operation, UiEffect, UiEvent } from "./state.ts";
+import type { TranscriptEvent } from "./transcript-events.ts";
 export interface OperationReceipt { outcome: "accepted" | "rejected" | "uncertain"; message: string }
 export interface AgentUIPort {
   list(): AgentSnapshot[];
-  transcript(agentId: string): Promise<string>;
+  viewModels?(): AgentRowView[];
+  transcript(agentId: string): Promise<readonly TranscriptEvent[]>;
   message(agentId: string, text: string, operationId: string): Promise<unknown>;
   stop(runId: string, operationId: string): Promise<unknown>;
   cleanup(agentId: string, operationId: string): Promise<unknown>;
@@ -16,7 +18,7 @@ export function rejection(error: unknown): OperationReceipt {
 }
 export async function runEffect(effect: UiEffect, port: AgentUIPort, dispatch: (event: UiEvent) => void): Promise<void> {
   if (effect.type === "load") {
-    try { dispatch({ ...effect, type: "transcript", text: await port.transcript(effect.agentId) }); }
+    try { dispatch({ ...effect, type: "transcript", events: await port.transcript(effect.agentId) }); }
     catch (error) { dispatch({ ...effect, type: "transcript", error: String(error) }); }
   } else if (effect.type === "operate" || effect.type === "receipt") {
     const op = effect.operation;

@@ -29,7 +29,7 @@ function inspector(snapshots: ReturnType<ReturnType<typeof serviceHarness>["serv
   send({ type: "activate", parentId: "parent", epoch: "epoch", viewId: "view" });
   send({ type: "open", viewId: "view" });
   send({ type: "select", agentId: snapshots[0]!.agent.agentId, requestId: "load" });
-  send({ type: "transcript", agentId: snapshots[0]!.agent.agentId, requestId: "load", epoch: "epoch", viewId: "view", text: "" });
+  send({ type: "transcript", agentId: snapshots[0]!.agent.agentId, requestId: "load", epoch: "epoch", viewId: "view", events: [] });
   return { send, state: () => state };
 }
 
@@ -165,11 +165,12 @@ const bindings: ScenarioBindings = {
     const guidance = h.repository.guidance(a.run!.runId)[0]!;
     assert.equal(guidance.state, "undelivered"); assert.equal(guidance.text, "Retain this draft");
     const visible = await h.service.transcript(a.agent.agentId);
+    const visibleText = visible.map(event => "text" in event ? event.text : "").join("\n");
     // Recover a usable saved history explicitly; a new instruction must not replay old guidance.
     const agent = h.service.resolve(a.agent.agentId); agent.sessionPath = join(h.root, "repaired.jsonl"); writeFileSync(agent.sessionPath, '{"type":"session"}\n'); h.repository.putAgent(agent); h.runnerOptions.failInitialization = false;
     const resumed = await h.service.message(agent.agentId, "Only this new instruction", "resume"); const child = await h.running(resumed.runId);
     assert.equal(child.options.run.prompt, "Only this new instruction"); assert.deepEqual(child.messages, []);
-    assert.deepEqual({ explainsInitializationFailure: /initialization failure/i.test(guidance.reason ?? ""), inspectableDraft: visible.includes("Retain this draft") },
+    assert.deepEqual({ explainsInitializationFailure: /initialization failure/i.test(guidance.reason ?? ""), inspectableDraft: visibleText.includes("Retain this draft") },
       { explainsInitializationFailure: true, inspectableDraft: true }, "Undelivered guidance must expose its failure reason and copyable text through inspection");
   },
   "ACC-SA-03-06": async ({ t }) => {

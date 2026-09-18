@@ -9,6 +9,7 @@ import { WorkspaceManager } from "../../extensions/secretary/agents/workspaces.t
 import { runGit } from "../../extensions/secretary/agents/worktrees.ts";
 import { resolveIsolation } from "../../extensions/secretary/agents/configuration.ts";
 import { AgentService } from "../../extensions/secretary/agents/service.ts";
+import { defaultAgentUi } from "../../extensions/secretary/agents/configuration.ts";
 import { AgentRepository } from "../../extensions/secretary/agents/storage/agent-repository.ts";
 import { formatAgentOutcome } from "../../extensions/secretary/agents/presentation.ts";
 
@@ -66,7 +67,7 @@ for (const state of ["none", "unborn", "committed"] as const) {
     let childCwd = "";
     const service = new AgentService({ parentId: "parent", root: f.storage, repository,
       ctx: { cwd: f.project, mode: "tui" } as ExtensionContext,
-      config: { modelAliases: {}, maxConcurrent: 1, maxQueued: 1, shutdownTimeoutMs: 1000 },
+      config: { modelAliases: {}, ui: defaultAgentUi(), maxConcurrent: 1, maxQueued: 1, shutdownTimeoutMs: 1000 },
       runner: async ({ agent }) => { childCwd = agent.cwd; return { result: Promise.resolve({ status: "succeeded", output: "done" }), steer: async () => {}, abort: async () => {}, dispose: async () => {} }; },
     });
     try {

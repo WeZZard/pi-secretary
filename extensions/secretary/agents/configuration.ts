@@ -1,15 +1,24 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
+import { validateInspectorKeybindings, type InspectorKeybindingsConfig } from "./ui/keybindings.ts";
 
 export const MODEL_ALIASES = ["sonnet", "opus", "haiku", "fable"] as const;
 export type AgentModelAlias = (typeof MODEL_ALIASES)[number];
+export interface AgentUiConfiguration {
+  inlineToolDisplay: "rich" | "summary";
+  fleetViewPlacement: "belowEditor" | "aboveEditor";
+  asyncWidget: boolean;
+  fleetKeybindings: InspectorKeybindingsConfig;
+}
 export interface AgentConfiguration {
   modelAliases: Partial<Record<AgentModelAlias, string>>;
   maxConcurrent: number;
   maxQueued: number;
   shutdownTimeoutMs: number;
+  ui: AgentUiConfiguration;
 }
+export const defaultAgentUi = (): AgentUiConfiguration => ({ inlineToolDisplay: "rich", fleetViewPlacement: "belowEditor", asyncWidget: true, fleetKeybindings: {} });
 
 /** Omission inherits the definition; an explicit none keeps the parent directory. */
 export function resolveIsolation(requested: unknown, definition?: "none" | "worktree"): "none" | "worktree" {
@@ -27,7 +36,7 @@ function object(value: unknown, label: string): Record<string, unknown> {
 }
 
 export function loadAgentConfiguration(cwd: string, agentDir: string, trusted: boolean): AgentConfiguration {
-  const result: AgentConfiguration = { modelAliases: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000 };
+  const result: AgentConfiguration = { modelAliases: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, ui: defaultAgentUi() };
   const paths = [join(agentDir, "secretary.json")];
   if (trusted) paths.push(join(cwd, CONFIG_DIR_NAME, "secretary.json"));
   for (const path of paths) {
@@ -51,6 +60,22 @@ export function loadAgentConfiguration(cwd: string, agentDir: string, trusted: b
           throw new Error(`${path}: agents.${key} must be an integer >= ${minimum}`);
         }
         result[key] = value;
+      } else if (key === "ui") {
+        const ui = object(value, `${path}: agents.ui`);
+        for (const [uiKey, uiValue] of Object.entries(ui)) {
+          if (uiKey === "inlineToolDisplay") {
+            if (uiValue !== "rich" && uiValue !== "summary") throw new Error(`${path}: agents.ui.inlineToolDisplay must be "rich" or "summary"`);
+            result.ui.inlineToolDisplay = uiValue;
+          } else if (uiKey === "fleetViewPlacement") {
+            if (uiValue !== "belowEditor" && uiValue !== "aboveEditor") throw new Error(`${path}: agents.ui.fleetViewPlacement must be "belowEditor" or "aboveEditor"`);
+            result.ui.fleetViewPlacement = uiValue;
+          } else if (uiKey === "asyncWidget") {
+            if (typeof uiValue !== "boolean") throw new Error(`${path}: agents.ui.asyncWidget must be a boolean`);
+            result.ui.asyncWidget = uiValue;
+          } else if (uiKey === "fleetKeybindings") {
+            result.ui.fleetKeybindings = { ...result.ui.fleetKeybindings, ...validateInspectorKeybindings(uiValue, `${path}: agents.ui.fleetKeybindings`) };
+          } else throw new Error(`${path}: unsupported agents.ui field ${uiKey}`);
+        }
       } else throw new Error(`${path}: unsupported agents field ${key}`);
     }
   }

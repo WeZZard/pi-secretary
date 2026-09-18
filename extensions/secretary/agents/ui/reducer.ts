@@ -1,5 +1,5 @@
 import { TERMINAL_STATUSES, type AgentSnapshot } from "../records.ts";
-import { captureAnchor, restoreTranscript } from "./transcript.ts";
+import { captureAnchor, restoreTranscript, transcriptLineCount } from "./transcript.ts";
 import { initialState, type ActionTarget, type Operation, type UiEffect, type UiEvent, type UiState } from "./state.ts";
 export const active = (s: AgentSnapshot) => !!s.run && !TERMINAL_STATUSES.has(s.run.status);
 export const messageEligible = (s: AgentSnapshot | undefined): boolean => !!s && s.agent.resumable && (!s.agent.worktree || s.agent.worktree.state === "allocated") && s.run?.status !== "cancelling" && (active(s) || !!s.agent.sessionPath);
@@ -46,10 +46,20 @@ export function transition(previous: UiState, event: UiEvent, snapshots: readonl
       patch({ navigation: { kind: "inspector", detail: { kind: "loading", agentId: event.agentId, requestId: event.requestId, previous: prior } } });
       effects.push({ type: "load", epoch: state.epoch, viewId: state.viewId, agentId: event.agentId, requestId: event.requestId }); break;
     }
+    case "select-first": case "select-last": {
+      if (state.navigation.kind !== "inspector" || state.dialog.kind !== "closed") break;
+      const target = event.type === "select-first" ? state.snapshots[0] : state.snapshots.at(-1);
+      if (!target) break;
+      const detail = state.navigation.detail;
+      if (detail.kind !== "list" && detail.agentId === target.agent.agentId) break;
+      const prior = detail.kind === "ready" && detail.agentId === target.agent.agentId ? detail.transcript : undefined;
+      patch({ navigation: { kind: "inspector", detail: { kind: "loading", agentId: target.agent.agentId, requestId: event.requestId, previous: prior } } });
+      effects.push({ type: "load", epoch: state.epoch, viewId: state.viewId, agentId: target.agent.agentId, requestId: event.requestId }); break;
+    }
     case "transcript": {
       const nav = state.navigation;
       if (event.epoch !== state.epoch || event.viewId !== state.viewId || nav.kind !== "inspector" || nav.detail.kind !== "loading" || nav.detail.agentId !== event.agentId || nav.detail.requestId !== event.requestId) break;
-      patch({ navigation: { kind: "inspector", detail: event.error ? { kind: "unavailable", agentId: event.agentId, reason: event.error } : { kind: "ready", agentId: event.agentId, transcript: restoreTranscript(nav.detail.previous, event.text ?? "") } } }); break;
+      patch({ navigation: { kind: "inspector", detail: event.error ? { kind: "unavailable", agentId: event.agentId, reason: event.error } : { kind: "ready", agentId: event.agentId, transcript: restoreTranscript(nav.detail.previous, event.events ?? []) } } }); break;
     }
     case "compose": {
       const nav = state.navigation;
@@ -108,7 +118,7 @@ export function transition(previous: UiState, event: UiEvent, snapshots: readonl
     case "scroll": {
       const nav = state.navigation;
       if (state.dialog.kind !== "closed" || nav.kind !== "inspector" || nav.detail.kind !== "ready") break;
-      const t = nav.detail.transcript, end = Math.max(0, t.text.split("\n").length - event.pageSize);
+      const t = nav.detail.transcript, end = Math.max(0, transcriptLineCount(t.events) - event.pageSize);
       const anchor = Math.max(0, Math.min(end, (t.follow === "following" ? end : t.anchor) + event.delta));
       patch({ navigation: { ...nav, detail: { ...nav.detail, transcript: { ...t, ...captureAnchor(t, anchor), follow: anchor >= end ? "following" : "paused" } } } }); break;
     }

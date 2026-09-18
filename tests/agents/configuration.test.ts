@@ -18,7 +18,7 @@ function fixture(t: TestContext) {
 
 test("configuration defaults, trusted overlay, and nonmutation", (t) => {
   const { cwd, agentDir, put } = fixture(t);
-  assert.deepEqual(loadAgentConfiguration(cwd, agentDir, false), { modelAliases: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000 });
+  assert.deepEqual(loadAgentConfiguration(cwd, agentDir, false), { modelAliases: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, ui: { inlineToolDisplay: "rich", fleetViewPlacement: "belowEditor", asyncWidget: true, fleetKeybindings: {} } });
   const global = join(agentDir, "secretary.json"), project = join(cwd, CONFIG_DIR_NAME, "secretary.json");
   const content = JSON.stringify({ unrelated: true, agents: { modelAliases: { sonnet: "p/one", haiku: "p/two" }, maxConcurrent: 2 } });
   put(global, content);
@@ -37,10 +37,30 @@ test("configuration defaults, trusted overlay, and nonmutation", (t) => {
 
 test("configuration rejects unsupported fields and invalid values", (t) => {
   const { cwd, agentDir, put } = fixture(t);
-  for (const agents of [null, [], { extra: 1 }, { maxConcurrent: 0 }, { maxQueued: -1 }, { shutdownTimeoutMs: 1.2 }, { modelAliases: null }, { modelAliases: { unknown: "p/id" } }, { modelAliases: { sonnet: "inherit" } }]) {
+  for (const agents of [null, [], { extra: 1 }, { maxConcurrent: 0 }, { maxQueued: -1 }, { shutdownTimeoutMs: 1.2 }, { modelAliases: null }, { modelAliases: { unknown: "p/id" } }, { modelAliases: { sonnet: "inherit" } },
+    { ui: null }, { ui: { unknown: true } }, { ui: { inlineToolDisplay: "fancy" } }, { ui: { fleetViewPlacement: "sidebar" } }, { ui: { asyncWidget: "yes" } },
+    { ui: { fleetKeybindings: [] } }, { ui: { fleetKeybindings: { frobnicate: ["f"] } } }, { ui: { fleetKeybindings: { stop: [] } } }, { ui: { fleetKeybindings: { stop: [42] } } }]) {
     put(join(agentDir, "secretary.json"), JSON.stringify({ agents }));
     assert.throws(() => loadAgentConfiguration(cwd, agentDir, false));
   }
+});
+
+test("ui configuration accepts documented values and project overrides merge over global", (t) => {
+  const { cwd, agentDir, put } = fixture(t);
+  const global = join(agentDir, "secretary.json"), project = join(cwd, CONFIG_DIR_NAME, "secretary.json");
+  put(global, JSON.stringify({ agents: { ui: { inlineToolDisplay: "summary", asyncWidget: false, fleetKeybindings: { stop: ["shift+t"], close: ["ctrl+q"] } } } }));
+  const base = loadAgentConfiguration(cwd, agentDir, false);
+  assert.equal(base.ui.inlineToolDisplay, "summary");
+  assert.equal(base.ui.asyncWidget, false);
+  assert.equal(base.ui.fleetViewPlacement, "belowEditor");
+  assert.deepEqual(base.ui.fleetKeybindings, { stop: ["shift+t"], close: ["ctrl+q"] });
+  put(project, JSON.stringify({ agents: { ui: { fleetViewPlacement: "aboveEditor", fleetKeybindings: { stop: ["shift+w"] } } } }));
+  const trusted = loadAgentConfiguration(cwd, agentDir, true);
+  assert.equal(trusted.ui.inlineToolDisplay, "summary", "project omission inherits the global value");
+  assert.equal(trusted.ui.fleetViewPlacement, "aboveEditor");
+  assert.deepEqual(trusted.ui.fleetKeybindings, { stop: ["shift+w"], close: ["ctrl+q"] }, "action-level overrides merge; sibling actions are retained");
+  const untrusted = loadAgentConfiguration(cwd, agentDir, false);
+  assert.equal(untrusted.ui.fleetViewPlacement, "belowEditor", "untrusted project configuration is ignored");
 });
 
 test("discovery precedence, capabilities, and stable independent snapshots", (t) => {

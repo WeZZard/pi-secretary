@@ -62,6 +62,20 @@ The synthetic child UI proxy advertised `hasUI: true`, but Pi's object-spread wr
 
 The runner now retains Pi's complete native headless UI context. The parent remains interactive; child extensions see `hasUI: false`. The passing terminal test verifies this separation and the actual child file read. Unrelated extension errors are not suppressed.
 
+## TUI presentation port (2026-09-18)
+
+This section records verification of the nicobailon/pi-subagents TUI port onto Secretary's `AgentService` runtime (architecture §12.6, delivery record `.plans/2026-09-18-subagent-tui-port.md`). The port is presentation-only: no runtime launch, stop, or message capability changed.
+
+**Verified by automated tests:** structured transcript events (typed assistant/user/tool/notice events paired by stable entry id, header-form tool lines, bounded argument/output expansion, redacted-harness coverage) in `tests/agents/transcript-events.test.ts`; derived view models and usage labels (separate formula from the goal progress formula) in `tests/agents/view-models.test.ts`; FleetView rows and the foldable async widget in `tests/agents/fleet-view.test.ts` and `async-widget.test.ts`; the bordered inspector (position indicator, contextual footer, Home/End, `r`/`R` reload, width fallbacks below the two-pane threshold) in `tests/agents/inspector.test.ts`; summary/rich inline display modes in `tests/agents/inline-rendering.test.ts`; `agents.ui` configuration validation, trust precedence, and keybinding hint/input consistency in `tests/agents/configuration.test.ts` and `keybindings.test.ts`.
+
+**Acceptance:** four new scenarios (`ACC-SA-UI-14` through `ACC-SA-UI-17`) in `doc/acceptance/ui-state-machine.feature` with bindings in `tests/acceptance/ui.test.ts`; existing inspector scenarios were re-bound to the ported presentation. The reviewed specification hash was updated after the bindings passed.
+
+**Terminal walkthrough:** `npm run record:tui` succeeded against real interactive Pi (`test-results/tui/20260918T172515Z-1275ad6d`, git revision recorded in `manifest.json`). Twelve checkpoints replay through `scripts/render-tui-recording.ts`, including the bordered wide/narrow inspector, paused-then-following transcript scrolling, tool-detail expansion, the composer, and stop confirmation. Generated frames remain under the ignored `test-results/` tree per the artifact policy.
+
+**Reproduction commands:** `npm run check`, `npm run test:subagents` (153 pass), `npm run test:acceptance` (147 pass), `npm run test` (521 pass), `npm run lint:mermaid`, `npm run lint:acceptance`.
+
+**Not verified:** human visual approval of the new layout, real IME composition, screen readers, other terminal emulators, and the real-provider E2E matrix (unchanged by this presentation-only port, but not re-run).
+
 ## Remaining verification and operational limits
 
 - Human visual approval, real IME composition, screen-reader behavior, and additional terminal emulators remain unverified.

@@ -8,56 +8,66 @@
 
 ## 1. Design Principles
 
-- The interface follows nicobailon's inline display, FleetView, and inspector interaction model.
+- The interface ports nicobailon's inline display, FleetView, async widget, and inspector interaction model onto Secretary's Claude Code-compatible runtime.
 - The user can inspect background work without asking the parent model to poll.
-- One persistent FleetView is displayed below the editor by default. An additional async widget is not displayed.
+- FleetView is displayed below the editor by default and can be configured above it. The async widget is displayed below the editor by default and can be disabled.
 - Status uses text and symbols as well as color.
 - Closing a view is different from stopping execution.
 - A completed execution is different from a completed user objective.
 - The UI and tool responses report the same underlying state.
 
-The single-widget default and the command names below are deliberate Secretary choices. They do not claim to reproduce every upstream control or external terminal integration.
+Foreground detach, live prompt auditing, external job display, and external terminal inspectors remain excluded. The corresponding upstream surfaces are not ported because their runtime features are out of scope. All other upstream controls and configuration are ported.
 
 ## 2. Information Architecture
 
 ### 2.1 Inline tool display
 
 - Each `Agent` call displays the agent type, task description, execution mode, and available status.
-- A foreground call streams bounded recent activity until it settles.
+- Two display modes are configurable. Rich mode is the default and allows expansion; summary mode keeps one static result row per call and ignores expansion.
+- A foreground call streams bounded recent activity until it settles. Its card shows the agent name and status glyph, a bounded task line, current activity, a live status line, the configured tool-expansion hint, and available token and duration statistics.
 - Interrupting a foreground `Agent` call requests cancellation of that child. The child's output remains inspectable if the foreground response is interrupted. Cancelling a `TaskOutput` wait stops only the wait.
 - A background call reports the launch identifier and directs the user to FleetView for current activity.
 - A completed background execution creates a separate completion entry. It does not rewrite the historical launch result. A failed or interrupted completion produces a visible notice in the owning session.
-- The configured pi tool-expansion key reveals task details, result text, and artifact paths.
+- The configured pi tool-expansion key reveals task details, result text, and artifact paths in rich mode.
 - A truncated result identifies where the full output can be read.
 
 ### 2.2 FleetView
 
-- The collapsed view reports active and queued work belonging to the current parent session.
+- The collapsed view reports active and queued work belonging to the current parent session. It includes cumulative usage labels when usage is available and identifies the activation keys.
 - The expanded view contains the main session and agent rows ordered by creation time.
-- Each row shows a description, explicit status, resolved model, and elapsed execution time when available.
-- Context usage is displayed only when it is available from the host. Unknown usage is not displayed as zero.
+- Each row shows the agent name, an explicit status glyph and label, elapsed execution time when available, and usage labels when available.
+- Rows are themed and display width-aware. The layout truncates by terminal display width and realigns right-side information after resize.
+- **Context-window usage** is the latest assistant turn's input plus cache-read tokens. **Cumulative usage** is the accumulated input-plus-output total. These are different quantities and are labeled separately. They are not the goal-budget usage defined by the goal subsystem, and they are not substituted for it.
+- Unknown usage is not displayed as zero. Rows whose source artifacts predate window data keep the token-total label without a window label.
 - Recently finished executions remain visible until FleetView is next collapsed. The inspector retains the full session list.
 - FleetView is hidden when no active, queued, or recently finished work remains. The inspector can still be opened by command.
 
 The following is a layout example. Angle-bracket values are placeholders, not measurements:
 
 ```text
-<active count> active agents · <queued count> queued · ↓/← to inspect
+<active count> active agents · <queued count> queued · <window label> · <cumulative label> · ↓/← to inspect
 
 > main
-  Explore          Locate request handlers     running
-                   <model> · <elapsed time>
-  general-purpose  Implement validation        queued
-  reviewer         Review error handling       failed
+  general-purpose  Implement validation        <elapsed> · <window> · <cumulative>
+  reviewer         Review error handling       <elapsed> · <window> · <cumulative>
 ```
 
-### 2.3 Inspector
+### 2.3 Async widget
+
+- The async widget is a separate live summary below the editor. It lists active background executions with status glyphs, per-agent rows, current activity, elapsed time, and available usage.
+- It is enabled by default. Configuration can disable it without disabling FleetView.
+- Its expand key follows the configured pi tool-expansion key. Expanding reveals live detail lines for running children.
+- It does not intercept printable editor keys. Clicking its header in a mouse-enabled full-screen host folds it into a one-line status summary; clicking again restores the layout. Folding does not change run execution or completion notification.
+- The widget is removed when no active background work remains.
+
+### 2.4 Inspector
 
 - `/agents` opens the current-session agent list and selected transcript.
 - `/agents <id-or-name>` opens one agent directly.
+- The inspector is a bordered overlay with a title row, a selection-position indicator, a footer of available keys, and a minimum supported width below which only a diagnostic line is shown.
 - Wide terminals display the agent list beside the transcript. Narrow terminals display a selectable list followed by a full-width detail view.
 - Details include the original task, definition source, model, status, current activity, messages, tool calls, outcome, output path, and worktree information.
-- Output text is rendered as Markdown where appropriate. Control sequences from transcripts are not executed.
+- The transcript renders assistant text as Markdown where appropriate, tool calls with their name, bounded arguments, status, and bounded output, and notices such as queued or undelivered guidance. Control sequences from transcripts are not executed.
 - New content is followed automatically only while the user is at the end of the transcript.
 - Scrolling upward pauses automatic following. Returning to the end resumes it.
 
@@ -118,15 +128,18 @@ Secretary initially exposes one guidance operation. Nicobailon's `steer`, `follo
 | FleetView has focus. | Up/Down or `j/k` | The key changes selection. |
 | FleetView has focus. | Enter | The key opens the selected inspector or returns to the main session. |
 | FleetView has focus. | Escape | The key returns focus to the editor. |
+| The inspector is open. | Up/Down or `j/k` | The key changes the selected agent. |
+| The inspector is open. | Home/End | The key selects the first or last agent. |
 | The inspector is open. | Page Up/Page Down | The key scrolls by the available transcript viewport. |
 | The inspector is open. | Shift+K/Shift+J | The key scrolls the transcript by one line. |
-| The inspector is open. | `x` or the configured tool-expansion key | The key toggles tool details. |
+| The inspector is open. | `x`, `X`, or the configured tool-expansion key | The key toggles tool details. |
 | The inspector is open. | `s` | The key opens the message composer. |
 | The inspector is open. | `D` | The key opens stop confirmation. |
+| The inspector is open. | `r` or `R` | The key reloads the selected transcript. |
 | The inspector is open. | Escape | The key closes the inspector without stopping work. |
 | The composer is open. | Escape | The key cancels composition without sending a message. |
 
-- Custom keybindings and displayed hints must remain consistent.
+- Inspector-level keys are configurable when a terminal intercepts them. Displayed hints always reflect the configured keys. Prompt interactions keep fixed keys such as Enter and Escape.
 - Printable navigation keys are captured only after focus enters FleetView or the inspector.
 - Normal editing, file completion, IME composition, and existing editor extensions continue to work.
 - The interface wraps or truncates by terminal display width and remains usable after resize.
@@ -180,9 +193,19 @@ sequenceDiagram
 ## 7. Review Criteria
 
 - Reviewers must be able to distinguish launch, completion, failure, partial output, and cancellation without relying on color.
-- Inspection, messaging, stopping, and cleanup must satisfy the requirements in [SA-02 through SA-06](../user-stories/subagents.md#sa-02-observe-concurrent-work).
+- Inspection, messaging, stopping, and cleanup must satisfy the requirements in [SA-02 through SA-06](../user-stories/subagents.md#sa-02-observe-concurrent-work), and the ported presentation must satisfy [SA-10](../user-stories/subagents.md#sa-10-recognize-delegated-work-through-the-ported-presentation).
 - A UI walkthrough must cover narrow and wide terminals, keyboard focus, resize, scrolling during streaming, completion while open, and stale stop confirmation.
 - The review must record visual verification separately from execution tests and human approval.
 - The user must retain their draft, selected target, and reading position through progress updates and unsuccessful actions where the interaction contract requires it.
 - Technical transition and guard coverage is specified in the [architecture verification contract](../arch/subagents.md#125-state-machine-verification).
 - The [UI state-machine acceptance scenarios](../../doc/acceptance/ui-state-machine.feature) cover modal focus, duplicate submission, stale responses, and session deactivation.
+
+## 8. Ported Surface Exclusions
+
+The following upstream surfaces depend on runtime features that are out of scope in [Section 1 of the requirements](../user-stories/subagents.md#1-purpose-and-confirmed-constraints). They are not ported, and no equivalent control is shown:
+
+- The foreground detach card hint and configured shortcut. Interrupting a foreground call remains the supported way to stop foreground work.
+- Prompt Audit and its redo-with-guidance view. Secretary does not record or replay live prompt snapshots.
+- External job rows, project panes, and external terminal inspector plugins such as Herdr and Ghostty.
+- Upstream steering delivery modes. Secretary exposes one guidance operation whose acknowledgment follows the selected Claude Code messaging contract.
+- Workflow, chain, mission, and schedule tree rows. Secretary's initial scope excludes orchestration.

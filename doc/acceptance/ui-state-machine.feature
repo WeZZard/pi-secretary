@@ -117,3 +117,38 @@ Feature: Keep interaction state consistent during asynchronous agent activity
     Then the inspector identifies A and explains why its transcript is unavailable.
     And the interface does not silently select another agent.
     And the user can retry loading A, select another agent, or close the inspector.
+
+  @ACC-SA-UI-14 @proposed @SA-10
+  Scenario: List active background work in the async widget.
+    Given two background agents are running and one has completed.
+    When the async widget renders below the editor.
+    Then it lists the running executions with glyphs, activity, elapsed time, and usage labels.
+    And the completed execution is absent from the widget.
+    And FleetView and tool responses show the same underlying state.
+
+  @ACC-SA-UI-15 @proposed @SA-10
+  Scenario: Render the Agent call in the configured inline display mode.
+    Given agents.ui.inlineToolDisplay is "summary".
+    When an Agent call completes.
+    Then exactly one static result row is shown for the call.
+    And expansion does not change the rendered row.
+    When agents.ui.inlineToolDisplay is "rich" and a foreground call is running.
+    Then the card shows the agent name, status glyph, bounded task line, activity, live status, and an expansion hint.
+
+  @ACC-SA-UI-16 @proposed @SA-10
+  Scenario: Reflect configured inspector keybindings in behavior and hints.
+    Given agents.ui.fleetKeybindings overrides the stop and close actions.
+    When the user presses the configured stop key in the inspector.
+    Then stop confirmation opens for the selected run.
+    And the footer displays the configured keys, not the defaults.
+    When the configuration contains an unsupported key or value.
+    Then configuration validation fails with an explicit error.
+
+  @ACC-SA-UI-17 @proposed @SA-10
+  Scenario: Present the bordered inspector layout with width fallbacks.
+    Given the inspector is open with an agent selected.
+    Then the overlay shows a bordered frame, a title row, a selection-position indicator, and a footer.
+    When the terminal is narrower than the two-pane threshold.
+    Then the roster stacks above a full-width detail view.
+    When the terminal is below the minimum supported width.
+    Then only a diagnostic line is shown.

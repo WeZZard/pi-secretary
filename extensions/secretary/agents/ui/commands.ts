@@ -1,22 +1,39 @@
 import { randomUUID } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { matchesKey } from "@earendil-works/pi-tui";
+import { AsyncWidget, ASYNC_WIDGET_KEY, startAsyncWidgetPolling } from "./async-widget.ts";
 import { FleetView } from "./fleet-view.ts";
 import { Inspector } from "./inspector.ts";
+import type { InspectorKeybindingsConfig } from "./keybindings.ts";
 import { runEffect, type AgentUIPort } from "./effects.ts";
 import { fleetRows, transition } from "./reducer.ts";
 import { initialState, type UiEvent } from "./state.ts";
 import { sanitize } from "./transcript.ts";
 export type { AgentUIPort, OperationReceipt } from "./effects.ts";
 export const FLEET_WIDGET_KEY = "secretary.agents.fleet";
-export function registerAgentUI(pi: ExtensionAPI, port: AgentUIPort): { bind(ctx: ExtensionContext): void; dispose(): void } {
+export interface AgentUiOptions {
+  fleetViewPlacement?: "belowEditor" | "aboveEditor";
+  asyncWidget?: boolean;
+  keybindings?: InspectorKeybindingsConfig;
+}
+export function registerAgentUI(pi: ExtensionAPI, port: AgentUIPort, resolveOptions: AgentUiOptions | (() => AgentUiOptions) = {}): { bind(ctx: ExtensionContext): void; dispose(): void } {
+  const options = () => typeof resolveOptions === "function" ? resolveOptions() : resolveOptions;
   let state = initialState();
   let ctx: ExtensionContext | undefined;
   let unsubscribe: (() => void) | undefined, terminal: (() => void) | undefined;
   let requestRender: (() => void) | undefined, close: (() => void) | undefined;
   let customOpen = false, promptDepth = 0, transcriptDirty = false;
-  const fleet = new FleetView(() => state);
-  const render = () => { if (ctx?.mode === "tui") { ctx.ui.setWidget(FLEET_WIDGET_KEY, () => fleet, { placement: "belowEditor" }); requestRender?.(); } };
+  let polling: { dispose(): void } | undefined;
+  let asyncWidget: AsyncWidget | undefined;
+  const placement = () => options().fleetViewPlacement ?? "belowEditor";
+  const asyncEnabled = () => options().asyncWidget ?? true;
+  const fleet = new FleetView(() => state, { rows: () => port.viewModels?.() ?? [] });
+  const render = () => {
+    if (ctx?.mode !== "tui") return;
+    ctx.ui.setWidget(FLEET_WIDGET_KEY, () => fleet, { placement: placement() });
+    if (asyncEnabled() && asyncWidget) ctx.ui.setWidget(ASYNC_WIDGET_KEY, () => asyncWidget!, { placement: "belowEditor" });
+    requestRender?.();
+  };
   const dispatch = (event: UiEvent) => {
     const result = transition(state, event, event.type === "activate" || event.type === "snapshot" ? port.list() : state.snapshots);
     state = result.state;
@@ -41,15 +58,16 @@ export function registerAgentUI(pi: ExtensionAPI, port: AgentUIPort): { bind(ctx
     try {
       await owner.ui.custom<void>((tui, _theme, kb, done) => {
         close = () => done(); requestRender = () => tui.requestRender();
-        return new Inspector(() => state, dispatch, randomUUID, () => Math.max(6, Math.floor(tui.terminal.rows * 0.9)), data => kb.matches(data, "app.tools.expand"));
+        return new Inspector(() => state, dispatch, randomUUID, () => Math.max(6, Math.floor(tui.terminal.rows * 0.9)), { keybindings: options().keybindings, expandKey: data => kb.matches(data, "app.tools.expand") });
       }, { overlay: true, overlayOptions: { width: "100%", maxHeight: "90%", anchor: "center" } });
     } catch (error) { if (state.epoch === epoch) owner.ui.notify(`Agent inspector unavailable: ${String(error)}`, "error"); }
     finally { if (state.epoch === epoch) { customOpen = false; close = undefined; requestRender = undefined; if (state.navigation.kind === "inspector" || state.dialog.kind !== "closed") { dispatch({ type: "escape" }); if (state.navigation.kind === "inspector") dispatch({ type: "escape" }); } } }
   };
   const dispose = () => {
     unsubscribe?.(); terminal?.(); unsubscribe = terminal = undefined;
+    polling?.dispose(); polling = undefined; asyncWidget = undefined;
     close?.(); close = undefined; requestRender = undefined; customOpen = false;
-    if (ctx?.mode === "tui") ctx.ui.setWidget(FLEET_WIDGET_KEY, undefined);
+    if (ctx?.mode === "tui") { ctx.ui.setWidget(FLEET_WIDGET_KEY, undefined); ctx.ui.setWidget(ASYNC_WIDGET_KEY, undefined); }
     state = transition(state, { type: "deactivate" }).state; ctx = undefined; transcriptDirty = false;
   };
   const bind = (next: ExtensionContext) => {
@@ -62,6 +80,12 @@ export function registerAgentUI(pi: ExtensionAPI, port: AgentUIPort): { bind(ctx
       dispatch({ type: "snapshot", epoch });
       for (const operation of Object.values(state.pending)) void runEffect({ type: "receipt", operation }, port, dispatch);
     });
+    if (asyncEnabled()) {
+      asyncWidget = new AsyncWidget({ rows: () => port.viewModels?.() ?? [], expanded: () => next.ui.getToolsExpanded?.() ?? false });
+      const widget = asyncWidget;
+      polling = startAsyncWidgetPolling({ rows: () => port.viewModels?.() ?? [], folded: () => widget.isFolded(),
+        repaint: () => { if (state.epoch === epoch) render(); }, subscribe: listener => port.subscribe(listener) });
+    }
     if (typeof next.ui.onTerminalInput !== "function") { next.ui.notify("Fleet keyboard integration unavailable. Use /agents.", "warning"); return; }
     terminal = next.ui.onTerminalInput(data => {
       if (customOpen || promptDepth > 0 || state.dialog.kind !== "closed") return;

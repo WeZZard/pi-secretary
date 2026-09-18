@@ -10,6 +10,7 @@ import { Value } from "typebox/value";
 import { GoalEngine } from "../../extensions/secretary/goal-engine.ts";
 import { installSecretary } from "../../extensions/secretary/index.ts";
 import { AgentService, type LaunchSpec } from "../../extensions/secretary/agents/service.ts";
+import { defaultAgentUi } from "../../extensions/secretary/agents/configuration.ts";
 import { AgentRepository } from "../../extensions/secretary/agents/storage/agent-repository.ts";
 import { TERMINAL_STATUSES, type RunningChild } from "../../extensions/secretary/agents/records.ts";
 import type { createChildRunner } from "../../extensions/secretary/agents/runner.ts";
@@ -46,7 +47,7 @@ export function serviceHarness(t: TestContext, options: { mode?: string; concurr
   const optionsForRunner = options;
   const makeService = (parentId = "parent") => {
     const service = new AgentService({ parentId, root, repository, ctx: { cwd: root, mode: options.mode ?? "tui" } as any,
-      config: { modelAliases: {}, maxConcurrent: options.concurrent ?? 1, maxQueued: options.queued ?? 3, shutdownTimeoutMs: options.shutdownTimeoutMs ?? 1000 }, runner });
+      config: { modelAliases: {}, ui: defaultAgentUi(), maxConcurrent: options.concurrent ?? 1, maxQueued: options.queued ?? 3, shutdownTimeoutMs: options.shutdownTimeoutMs ?? 1000 }, runner });
     services.push(service); return service;
   };
   const service = makeService();

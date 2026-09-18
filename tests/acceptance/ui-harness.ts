@@ -6,21 +6,27 @@ import { stripVTControlCharacters } from "node:util";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { Component } from "@earendil-works/pi-tui";
 import type { AgentSnapshot, RunningChild } from "../../extensions/secretary/agents/records.ts";
 import { AgentService } from "../../extensions/secretary/agents/service.ts";
+import { defaultAgentUi } from "../../extensions/secretary/agents/configuration.ts";
 import { AgentRepository } from "../../extensions/secretary/agents/storage/agent-repository.ts";
 import { transition } from "../../extensions/secretary/agents/ui/reducer.ts";
 import { initialState, type UiEvent, type UiEffect } from "../../extensions/secretary/agents/ui/state.ts";
 import { runEffect, type AgentUIPort } from "../../extensions/secretary/agents/ui/effects.ts";
+import type { TranscriptEvent } from "../../extensions/secretary/agents/ui/transcript-events.ts";
 import { Inspector } from "../../extensions/secretary/agents/ui/inspector.ts";
 import { FleetView } from "../../extensions/secretary/agents/ui/fleet-view.ts";
 import { registerAgentUI, FLEET_WIDGET_KEY } from "../../extensions/secretary/agents/ui/commands.ts";
+import { ASYNC_WIDGET_KEY, type AsyncWidget } from "../../extensions/secretary/agents/ui/async-widget.ts";
 import { deferred, tick } from "./support.ts";
 
 export function snapshot(id = "a", parentId = "p"): AgentSnapshot {
   return { agent: { agentId: id, parentId, definition: { name: "worker", description: "Test worker", prompt: "Inspect", source: "packaged", hash: "fixture", resumable: true }, model: "test/model", tools: ["read"], cwd: "/tmp", configCwd: "/tmp", sessionPath: `/tmp/${id}.jsonl`, resumable: true, createdAt: 0, worktree: { id: `${id}-wt`, repo: "/repo", path: `/worktrees/${id}`, branch: `agent/${id}`, baseCommit: "base", state: "allocated" } }, run: { agentId: id, parentId, runId: `${id}-run`, launchKey: id, prompt: "Inspect files", description: `${id} inspection`, status: "running", background: true, createdAt: 0, outputPath: `/output/${id}.txt`, output: "", toolCount: 0, turnCount: 0, revision: 0 } };
 }
 export const markdown = Array.from({ length: 30 }, (_, i) => `<!-- secretary-entry:entry-${i} -->\n## assistant\n\nRetained paragraph ${i}.\n`).join("\n");
+/** Structured fixture events, one stable entry id per event, replacing the legacy markdown transcript. */
+export const fixtureEvents: readonly TranscriptEvent[] = Array.from({ length: 30 }, (_, i) => ({ kind: "assistant" as const, entryId: `entry-${i}`, text: `Retained paragraph ${i}.` }));
 export const plain = (lines: string[]) => stripVTControlCharacters(lines.join("\n").replaceAll("\x1b_pi:c\x07", ""));
 
 export class UIHarness {
@@ -45,9 +51,9 @@ export class UIHarness {
     return this.select(id);
   }
   select(agentId: string) { return this.send({ type: "select", agentId, requestId: `load-${++this.sequence}` }).find(e => e.type === "load")!; }
-  ready(text = markdown) {
+  ready(events: readonly TranscriptEvent[] = fixtureEvents) {
     const load = this.open(); assert.equal(load.type, "load");
-    this.send({ ...load, type: "transcript", text }); return this;
+    this.send({ ...load, type: "transcript", events }); return this;
   }
   transcript() { const nav = this.state.navigation; assert.equal(nav.kind, "inspector"); if (nav.kind !== "inspector") throw new Error("Not inspecting"); assert.equal(nav.detail.kind, "ready"); if (nav.detail.kind !== "ready") throw new Error("Not ready"); return nav.detail.transcript; }
   compose(text = "Check the edge cases") { this.inspector.handleInput("s"); this.send({ type: "draft", text }); }
@@ -56,7 +62,7 @@ export class UIHarness {
   async execute(effect: UiEffect, port: AgentUIPort) { await runEffect(effect, port, event => this.send(event)); }
 }
 export function port(overrides: Partial<AgentUIPort> = {}): AgentUIPort {
-  return { list: () => [snapshot(), snapshot("b")], subscribe: () => () => {}, transcript: async () => markdown,
+  return { list: () => [snapshot(), snapshot("b")], subscribe: () => () => {}, transcript: async () => fixtureEvents,
     message: async () => { throw new Error("Unexpected message mutation"); }, stop: async () => { throw new Error("Unexpected stop mutation"); }, cleanup: async () => { throw new Error("Unexpected cleanup mutation"); }, ...overrides };
 }
 
@@ -64,13 +70,17 @@ export function port(overrides: Partial<AgentUIPort> = {}): AgentUIPort {
 // Production components and key routing run unchanged; only host callbacks are captured.
 export function adapter(t: TestContext, servicePort = port()) {
   let input: ((data: string) => unknown) | undefined;
-  let editor = "", parentId = "p", inspector: Inspector | undefined, fleet: FleetView | undefined;
+  let editor = "", parentId = "p", inspector: Inspector | undefined, fleet: FleetView | undefined, async: AsyncWidget | undefined;
   let opens = 0, closes = 0, removals = 0, modelTurns = 0;
   const hooks = new Map<string, () => void>();
   const commands = new Map<string, { handler: (args: string, ctx: ExtensionContext) => Promise<void> }>();
   const pi = { on(name: string, callback: () => void) { hooks.set(name, callback); }, registerCommand(name: string, command: any) { commands.set(name, command); }, sendMessage() { modelTurns++; } } as unknown as ExtensionAPI;
   const ctx = { mode: "tui", sessionManager: { getSessionId: () => parentId }, ui: {
-    setWidget(key: string, factory: (() => FleetView) | undefined, options?: { placement: string }) { assert.equal(key, FLEET_WIDGET_KEY); if (factory) { assert.equal(options?.placement, "belowEditor"); fleet = factory(); } else fleet = undefined; },
+    setWidget(key: string, factory: (() => Component) | undefined, options?: { placement: string }) {
+      assert.ok(key === FLEET_WIDGET_KEY || key === ASYNC_WIDGET_KEY);
+      if (key === FLEET_WIDGET_KEY) { if (factory) { assert.equal(options?.placement, "belowEditor"); fleet = factory() as FleetView; } else fleet = undefined; }
+      else { if (factory) { assert.equal(options?.placement, "belowEditor"); async = factory() as AsyncWidget; } else async = undefined; }
+    },
     getEditorText: () => editor,
     onTerminalInput(callback: (data: string) => unknown) { input = callback; return () => { removals++; input = undefined; }; },
     notify() {},
@@ -81,7 +91,7 @@ export function adapter(t: TestContext, servicePort = port()) {
     get editor() { return editor; }, set editor(value: string) { editor = value; },
     get inspector() { return inspector; }, get opens() { return opens; }, get closes() { return closes; }, get removals() { return removals; }, get modelTurns() { return modelTurns; },
     input: (data: string) => input?.(data), prompt: (open: boolean) => hooks.get(open ? "ui_prompt_start" : "ui_prompt_end")!(),
-    fleet: () => plain(fleet?.render(120) ?? []), render: (width = 120) => plain(inspector?.render(width) ?? []),
+    fleet: () => plain(fleet?.render(120) ?? []), asyncWidget: () => plain(async?.render(120) ?? []), render: (width = 120) => plain(inspector?.render(width) ?? []),
     command: (args: string) => commands.get("agents")!.handler(args, ctx),
     replaceSession(id: string, draft: string) { parentId = id; editor = draft; ui.bind(ctx); },
   };
@@ -94,7 +104,7 @@ export async function durableService(t: TestContext) {
   let starts = 0;
   const delivered: string[] = [];
   const service = new AgentService({ parentId: "p", root, repository, ctx: { cwd: root, mode: "tui" } as ExtensionContext,
-    config: { modelAliases: {}, maxConcurrent: 2, maxQueued: 2, shutdownTimeoutMs: 1000 },
+    config: { modelAliases: {}, ui: defaultAgentUi(), maxConcurrent: 2, maxQueued: 2, shutdownTimeoutMs: 1000 },
     runner: async options => {
       starts++; const result = deferred<Awaited<RunningChild["result"]>>();
       const path = join(root, `${options.agent.agentId}.jsonl`); writeFileSync(path, '{"type":"session"}\n'); options.hooks.session(path);

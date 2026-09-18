@@ -7,8 +7,9 @@ import { AgentRepository } from "./storage/agent-repository.ts";
 import { WorkspaceManager } from "./workspaces.ts";
 import { resolveIsolation } from "./configuration.ts";
 import { createChildRunner } from "./runner.ts";
-import { formatSessionTranscript } from "./transcript-format.ts";
-import { TERMINAL_STATUSES, type AgentDefinition, type AgentRecord, type AgentRun, type AgentSnapshot, type GoalOrigin, type RunningChild, type RunnerHooks, type UsageRecord } from "./records.ts";
+import { guidanceNotice, parseTranscriptEvents, type TranscriptEvent } from "./ui/transcript-events.ts";
+import { TERMINAL_STATUSES, type AgentDefinition, type AgentRecord, type AgentRowView, type AgentRun, type AgentSnapshot, type GoalOrigin, type RunningChild, type RunnerHooks, type UsageRecord } from "./records.ts";
+import { deriveUsageLabels } from "./ui/usage-labels.ts";
 
 export interface LaunchSpec {
   launchKey: string;
@@ -90,6 +91,17 @@ export class AgentService {
   list(): AgentSnapshot[] {
     const runs = this.repo.runs(this.options.parentId);
     return this.repo.agents(this.options.parentId).map(agent => ({ agent, run: runs.filter(r => r.agentId === agent.agentId).at(-1) }));
+  }
+  /** Immutable widget rows; consumers render them without deriving state or usage. */
+  viewModels(): AgentRowView[] {
+    return this.list().map(({ agent, run }) => {
+      const labels = run ? deriveUsageLabels(this.repo.usage(run.runId)) : {};
+      return { agentId: agent.agentId, name: agent.name, status: run?.status ?? "idle",
+        description: run?.description ?? agent.definition.description, model: agent.model,
+        ...(run?.startedAt !== undefined ? { startedAt: run.startedAt } : {}),
+        ...(run?.activity !== undefined ? { activity: run.activity } : {}),
+        background: run?.background ?? false, ...labels };
+    });
   }
   resolve(ref: string): AgentRecord {
     const all = this.repo.agents(this.options.parentId);
@@ -334,16 +346,14 @@ export class AgentService {
     });
     return this.run(id);
   }
-  async transcript(ref: string): Promise<string> {
+  async transcript(ref: string): Promise<readonly TranscriptEvent[]> {
     const a = this.resolve(ref);
     const guidance = this.repo.runs(this.options.parentId).filter(run => run.agentId === a.agentId)
-      .flatMap(run => this.repo.guidance(run.runId)).filter(item => item.state !== "consumed").slice(-20);
-    const ledger = guidance.length ? "\n\n## Guidance delivery records\n" + guidance.map(item =>
-      `\n### ${item.state}: ${item.id}\n${item.reason ?? "Consumption has not been established."}\n\n> ${item.text.slice(0, 8000).replace(/\n/g, "\n> ")}${item.text.length > 8000 ? "\n[Guidance preview truncated]" : ""}`,
-    ).join("\n") : "";
+      .flatMap(run => this.repo.guidance(run.runId)).filter(item => item.state !== "consumed").slice(-20)
+      .map(item => guidanceNotice(item));
     if (!a.sessionPath) {
       const run = this.run(a.agentId);
-      return (run.output || run.error || "The child has not created a transcript yet.") + ledger;
+      return [{ kind: "notice", tone: "muted", text: run.output || run.error || "The child has not created a transcript yet." }, ...guidance];
     }
     const fd = openSync(a.sessionPath, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
@@ -353,7 +363,8 @@ export class AgentService {
       const bytes = readSync(fd, buffer, 0, buffer.length, offset);
       let text = buffer.subarray(0, bytes).toString("utf8");
       if (offset) text = text.slice(text.indexOf("\n") + 1);
-      return (offset ? "Earlier transcript content is outside this bounded view.\n\n" : "") + formatSessionTranscript(text) + ledger;
+      const parsed = parseTranscriptEvents(text, { maxBytes: 200000 });
+      return [...parsed.events, ...guidance];
     } finally { closeSync(fd); }
   }
   cleanup(ref: string, operationId: string): Promise<unknown> {

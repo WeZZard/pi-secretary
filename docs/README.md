@@ -17,14 +17,15 @@
 
 | Document | Current role |
 | --- | --- |
-| [Requirements](user-stories/subagents.md) | They define the required outcomes and confirmed constraints for the implemented subsystem. |
-| [Interaction design](ux/subagents.md) | It defines FleetView, inspection, messaging, cancellation, and recovery from the user's perspective. |
-| [Architecture](arch/subagents.md) | It is the maintained contract for tools, runtime, persistence, workspaces, and goal integration. |
+| [Requirements](user-stories/subagents.md) | They define the required outcomes and confirmed constraints for the implemented subsystem, including the ported-presentation requirement SA-10. |
+| [Interaction design](ux/subagents.md) | It defines FleetView, the async widget, inspection, messaging, cancellation, recovery, and the ported-surface exclusions from the user's perspective. |
+| [Architecture](arch/subagents.md) | It is the maintained contract for tools, runtime, persistence, workspaces, goal integration, and the TUI port mapping in Section 12.6. |
 | [BDD acceptance specifications](../doc/acceptance/README.md) | They describe observable behavior in Gherkin with stable scenario identities and executable bindings. |
 | [Testing guide](testing/README.md) | It selects test commands, prerequisites, and result interpretation. |
 | [E2E procedures](testing/subagent-e2e.md) | They describe the real-provider headless and interactive test environments. |
 | [Verification report](testing/subagent-verification.md) | It records dated executed checks and remaining verification limits. |
 | [Delivery record](../.plans/2026-09-17-subagent-support.md) | It is the historical implementation record. It is not evidence of release approval. |
+| [TUI port plan](../.plans/2026-09-18-subagent-tui-port.md) | It is the implementation plan for porting the nicobailon TUI surfaces onto the existing runtime. It cites the design decisions it implements. |
 | [Upstream research](research/subagent-system-comparison.md) | It records the dated source comparison that informed the design. It does not describe current Secretary behavior. |
 
 ## Generated test artifacts

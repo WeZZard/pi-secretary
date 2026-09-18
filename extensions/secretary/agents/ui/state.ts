@@ -1,7 +1,8 @@
 import type { AgentSnapshot } from "../records.ts";
+import type { TranscriptEvent } from "./transcript-events.ts";
 
 export interface Correlation { epoch: string; viewId: string }
-export interface TranscriptView { text: string; follow: "following" | "paused"; anchor: number; anchorEntryId?: string; anchorOffset?: number; expanded: boolean }
+export interface TranscriptView { events: readonly TranscriptEvent[]; follow: "following" | "paused"; anchor: number; anchorEntryId?: string; anchorOffset?: number; expanded: boolean }
 export type InspectorState = { kind: "list" } | { kind: "loading"; agentId: string; requestId: string; previous?: TranscriptView } | { kind: "ready"; agentId: string; transcript: TranscriptView } | { kind: "unavailable"; agentId: string; reason: string };
 export type NavigationState = { kind: "inactive" } | { kind: "editor" } | { kind: "fleet"; selectedAgentId: string | null } | { kind: "inspector"; detail: InspectorState };
 export type ActionTarget = { parentId: string; agentId: string; revision: number } & ({ action: "stop"; runId: string } | { action: "cleanup"; worktreeId: string });
@@ -21,7 +22,9 @@ export type UiEvent =
   | { type: "fleet-select"; agentId: string | null }
   | { type: "open"; viewId: string }
   | { type: "select"; agentId: string; requestId: string }
-  | ({ type: "transcript"; agentId: string; requestId: string; text?: string; error?: string } & Correlation)
+  | { type: "select-first"; requestId: string }
+  | { type: "select-last"; requestId: string }
+  | ({ type: "transcript"; agentId: string; requestId: string; events?: readonly TranscriptEvent[]; error?: string } & Correlation)
   | { type: "compose" }
   | { type: "draft"; text: string }
   | { type: "control"; action: "stop" | "cleanup"; agentId: string }

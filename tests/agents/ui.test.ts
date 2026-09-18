@@ -7,8 +7,10 @@ import { initialState, type UiState, type UiEvent } from "../../extensions/secre
 import { FleetView } from "../../extensions/secretary/agents/ui/fleet-view.ts";
 import { Inspector } from "../../extensions/secretary/agents/ui/inspector.ts";
 import { sanitize, transcriptWindow } from "../../extensions/secretary/agents/ui/transcript.ts";
+import type { TranscriptEvent } from "../../extensions/secretary/agents/ui/transcript-events.ts";
 import { runEffect, type AgentUIPort } from "../../extensions/secretary/agents/ui/effects.ts";
 import { registerAgentUI, FLEET_WIDGET_KEY } from "../../extensions/secretary/agents/ui/commands.ts";
+import { ASYNC_WIDGET_KEY } from "../../extensions/secretary/agents/ui/async-widget.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 function snapshot(id = "a"): AgentSnapshot {
   return { agent: { agentId: id, parentId: "p", definition: { name: "general-purpose", description: "test", prompt: "test", source: "packaged", hash: "hash", resumable: true }, model: "provider/model", tools: [], cwd: "/tmp", configCwd: "/tmp", sessionPath: "/tmp/session", resumable: true, createdAt: 0, worktree: { id: "wt", repo: "/repo", path: "/wt", branch: "agent", baseCommit: "base", state: "allocated" } }, run: { agentId: id, parentId: "p", runId: `${id}-run`, launchKey: id, prompt: "task", description: "task", status: "running", background: true, createdAt: 0, outputPath: "/tmp/output", output: "", toolCount: 0, turnCount: 0, revision: 0 } };
@@ -18,7 +20,8 @@ const step = (s: UiState, e: UiEvent) => transition(s, e).state;
 function ready(): UiState {
   let s = step(activate(), { type: "open", viewId: "v1" });
   s = step(s, { type: "select", agentId: "a", requestId: "r" });
-  return step(s, { type: "transcript", epoch: "e", viewId: "v1", agentId: "a", requestId: "r", text: Array.from({ length: 100 }, (_, i) => `line ${i}`).join("\n") });
+  const events: TranscriptEvent[] = Array.from({ length: 100 }, (_, i) => ({ kind: "assistant" as const, entryId: `line-${i}`, text: `line ${i}` }));
+  return step(s, { type: "transcript", epoch: "e", viewId: "v1", agentId: "a", requestId: "r", events });
 }
 function submitting(): UiState { let s = step(ready(), { type: "compose" }); s = step(s, { type: "draft", text: "retained guidance" }); return step(s, { type: "submit", operationId: "op" }); }
 const outcome = (result: "accepted" | "rejected" | "uncertain"): UiEvent => ({ type: "outcome", epoch: "e", viewId: "v1", operationId: "op", outcome: result, message: result });
@@ -39,7 +42,7 @@ test("activation copies owned snapshots rather than retaining mutable service ob
 });
 test("transcript response requires epoch, view, recipient and request; reordering never changes selection", () => {
   let s = step(ready(), { type: "select", agentId: "b", requestId: "b-load" });
-  const stale = { type: "transcript", epoch: "e", viewId: "v1", agentId: "a", requestId: "r", text: "wrong" } as const;
+  const stale = { type: "transcript", epoch: "e", viewId: "v1", agentId: "a", requestId: "r", events: [{ kind: "assistant", entryId: "stale", text: "wrong" }] } as const;
   assert.equal(step(s, stale), s);
   for (const patch of [{ epoch: "old" }, { viewId: "old" }, { requestId: "old" }]) assert.equal(step(s, { ...stale, agentId: "b", requestId: "b-load", ...patch }), s);
   s = transition(s, { type: "snapshot", epoch: "e" }, [...s.snapshots].reverse()).state;
@@ -83,7 +86,7 @@ test("stop confirmation captures run, ignores progress revisions, rejects replac
 test("completion retains composer and paused source-line anchor across refresh", () => {
   let s = step(ready(), { type: "scroll", delta: -20, pageSize: 10 });
   const before = s.navigation.kind === "inspector" && s.navigation.detail.kind === "ready" ? s.navigation.detail.transcript : undefined; assert.ok(before);
-  const refreshed = step(step(s, { type: "select", agentId: "a", requestId: "fresh" }), { type: "transcript", epoch: "e", viewId: "v1", agentId: "a", requestId: "fresh", text: before.text + "\nnew output" });
+  const refreshed = step(step(s, { type: "select", agentId: "a", requestId: "fresh" }), { type: "transcript", epoch: "e", viewId: "v1", agentId: "a", requestId: "fresh", events: [...before.events, { kind: "assistant", entryId: "new", text: "new output" }] });
   assert.equal(refreshed.navigation.kind === "inspector" && refreshed.navigation.detail.kind === "ready" && refreshed.navigation.detail.transcript.anchor, before.anchor);
   s = step(step(s, { type: "compose" }), { type: "draft", text: "keep" });
   const completed = s.snapshots.map(a => ({ ...a, run: { ...a.run!, status: "succeeded" as const } }));
@@ -114,7 +117,7 @@ test("unavailable transcript retains identity; retry and refresh never acquire f
   assert.ok(retry.effects.some(e => e.type === "load" && e.agentId === "a"));
   assert.deepEqual(transition(retry.state, { type: "refresh" }).effects, [{ type: "render" }]);
   const closed = step(retry.state, { type: "escape" });
-  assert.equal(step(closed, { type: "transcript", epoch: "e", viewId: "v1", agentId: "a", requestId: "retry", text: "late" }), closed);
+  assert.equal(step(closed, { type: "transcript", epoch: "e", viewId: "v1", agentId: "a", requestId: "retry", events: [{ kind: "assistant", entryId: "late", text: "late" }] }), closed);
 });
 test("bounded event sequences preserve modal/navigation constraints and forbid accidental mutations", () => {
   const events: UiEvent[] = [{ type: "compose" }, { type: "draft", text: "text" }, { type: "submit", operationId: "fixed" }, { type: "escape" }, { type: "fleet", editorEmpty: true }, { type: "control", action: "stop", agentId: "a" }, outcome("accepted"), outcome("uncertain"), { type: "deactivate" }];
@@ -145,7 +148,7 @@ test("expanded narrow inspector preserves operation feedback and navigation hint
   const lines = inspector.render(58);
   assert.ok(lines.some(line => line.includes("Operation acceptance is recorded.")));
   assert.ok(lines.some(line => line.includes("Esc close")));
-  assert.ok(lines.length <= 20);
+  assert.ok(lines.length <= 22, "the bordered frame keeps the rendered height within the overlay budget");
   inspector.handleInput("\x1b[6~");
   const scroll = events.find(event => event.type === "scroll");
   assert.ok(scroll?.type === "scroll");
@@ -162,11 +165,15 @@ test("renderers clip CJK and sanitize terminal controls without changing focus",
   }
   assert.deepEqual(events, []);
   assert.equal(sanitize("hello\x1b[2J\x1b]52;c;bad\x07\rworld"), "helloworld");
-  assert.deepEqual(transcriptWindow({ text: "a\nb\nc", follow: "paused", anchor: 1, expanded: false }, 10, 1), ["b"]);
+  const anchorEvents: TranscriptEvent[] = [{ kind: "user", entryId: "a", text: "a" }, { kind: "assistant", entryId: "b", text: "b" }, { kind: "notice", entryId: "c", tone: "muted", text: "c" }];
+  const anchored = transcriptWindow({ events: anchorEvents, follow: "paused", anchor: 1, expanded: false }, 20, 2);
+  assert.equal(anchored[0], "│ a", "anchors are logical lines: offset one into the user event starts at its content");
+  const headerAnchored = transcriptWindow({ events: anchorEvents, follow: "paused", anchor: 2, expanded: false }, 20, 2);
+  assert.equal(headerAnchored[0], "◆ Assistant"); assert.match(headerAnchored[1]!, /^│ b/);
 });
 test("effect runner correlates outcomes, never repeats uncertain mutations and supports receipts", async () => {
   let calls = 0; const events: UiEvent[] = [];
-  const port: AgentUIPort = { list: () => [], subscribe: () => () => {}, transcript: async () => "text", message: async () => { calls++; throw new Error("transport lost"); }, stop: async () => {}, cleanup: async () => {}, receipt: async () => ({ outcome: "accepted", message: "Recorded" }) };
+  const port: AgentUIPort = { list: () => [], subscribe: () => () => {}, transcript: async () => [], message: async () => { calls++; throw new Error("transport lost"); }, stop: async () => {}, cleanup: async () => {}, receipt: async () => ({ outcome: "accepted", message: "Recorded" }) };
   const s = submitting(); assert.equal(s.dialog.kind, "submitting"); if (s.dialog.kind !== "submitting") return;
   await runEffect({ type: "operate", operation: s.dialog.operation }, port, e => events.push(e));
   assert.equal(calls, 1); assert.deepEqual(events[0], { type: "outcome", epoch: "e", viewId: "v1", operationId: "op", outcome: "uncertain", message: "transport lost" });
@@ -178,12 +185,13 @@ test("adapter uses one namespaced below-editor widget and does not consume norma
   const hooks: Record<string, () => void> = {}, widgets: string[] = [];
   const pi = { registerCommand() {}, on(name: string, fn: () => void) { hooks[name] = fn; } } as unknown as ExtensionAPI;
   const ctx = { mode: "tui", sessionManager: { getSessionId: () => "p" }, ui: { setWidget(key: string, _component: unknown, options?: { placement: string }) { widgets.push(key); if (_component) assert.equal(options?.placement, "belowEditor"); }, onTerminalInput(fn: (data: string) => unknown) { terminal = fn; return () => { removed++; }; }, getEditorText: () => editor, notify() {} } } as unknown as ExtensionContext;
-  const port: AgentUIPort = { list: () => [snapshot()], transcript: async () => "", message: async () => {}, stop: async () => {}, cleanup: async () => {}, subscribe: () => () => {} };
+  const port: AgentUIPort = { list: () => [snapshot()], transcript: async () => [], message: async () => {}, stop: async () => {}, cleanup: async () => {}, subscribe: () => () => {} };
   const ui = registerAgentUI(pi, port); ui.bind(ctx);
   assert.equal(terminal?.("\x1b[B"), undefined); editor = "";
   hooks.ui_prompt_start!(); assert.equal(terminal?.("\x1b[B"), undefined); hooks.ui_prompt_end!();
   assert.deepEqual(terminal?.("\x1b[B"), { consume: true });
   assert.deepEqual(terminal?.("\x1b"), { consume: true });
   assert.equal(terminal?.("s"), undefined);
-  ui.dispose(); assert.equal(removed, 1); assert.ok(widgets.every(key => key === FLEET_WIDGET_KEY));
+  ui.dispose(); assert.equal(removed, 1); assert.ok(widgets.every(key => key === FLEET_WIDGET_KEY || key === ASYNC_WIDGET_KEY));
+  assert.ok(widgets.includes(FLEET_WIDGET_KEY));
 });

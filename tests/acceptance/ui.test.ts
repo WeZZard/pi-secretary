@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { runFeatures, deferred, tick, type ScenarioBindings } from "./support.ts";
-import { UIHarness, adapter, durableService, markdown, plain, port, snapshot } from "./ui-harness.ts";
+import { UIHarness, adapter, durableService, fixtureEvents, plain, port, snapshot } from "./ui-harness.ts";
 import { agentHarness } from "../support/agent-harness.ts";
-import { renderResult } from "../../extensions/secretary/agents/tools/rendering.ts";
+import { renderAgentResult, renderResult } from "../../extensions/secretary/agents/tools/rendering.ts";
+import { loadAgentConfiguration } from "../../extensions/secretary/agents/configuration.ts";
 import { transcriptWindow } from "../../extensions/secretary/agents/ui/transcript.ts";
+import type { TranscriptEvent } from "../../extensions/secretary/agents/ui/transcript-events.ts";
+import { AsyncWidget } from "../../extensions/secretary/agents/ui/async-widget.ts";
+import { Inspector } from "../../extensions/secretary/agents/ui/inspector.ts";
 import type { RunStatus } from "../../extensions/secretary/agents/records.ts";
 
 const bindings: ScenarioBindings = {
@@ -35,7 +42,7 @@ const bindings: ScenarioBindings = {
   "ACC-SA-02-02": async ({ t }) => {
     for (const key of ["\x1b[B", "\x1b[D"]) {
       let loads = 0;
-      const h = adapter(t, port({ transcript: async id => { loads++; return `## assistant\nSelected ${id}`; } }));
+      const h = adapter(t, port({ transcript: async id => { loads++; return [{ kind: "assistant", entryId: `selected-${id}`, text: `Selected ${id}` }]; } }));
       assert.match(h.fleet(), /active agents/);
       h.prompt(true); h.prompt(true);
       assert.equal(h.input(key), undefined); h.prompt(false); assert.equal(h.input(key), undefined); h.prompt(false);
@@ -70,7 +77,7 @@ const bindings: ScenarioBindings = {
     assert.equal(before.follow, "paused"); assert.ok(before.anchorEntryId);
     const window = plain(transcriptWindow(before, 60, 8));
     const load = h.select("a");
-    await h.execute(load, port({ transcript: async () => `<!-- secretary-entry:prefix -->\n## user\nEarlier inserted content\n\n${markdown}\n## assistant\nNew arrival` }));
+    await h.execute(load, port({ transcript: async () => [{ kind: "user", entryId: "prefix", text: "Earlier inserted content" }, ...fixtureEvents, { kind: "assistant", entryId: "arrival", text: "New arrival" }] }));
     assert.equal(h.transcript().anchorEntryId, before.anchorEntryId); assert.equal(h.transcript().anchorOffset, before.anchorOffset);
     assert.equal(h.transcript().follow, "paused"); assert.equal(plain(transcriptWindow(h.transcript(), 60, 8)), window);
     h.send({ type: "scroll", delta: 10000, pageSize: 8 }); assert.equal(h.transcript().follow, "following");
@@ -97,10 +104,11 @@ const bindings: ScenarioBindings = {
   },
   "ACC-SA-02-08": () => {
     const h = new UIHarness().ready(); h.inspector.handleInput("\x1b[5~"); const before = structuredClone(h.state.navigation);
-    assert.match(h.render(140), / │ /);
+    assert.match(h.render(140), /│ .* │ /, "wide terminals show the roster beside the detail pane");
     for (const width of [72, 38]) {
       const lines = h.inspector.render(width); assert.ok(lines.every(line => visibleWidth(line) <= width));
-      assert.doesNotMatch(plain(lines), / │ /); assert.match(plain(lines), /a · test\/model/);
+      assert.doesNotMatch(plain(lines).split("\n")[0]!, / │ /, "narrow terminals stack panes without a side-by-side separator");
+      assert.match(plain(lines), /a · test\/model/);
       assert.deepEqual(h.state.navigation, before);
     }
     h.inspector.handleInput("s"); assert.equal(h.state.dialog.kind, "composing"); h.inspector.handleInput("\x1b");
@@ -113,7 +121,7 @@ const bindings: ScenarioBindings = {
   "ACC-SA-02-09": async ({ t }) => {
     const attacks = { "CSI clear screen": "\x1b[2J", "OSC clipboard BEL": "\x1b]52;c;Y2xpcGJvYXJk\x07", "OSC title ST": "\x1b]0;forged title\x1b\\", "DCS payload": "\x1bPmalicious payload\x1b\\", "C1 CSI": "\x9b2J" };
     for (const [name, attack] of Object.entries(attacks)) await t.test(name, () => {
-      const h = new UIHarness().ready(`## Tool result: shell\nReadable before ${attack} readable after`);
+      const h = new UIHarness().ready([{ kind: "tool", entryId: "shell-1", name: "shell", status: "complete", output: `Readable before ${attack} readable after` }]);
       h.inspector.handleInput("x");
       const rendered = h.inspector.render(120).join("\n");
       assert.ok(!rendered.includes(attack));
@@ -141,17 +149,17 @@ const bindings: ScenarioBindings = {
     assert.equal(h.editor, "Original main draft"); assert.equal(h.input("k"), undefined); assert.equal(service.service.run(id).status, "running");
   },
   "ACC-SA-UI-02": async () => {
-    const h = new UIHarness(), a = deferred<string>(), b = deferred<string>();
+    const h = new UIHarness(), a = deferred<readonly TranscriptEvent[]>(), b = deferred<readonly TranscriptEvent[]>();
     const p = port({ transcript: id => id === "a" ? a.promise : b.promise });
     const first = h.execute(h.open("a"), p), loadB = h.select("b"), second = h.execute(loadB, p);
     assert.equal(loadB.type, "load");
     if (loadB.type === "load") for (const stale of [{ epoch: "old" }, { viewId: "old" }, { requestId: "old" }]) {
       const waiting = h.state;
-      assert.deepEqual(h.send({ ...loadB, type: "transcript", text: "Wrong correlation", ...stale }), []);
+      assert.deepEqual(h.send({ ...loadB, type: "transcript", events: [], ...stale }), []);
       assert.equal(h.state, waiting);
     }
-    b.resolve("## assistant\nB visible"); await second; const before = h.state; const count = h.effects.length;
-    a.resolve("## assistant\nA stale"); await first;
+    b.resolve([{ kind: "assistant", entryId: "b-1", text: "B visible" }]); await second; const before = h.state; const count = h.effects.length;
+    a.resolve([{ kind: "assistant", entryId: "a-1", text: "A stale" }]); await first;
     assert.equal(h.state, before); assert.match(h.render(), /B visible/); assert.doesNotMatch(h.render(), /A stale/);
     assert.ok(!h.effects.slice(count).some(e => e.type === "focus"));
     assert.equal(h.state.navigation.kind === "inspector" && h.state.navigation.detail.kind !== "list" && h.state.navigation.detail.agentId, "b");
@@ -224,12 +232,12 @@ const bindings: ScenarioBindings = {
     assert.deepEqual(calls, [["a-run", operation.operation.id]]);
   },
   "ACC-SA-UI-10": async ({ t }) => {
-    const service = await durableService(t), load = deferred<string>(), ack = deferred<void>();
+    const service = await durableService(t), load = deferred<readonly TranscriptEvent[]>(), ack = deferred<void>();
     const id = service.service.list()[0]!.agent.agentId; let operationId = "";
     const h = adapter(t, port({ ...service.port, transcript: () => load.promise, message: async (target, text, op) => { operationId = op; const result = await service.port.message(target, text, op); await ack.promise; return result; } }));
     const first = h.command(id); await tick(); h.inspector!.handleInput("s"); h.inspector!.handleInput("Old-parent guidance"); h.inspector!.handleInput("\r"); await tick();
     assert.ok(operationId); h.replaceSession("new-parent", "New session draft"); await first;
-    const opens = h.opens; load.resolve("## assistant\nOld parent transcript"); ack.resolve(); await tick();
+    const opens = h.opens; load.resolve([{ kind: "assistant", entryId: "old", text: "Old parent transcript" }]); ack.resolve(); await tick();
     assert.equal(h.opens, opens); assert.equal(h.inspector, undefined); assert.equal(h.editor, "New session draft"); assert.equal(h.input("\x1b[B"), undefined);
     assert.equal(service.repository.guidance(service.service.run(id).runId)[0]?.text, "Old-parent guidance"); assert.equal(service.service.run(id).parentId, "p"); assert.ok(service.service.receipt(operationId));
     assert.equal(h.modelTurns, 0);
@@ -240,7 +248,7 @@ const bindings: ScenarioBindings = {
     const final = snapshot(); final.run!.status = "succeeded";
     h.send({ type: "snapshot", epoch: "e" }, [final]);
     assert.deepEqual(h.transcript(), before); assert.equal(plain(transcriptWindow(h.transcript(), 60, 5)), window);
-    const load = h.select("a"); assert.equal(load.type, "load"); if (load.type === "load") h.send({ ...load, type: "transcript", text: `${markdown}\nFinal output` });
+    const load = h.select("a"); assert.equal(load.type, "load"); if (load.type === "load") h.send({ ...load, type: "transcript", events: [...fixtureEvents, { kind: "assistant", entryId: "final", text: "Final output" }] });
     assert.equal(h.transcript().follow, "paused"); assert.equal(h.transcript().anchorEntryId, before.anchorEntryId);
     h.send({ type: "scroll", delta: 10000, pageSize: 10 }); assert.equal(h.transcript().follow, "following");
     assert.match(plain(transcriptWindow(h.transcript(), 60, 10)), /Final output/);
@@ -256,16 +264,73 @@ const bindings: ScenarioBindings = {
   },
   "ACC-SA-UI-13": async () => {
     const h = new UIHarness(); await h.execute(h.open("a"), port({ transcript: async () => { throw new Error("Transcript file missing: a.jsonl"); } }));
-    assert.match(h.render(), /a · test\/model/); assert.match(h.render(), /Transcript file missing: a.jsonl/); assert.match(h.render(), /r retries/);
+    assert.match(h.render(), /a · test\/model/); assert.match(h.render(), /Transcript file missing: a.jsonl/); assert.match(h.render(), /r\/R retries/);
     assert.equal(h.state.navigation.kind === "inspector" && h.state.navigation.detail.kind !== "list" && h.state.navigation.detail.agentId, "a");
     h.inspector.handleInput("r"); const retry = h.effects.filter(e => e.type === "load").at(-1)!; assert.equal(retry.type === "load" && retry.agentId, "a");
-    await h.execute(retry, port({ transcript: async () => "## assistant\nA recovered" })); assert.match(h.render(), /A recovered/);
+    await h.execute(retry, port({ transcript: async () => [{ kind: "assistant", entryId: "recovered", text: "A recovered" }] })); assert.match(h.render(), /A recovered/);
     h.inspector.handleInput("j"); const next = h.effects.filter(e => e.type === "load").at(-1)!;
     assert.equal(next.type === "load" && next.agentId, "b"); await h.execute(next, port());
     h.inspector.handleInput("\x1b"); assert.equal(h.state.navigation.kind, "editor");
   },
+  "ACC-SA-UI-14": async ({ t }) => {
+    const service = await durableService(t);
+    const rows = service.service.viewModels();
+    assert.equal(rows.filter(r => r.background && r.status === "running").length, 2, "both launched runs are active background executions");
+    const finished = { ...rows[0]!, status: "succeeded" as const };
+    const widget = new AsyncWidget({ rows: () => [...rows.slice(1), finished], now: () => Date.now() });
+    const rendered = plain(widget.render(120));
+    assert.match(rendered, /Async agents/);
+    assert.match(rendered, /●/);
+    assert.doesNotMatch(rendered, /succeeded/, "terminal executions leave the async widget");
+    const fleet = new UIHarness(service.service.list()); fleet.send({ type: "fleet", editorEmpty: true });
+    for (const row of rows) assert.match(plain(fleet.fleet.render(140)), new RegExp(row.agentId));
+    const output = service.service.run(rows[0]!.agentId);
+    assert.equal(rows[0]!.status, output.status, "widget rows and tool responses share the same underlying state");
+  },
+  "ACC-SA-UI-15": async ({ t }) => {
+    const root = mkdtempSync(join(tmpdir(), "inline-mode-")); t.after(() => rmSync(root, { recursive: true, force: true }));
+    writeFileSync(join(root, "secretary.json"), JSON.stringify({ agents: { ui: { inlineToolDisplay: "summary" } } }));
+    const config = loadAgentConfiguration(root, root, false);
+    assert.equal(config.ui.inlineToolDisplay, "summary");
+    const record = snapshot(); record.run!.status = "succeeded"; record.run!.endedAt = 4600; record.run!.startedAt = 1000;
+    const result = { content: [{ type: "text" as const, text: "Agent: a\nStatus: succeeded" }], details: record.run! };
+    for (const expanded of [false, true]) {
+      const lines = renderAgentResult(result, { expanded, isPartial: false }, { mode: config.ui.inlineToolDisplay }).render(100);
+      assert.equal(lines.length, 1, "summary mode is one static row regardless of expansion");
+      assert.match(plain(lines), /✓ a inspection · succeeded/);
+    }
+    record.run!.status = "running";
+    const rich = plain(renderAgentResult(result, { expanded: false, isPartial: true }, { mode: "rich", now: () => 6500 }).render(100));
+    assert.match(rich, /●/); assert.match(rich, /task: a inspection/); assert.match(rich, /expand for task details/);
+  },
+  "ACC-SA-UI-16": async ({ t }) => {
+    const root = mkdtempSync(join(tmpdir(), "keybindings-")); t.after(() => rmSync(root, { recursive: true, force: true }));
+    writeFileSync(join(root, "secretary.json"), JSON.stringify({ agents: { ui: { fleetKeybindings: { stop: ["shift+t"], close: ["ctrl+q"] } } } }));
+    const config = loadAgentConfiguration(root, root, false);
+    const h = new UIHarness().ready();
+    const dispatched: string[] = [];
+    const inspector = new Inspector(() => h.state, e => { dispatched.push(e.type); }, () => "id", () => 22, { keybindings: config.ui.fleetKeybindings });
+    inspector.handleInput("T");
+    assert.deepEqual(dispatched, ["control"], "the configured stop key dispatches stop confirmation");
+    const footer = plain(inspector.render(140));
+    assert.match(footer, /T stop/); assert.match(footer, /Ctrl\+Q close/); assert.doesNotMatch(footer, /D stop/);
+    writeFileSync(join(root, "secretary.json"), JSON.stringify({ agents: { ui: { fleetKeybindings: { inspect: ["i"] } } } }));
+    assert.throws(() => loadAgentConfiguration(root, root, false), /not a supported inspector action/);
+  },
+  "ACC-SA-UI-17": () => {
+    const h = new UIHarness().ready();
+    const wide = plain(h.inspector.render(140));
+    assert.match(wide, /╭─ Agents · 1\/2 ─+╮/); assert.match(wide, /╰─+╯/); assert.match(wide, /Esc close/);
+    const narrow = h.inspector.render(60);
+    assert.match(plain(narrow), /╭─ Agents · 1\/2/);
+    assert.doesNotMatch(plain(narrow).split("\n")[1]!, / │ /);
+    for (const width of [0, 10, 35]) {
+      const lines = h.inspector.render(width);
+      assert.ok(lines.length <= 1, `sub-minimum width ${width} renders only the diagnostic line`);
+    }
+  },
 };
 runFeatures(["agent-inspection", "ui-state-machine"], bindings, {
   "agent-inspection": "4f3964c0a4578ddce199cf317c50c91dd7a27675d3f7d5dd04de11ad68ac6aea",
-  "ui-state-machine": "85dd0b30f525f9ebc739bdb2dbbcd33ac226d4b16695323d366a9b8ea5c301c8",
+  "ui-state-machine": "d7d18ba511f000bcffd07200a556a11f5b9beefd89f1a5bea43694e2083e5e72",
 });

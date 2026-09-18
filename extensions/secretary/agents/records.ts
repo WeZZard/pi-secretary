@@ -106,6 +106,22 @@ export interface UsageRecord {
   goal?: GoalOrigin;
 }
 export interface AgentSnapshot { agent: AgentRecord; run?: AgentRun }
+/**
+ * Immutable widget row view model (architecture §12.6.3). Published by AgentService; widgets render it
+ * without computing state. Usage labels are display-only and distinct from the §11.2 goal-budget formula.
+ */
+export interface AgentRowView {
+  agentId: string;
+  name?: string;
+  status: RunStatus | "idle";
+  description: string;
+  model: string;
+  startedAt?: number;
+  activity?: string;
+  background: boolean;
+  windowTokens?: number;
+  cumulativeTokens?: number;
+}
 export interface RunnerHooks {
   session(path: string): void;
   text(text: string): void;

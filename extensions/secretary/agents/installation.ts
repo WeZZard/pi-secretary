@@ -10,6 +10,7 @@ import { AgentRepository, acquireParentLock } from "./storage/agent-repository.t
 import { discoverAgents, resolveAgentModel } from "./registry.ts";
 import { loadAgentConfiguration, resolveIsolation } from "./configuration.ts";
 import { createAgentSchema, sendMessageSchema, taskStopSchema, taskOutputSchema, type AgentInput } from "./tools/schemas.ts";
+import { renderAgentResult } from "./tools/rendering.ts";
 import { registerAgentUI } from "./ui/commands.ts";
 import { TERMINAL_STATUSES, type AgentRun, type GoalOrigin } from "./records.ts";
 
@@ -31,6 +32,7 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
   const listeners = new Set<() => void>();
   const ui = registerAgentUI(pi, {
     list: () => service?.list() ?? [],
+    viewModels: () => service?.viewModels() ?? [],
     transcript: id => current().transcript(id),
     message: (id, text, operationId) => current().message(id, text, operationId),
     stop: (id, operationId) => current().stop(id, operationId),
@@ -39,6 +41,10 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
     subscribe: listener => {
       listeners.add(listener); return () => listeners.delete(listener);
     },
+  }, () => {
+    if (!ctx) return {};
+    const config = loadAgentConfiguration(ctx.cwd, getAgentDir(), ctx.isProjectTrusted());
+    return { fleetViewPlacement: config.ui.fleetViewPlacement, asyncWidget: config.ui.asyncWidget, keybindings: config.ui.fleetKeybindings };
   });
   function origin(): GoalOrigin | undefined {
     const work = sync.work();
@@ -122,7 +128,7 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
         waitSignature = signature; return true;
       };
       if (!registered) {
-        pi.registerTool(defineTool({ name: "Agent", label: "Agent", description: "Delegate one task to a child session. Background execution is the default in TUI/RPC. Use SendMessage to guide or resume, TaskStop to stop, and TaskOutput or read on the output path for results. Use the model configured by the agent definition, or inherit the parent model. Do not invent a model override. Forks, teams, nesting and remote execution are unsupported.", parameters: createAgentSchema(config.modelAliases),
+        pi.registerTool(defineTool<ReturnType<typeof createAgentSchema>, AgentRun>({ name: "Agent", label: "Agent", description: "Delegate one task to a child session. Background execution is the default in TUI/RPC. Use SendMessage to guide or resume, TaskStop to stop, and TaskOutput or read on the output path for results. Use the model configured by the agent definition, or inherit the parent model. Do not invent a model override. Forks, teams, nesting and remote execution are unsupported.", parameters: createAgentSchema(config.modelAliases),
           prepareArguments: args => (args && typeof args === "object" && "mode" in args && args.mode === "manual" ? { ...args, mode: "default" } : args) as AgentInput,
           async execute(id, params, signal, onUpdate, toolCtx) {
             const config = loadAgentConfiguration(toolCtx.cwd, getAgentDir(), toolCtx.isProjectTrusted());
@@ -154,6 +160,10 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
               if (outcome.status === "failed") throw new Error(runText(outcome));
               return result(outcome);
             } finally { off(); signal?.removeEventListener("abort", abort); }
+          },
+          renderResult(rendered, options, theme, renderCtx) {
+            const mode = loadAgentConfiguration(renderCtx.cwd, getAgentDir(), ctx?.isProjectTrusted() ?? false).ui.inlineToolDisplay;
+            return renderAgentResult(rendered, options, { theme, mode });
           },
         }));
         pi.registerTool(defineTool({ name: "SendMessage", label: "Send Message", description: "Send guidance to an agent by ID or name in this parent session. Running agents queue the message. Finished resumable agents start a new background run of their saved conversation. Acknowledgment does not establish compliance.", parameters: sendMessageSchema,

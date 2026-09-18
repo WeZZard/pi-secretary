@@ -71,5 +71,6 @@ export class AgentRepository {
     if (!this.getRun(record.runId)) throw new Error("Unknown usage run");
     return this.db.prepare("INSERT INTO secretary_agent_usage VALUES (?,?,?) ON CONFLICT(id) DO NOTHING").run(record.id, record.runId, JSON.stringify(record)).changes === 1;
   }
+  usage(runId: string): UsageRecord[] { return this.many("secretary_agent_usage", "run_id=?", runId); }
 }
 export { acquireParentLock } from "./parent-lock.ts";

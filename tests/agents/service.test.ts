@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { AgentService, type LaunchSpec } from "../../extensions/secretary/agents/service.ts";
+import { defaultAgentUi } from "../../extensions/secretary/agents/configuration.ts";
 import { AgentRepository } from "../../extensions/secretary/agents/storage/agent-repository.ts";
 import { WorktreeManager } from "../../extensions/secretary/agents/worktrees.ts";
 import type { RunningChild, RunnerHooks } from "../../extensions/secretary/agents/records.ts";
@@ -18,7 +19,7 @@ function harness(mode = "tui", concurrent = 1) {
   let starts = 0;
   const service = new AgentService({ parentId: "parent", root, repository,
     ctx: { cwd: root, mode } as ExtensionContext,
-    config: { modelAliases: {}, maxConcurrent: concurrent, maxQueued: 2, shutdownTimeoutMs: 1000 },
+    config: { modelAliases: {}, ui: defaultAgentUi(), maxConcurrent: concurrent, maxQueued: 2, shutdownTimeoutMs: 1000 },
     runner: async options => {
       starts++;
       const sessionPath = join(root, `${options.agent.agentId}.jsonl`);

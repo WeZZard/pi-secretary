@@ -13,7 +13,7 @@
 ### 1.1 Confirmed decisions
 
 - Claude Code defines the reference tool names and input schemas.
-- Nicobailon's implementation defines the TUI reference.
+- Nicobailon's implementation defines the TUI reference. Its inline display, FleetView, async widget, and inspector surfaces are ported onto Secretary's runtime. Surfaces that depend on out-of-scope runtime features are excluded; [Section 12.6](#126-ported-surfaces-and-mapping) defines the mapping and the exclusions.
 - Tintinweb's implementation is a reference for pi SDK integration, not a dependency or API authority.
 - Child execution stops when the parent pi process exits. Conversation persistence supports explicit resumption, not continued execution after exit.
 - `Agent.model` uses Claude alias names, but the advertised enum includes only configured mappings. With no mappings, the invocation schema omits `model`. Exact provider identifiers belong in agent definitions or alias configuration.
@@ -28,6 +28,7 @@
 - Normal print and JSON invocations use foreground execution when neither the caller nor the definition requires background execution. An explicit background request or a definition that requires background execution is rejected in those modes. `SendMessage` resumption of an idle agent is also rejected there because that operation starts background work and has no foreground parameter. This avoids accepting work that the host will immediately terminate.
 - Reload, new-session, resume-to-another-session, and parent-session fork stop the departing session's children rather than transferring live execution.
 - The initial concurrency limit is four active child executions, and the pending queue limit is sixteen. These are configurable limits, not measured performance claims.
+- The TUI ports nicobailon's surfaces onto the existing runtime: rich inline tool display with a summary alternative, FleetView below the editor, a separate async widget enabled by default, and the bordered inspector overlay with configurable inspector keybindings. No runtime feature beyond the existing scope is added for display purposes.
 - A child conversation retains its resolved definition and model across resumption, subject to current permission and trust checks.
 - Agent records and transcripts are retained until explicit removal outside this release. The host does not perform automatic transcript deletion or worktree commits.
 
@@ -111,8 +112,12 @@ extensions/secretary/agents/
     rendering.ts
   ui/
     fleet-view.ts
+    async-widget.ts
     inspector.ts
     transcript.ts
+    transcript-events.ts
+    usage-labels.ts
+    keybindings.ts
     state.ts
     reducer.ts
     effects.ts
@@ -566,12 +571,13 @@ goal-budget token usage =
 
 The [interaction design](../ux/subagents.md) owns visible behavior. The following are technical mechanisms:
 
-- FleetView is a session-owned widget under a distinct Secretary key and does not replace the goal widget or the global footer.
-- The inspector is an in-process custom TUI component. It does not depend on Herdr, Ghostty automation, or opening another terminal.
-- View models are immutable snapshots obtained from `AgentService`; progress events invalidate affected components.
+- FleetView is a session-owned widget under a distinct Secretary key and does not replace the goal widget or the global footer. Its placement is configurable between below and above the editor; the default is below.
+- The async widget is a second session-owned widget under its own key. It is enabled by default and can be disabled by configuration. It lists active background executions independently of FleetView's collapsed summary.
+- The inspector is an in-process custom TUI component rendered as a bordered overlay. It does not depend on Herdr, Ghostty automation, or opening another terminal.
+- View models are immutable snapshots obtained from `AgentService`; progress events invalidate affected components. The async widget additionally polls on a bounded interval so elapsed time and spinner animation advance between service events; rendering is deduplicated by a render key so unchanged state does not repaint.
 - The editor integration composes with an existing editor factory. It captures navigation only when the editor is empty and the agent component can receive focus.
 - If editor composition is unavailable, the `/agents` command remains functional and the adapter reports the missing shortcut integration rather than replacing another editor silently.
-- Transcript rendering uses bounded windows and strips untrusted terminal control sequences. Raw artifacts are not interpreted as UI commands.
+- Transcript rendering uses structured events parsed from the persisted pi session file, bounded windows, and strips untrusted terminal control sequences. Raw artifacts are not interpreted as UI commands.
 - Scrolling, selection, and draft guidance remain stable across progress updates and terminal resize.
 - Stop confirmation retains the selected run ID and observed revision; it does not re-resolve a name to a new run after confirmation. Revalidation checks target identity and current eligibility. A revision change caused only by transcript progress is not a reason to reject the same eligible target.
 - State changes are delivered to the TUI only after service commit. Rendering failures do not roll back accepted work.
@@ -785,6 +791,93 @@ transition(state, event, serviceSnapshot): {
 - Adapter integration tests verify that key events are consumed once and that effect outcomes carry correlation metadata. Pure reducer tests alone do not establish correct pi keyboard behavior.
 - The [UI state-machine feature](../../doc/acceptance/ui-state-machine.feature) provides user-visible acceptance coverage. It complements, rather than replaces, transition and effect tests.
 
+### 12.6 Ported surfaces and mapping
+
+This section defines how nicobailon's TUI surfaces map onto Secretary components. The upstream baseline is nicobailon/pi-subagents at commit `07bd09e0f93a19caee3c39e3cf4069c70ee8dbcd` (v0.68.0), the same revision pinned by the [research report](../research/subagent-system-comparison.md). Ported behavior is reimplemented against Secretary's `AgentService` and records; upstream source is reference material, not a dependency.
+
+#### 12.6.1 Surface mapping
+
+| Upstream surface | Upstream source | Secretary component | Data source |
+| --- | --- | --- | --- |
+| Inline tool display, rich and summary modes | `src/tui/render.ts` (`renderSubagentSummary`, `renderSubagentResult`) | `tools/rendering.ts` | The tool result details and live `AgentSnapshot` |
+| FleetView widget | `src/tui/fleet-status.ts` | `ui/fleet-view.ts` | `AgentService` view-model snapshots |
+| Async widget | `src/tui/render.ts` (`buildWidgetLines`, `renderWidget`) | `ui/async-widget.ts` | `AgentService` view-model snapshots |
+| Fleet inspector overlay | `src/tui/fleet.ts` | `ui/inspector.ts` | `AgentService` view-model snapshots and the structured transcript reader |
+| Structured transcript rendering | `src/tui/fleet-transcript.ts` | `ui/transcript-events.ts` and `ui/transcript.ts` | The persisted pi session JSONL |
+| Usage labels | `src/tui/fleet-status.ts` (`formatFleetTokens`) and `docs/observability.md` | `ui/usage-labels.ts` | Derived from persisted usage events |
+| Configurable inspector keybindings | `src/tui/fleet.ts` (`FleetKeybindingsConfig`) and `src/extension/config.ts` | `ui/keybindings.ts` and `configuration.ts` | The `agents.ui` configuration object |
+
+#### 12.6.2 Structured transcript events
+
+The inspector transcript is parsed from the persisted pi session JSONL into a typed event sequence before rendering:
+
+```ts
+type TranscriptEvent =
+  | { kind: "assistant"; entryId?: string; text: string; timestamp?: number }
+  | { kind: "user"; entryId?: string; text: string; timestamp?: number }
+  | { kind: "tool"; entryId?: string; name: string; status: "running" | "complete" | "error";
+      argsPreview?: string; output?: string; truncated?: boolean }
+  | { kind: "notice"; entryId?: string; tone: "muted" | "warning" | "error"; text: string; timestamp?: number };
+```
+
+- Tool events pair each tool call with its tool result. A call without an observed result renders as running; a recorded result renders complete or error with bounded output.
+- Guidance records whose delivery state is visible to the user render as notices; the notice states the delivery disposition and never claims model compliance.
+- Each event retains its stable entry identifier for the transcript-following anchor defined in Section 12.4. An identifier is derived deterministically from the session line index when the persisted row does not carry one.
+- Parsing is bounded by line count and byte size, with an explicit truncation marker. A partial trailing line from concurrent writing is ignored rather than rendered as content.
+- All event text passes through the existing terminal-control sanitization before rendering. Assistant text renders as Markdown; tool arguments and outputs render as bounded plain or fenced text.
+
+#### 12.6.3 FleetView and async-widget view models
+
+`AgentService` publishes immutable view-model snapshots for the widgets in addition to the existing `AgentSnapshot` list. A row view model carries the agent identifier, name, explicit status, description, resolved model, `startedAt` timestamp, current activity, and optional usage labels. Widgets never compute state; they render the snapshot.
+
+Usage labels follow the [interaction design](../ux/subagents.md#22-fleetview):
+
+- **Context-window usage** is the latest assistant turn's input plus cache-read tokens. It requires per-turn reporting; when the host does not report it, the label is omitted rather than shown as zero.
+- **Cumulative usage** is the accumulated input-plus-output total derived from persisted usage events.
+- Neither label is the goal-budget usage formula of Section 11.2. Goal charging continues to use the established formula on the same underlying usage events, and the widget labels must not be reused for it.
+
+The async widget maintains a bounded polling timer and a render key. The timer is unreferenced so it cannot keep the process alive, is disposed on deactivation, and a repaint is skipped when the render key is unchanged and no row is running.
+
+#### 12.6.4 Inspector presentation components
+
+The inspector overlay adds presentation-layer components that upstream implements as layout functions:
+
+- A bordered frame with a title row, the selection-position indicator, and a footer of currently available keys. Below a minimum width of 36 columns the inspector renders a single diagnostic line instead of panes.
+- A roster pane and a detail pane whose widths derive from the terminal width. Narrow terminals fall back to the existing stacked layout.
+- Themed status glyphs per run status so color is never the only status channel.
+- The transcript viewport, scrolling, and follow behavior of Sections 12.1.3 and 12.4 render the structured events of Section 12.6.2. Tool-detail expansion toggles the bounded argument and output blocks.
+- The footer enumerates only the actions available for the selected record and reflects configured keybindings.
+
+These components consume state from the Section 12.1 state machines. They do not add navigation, dialog, or execution states, and they emit no service effects of their own.
+
+#### 12.6.5 UI configuration
+
+The `agents` configuration object gains an optional `ui` object with validated keys. Unknown keys and invalid values fail configuration validation rather than being ignored.
+
+| Key | Values | Default |
+| --- | --- | --- |
+| `agents.ui.inlineToolDisplay` | `"rich"` or `"summary"` | `"rich"` |
+| `agents.ui.fleetViewPlacement` | `"belowEditor"` or `"aboveEditor"` | `"belowEditor"` |
+| `agents.ui.asyncWidget` | boolean | `true` |
+| `agents.ui.fleetKeybindings` | Inspector-level action-to-key-list overrides | Upstream defaults |
+
+The inspector-level actions are `close`, `scrollUp`, `scrollDown`, `selectUp`, `selectDown`, `selectFirst`, `selectLast`, `pageUp`, `pageDown`, `refresh`, `steer`, `stop`, and `toggleTools`, matching the upstream action set minus the plugin and prompt-audit actions. Prompt interactions such as composer Enter and Escape keep fixed keys. Configuration follows the existing global and trusted-project precedence of Section 5.3; project configuration overrides global values, and the editor-activation keys are not configurable in this release.
+
+#### 12.6.6 Excluded surfaces
+
+The following upstream surfaces are not ported because they require runtime features outside Section 1.1. No placeholder or disabled control is shown for them.
+
+| Upstream surface | Blocking runtime feature |
+| --- | --- |
+| Foreground detach hint and `foregroundDetachShortcut` | Detaching a foreground run into a background run |
+| Prompt Audit and redo-with-guidance | Live prompt snapshots and replay |
+| External job rows and project panes | External job providers and Herdr integration |
+| Enter/H external inspector action | Ghostty and Herdr inspector plugins |
+| Steering delivery modes (`steer`, `follow_up`, `auto`) | A second messaging contract beyond the selected Claude Code behavior |
+| Workflow, chain, mission, and schedule rows | Orchestration and scheduling runtimes |
+
+If a future release adds one of these runtime features, its surface is designed in the owning document first and this table is updated.
+
 ## 13. Failure Handling and Security
 
 | Failure | Required behavior |
@@ -821,6 +914,7 @@ transition(state, event, serviceSnapshot): {
 | SA-07 | Registry precedence, project trust, alias mapping, missing mappings, and late tool registration tests cover configuration. |
 | SA-08 | Atomic usage application, event replay, goal replacement, stopped goals, and continuation waiting tests cover goal integration. |
 | SA-09 | SDK and adapter tests cover host-mode restrictions and child UI lifecycles. Real-provider CLI tests separately exercise print-mode spawning and interactive-parent spawning with widget extensions. These do not establish every RPC client or extension combination. |
+| SA-10 | Structured-transcript parsing tests cover tool pairing, guidance notices, truncation bounds, and sanitization. View-model tests cover usage-label derivation and the no-zero-for-unknown rule. Widget render-key tests cover deduplication and timer disposal. Keybinding-configuration tests cover validation, precedence, and hint consistency. Border and layout snapshot tests cover minimum width, narrow and wide panes, and resize. The recorded UI walkthrough additionally covers the async widget and both display modes. |
 
 Additional release conditions are:
 

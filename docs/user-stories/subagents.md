@@ -13,7 +13,7 @@ Secretary will let a parent agent delegate work to child agents while the user c
 The following constraints were confirmed during design discussion:
 
 - Claude Code provides the reference for tool names and input schemas.
-- nicobailon/pi-subagents provides the reference for the TUI.
+- nicobailon/pi-subagents provides the reference for the TUI. Its inline display, FleetView, async widget, and inspector surfaces are ported onto Secretary's runtime. Surfaces that depend on out-of-scope runtime features are excluded explicitly in the [interaction design](../ux/subagents.md#8-ported-surface-exclusions).
 - tintinweb/pi-subagents provides an implementation reference for pi integration.
 - Child execution stops when pi exits. Saved conversations may be resumed explicitly later.
 - The `Agent.model` field uses Claude Code's alias names. Configuration outside the tool schema maps aliases to pi models, and the tool input exposes only configured aliases.
@@ -39,8 +39,9 @@ As a parent agent, I want to delegate a task without changing my own conversatio
 
 As a user, I want to see which agents are queued, starting, running, stopping, or finished while continuing to use the main editor.
 
-- FleetView shows current-session work without requiring repeated model tool calls.
+- FleetView and the async widget show current-session work without requiring repeated model tool calls.
 - I can open an agent's task, transcript, result, and worktree information.
+- Context-window usage and cumulative usage are labeled as different quantities and are never presented as goal-budget usage.
 - A historical launch result does not falsely report that background execution has completed.
 - Failures, partial results, and cancellation remain distinguishable from successful completion.
 - The inspector remains open if the selected agent finishes.
@@ -115,6 +116,16 @@ As a client using print, JSON, or RPC mode, I want explicit execution and error 
 - Tool execution does not require FleetView or an inspector.
 - Operations requiring interactive confirmation fail clearly when confirmation is unavailable.
 - Background work does not silently disappear at normal headless completion; the supported headless waiting policy is tested and documented.
+
+### SA-10: Recognize delegated work through the ported presentation
+
+As a user, I want Secretary's agent surfaces to present live and historical work with the same structure, controls, and labels as the nicobailon reference where the underlying runtime supports it.
+
+- Inline results offer a rich expandable display and a configurable summary display.
+- FleetView and the async widget present the same underlying state as tool responses, with themed rows, elapsed time, and labeled usage.
+- The inspector presents a structured Markdown and tool transcript with scrollable detail, tool-detail expansion, and a footer that reflects the configured keys.
+- Display configuration is validated; unsupported values fail rather than being ignored.
+- Features excluded in the interaction design's ported-surface exclusions do not appear as disabled or placeholder controls.
 
 ## 3. Compatibility and Scope
 
