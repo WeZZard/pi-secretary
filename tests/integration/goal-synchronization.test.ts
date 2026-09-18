@@ -202,11 +202,13 @@ test("goal tools render calls and results with the specified formats", async (t)
   const h = goalHarness(); t.after(() => h.close()); await h.start();
   const theme: any = { fg: (_c: string, text: string) => text, bold: (text: string) => text };
   const render = (component: any) => component.render(80).map((line: string) => line.trimEnd()).join("\n").trimEnd();
+  let callSeq = 0;
+  const context = () => ({ args: {}, toolCallId: `call-${++callSeq}`, invalidate: () => {}, lastComponent: undefined, state: {}, cwd: "/tmp" });
 
   const create = h.tools.get("create_goal");
-  assert.equal(render(create.renderCall({ objective: "Ship the widget", token_budget: 25000 }, theme)),
+  assert.equal(render(create.renderCall({ objective: "Ship the widget", token_budget: 25000 }, theme, context())),
     "Create Goal: Ship the widget, 25K tokens");
-  assert.equal(render(create.renderCall({ objective: "Ship the widget" }, theme)), "Create Goal: Ship the widget");
+  assert.equal(render(create.renderCall({ objective: "Ship the widget" }, theme, context())), "Create Goal: Ship the widget");
   const createdGoal = { threadId: "t", goalId: "g", objective: "Ship the widget", status: "active", tokensUsed: 0, timeUsedSeconds: 0, createdAt: Date.now(), updatedAt: 0 };
   assert.equal(render(create.renderResult({ content: [{ type: "text", text: "x" }],
     details: { goal: createdGoal, remaining_tokens: null } }, { expanded: false, isPartial: false }, theme)),
@@ -215,10 +217,10 @@ test("goal tools render calls and results with the specified formats", async (t)
     "Error: objective must not be empty");
 
   const update = h.tools.get("update_goal");
-  assert.equal(render(update.renderCall({ status: "complete" }, theme)), "Complete Goal");
-  assert.equal(render(update.renderCall({ status: "paused" }, theme)), "Pause Goal");
+  assert.equal(render(update.renderCall({ status: "complete" }, theme, context())), "Complete Goal");
+  assert.equal(render(update.renderCall({ status: "paused" }, theme, context())), "Pause Goal");
   await h.tool("create_goal", { objective: "Report format", token_budget: 25000 });
-  assert.equal(render(update.renderCall({ status: "complete" }, theme)), "Complete Goal: Report format");
+  assert.equal(render(update.renderCall({ status: "complete" }, theme, context())), "Complete Goal: Report format");
   h.engine.service.requestTerminalUpdate(h.state.threadId, "complete", "agent");
   const goal = h.engine.service.getGoal(h.state.threadId)!;
   const result = (expanded: boolean) => render(update.renderResult(
@@ -231,6 +233,24 @@ test("goal tools render calls and results with the specified formats", async (t)
     { expanded: false, isPartial: false }, theme)), "Complete Goal. Consumed 0 tokens; Used 0 sec");
   assert.equal(render(update.renderResult({ content: [{ type: "text", text: "no goal" }], details: undefined },
     { expanded: false, isPartial: false }, theme)), "Error: no goal");
+});
+
+test("a completed call region collapses so only the designed result line remains", async (t) => {
+  const h = goalHarness(); t.after(() => h.close()); await h.start();
+  const theme: any = { fg: (_c: string, text: string) => text, bold: (text: string) => text };
+  const create = h.tools.get("create_goal");
+  let invalidated = 0;
+  const context = { args: {}, toolCallId: "collapse-1", invalidate: () => { invalidated++; }, lastComponent: undefined, state: {}, cwd: "/tmp" };
+  const running = create.renderCall({ objective: "Collapse after success" }, theme, context);
+  assert.ok(running.render(80).some((line: string) => line.trim().length > 0), "the call shows while running");
+  await h.emit("tool_execution_end", { toolCallId: "collapse-1", toolName: "create_goal", isError: false });
+  assert.equal(invalidated, 1, "completion invalidates the call region for redraw");
+  const collapsed = create.renderCall({ objective: "Collapse after success" }, theme, context);
+  assert.deepEqual(collapsed.render(80), [], "the call region renders zero lines after completion");
+  const failed = { ...context, toolCallId: "collapse-2" };
+  await h.emit("tool_execution_end", { toolCallId: "collapse-2", toolName: "create_goal", isError: true });
+  const afterError = create.renderCall({ objective: "Keep after failure" }, theme, failed);
+  assert.ok(afterError.render(80).some((line: string) => line.trim().length > 0), "a failed call keeps its line");
 });
 
 test("the first user message after completion hides the widget until the goal changes", async (t) => {

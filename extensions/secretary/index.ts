@@ -68,6 +68,28 @@ export function registerGoalTools(pi: ExtensionAPI, engine: GoalEngine, sync: Go
     details: response,
   });
 
+  // The original design renders exactly one final line per goal tool row: the
+  // summary. Pi composes call region + result region, so while the tool runs
+  // the call shows the action line, and once the execution completes the call
+  // region collapses to zero lines, leaving the summary alone in the shell.
+  // Completion is observed through tool_execution_end (same toolCallId the
+  // render context carries); failures never mark completion, so a failed call
+  // keeps its action line above the error result.
+  const MAX_TRACKED_CALLS = 256;
+  const completedCalls = new Set<string>();
+  const collapseOnCompletion = new Map<string, () => void>();
+  const completed = (toolCallId: string): boolean => completedCalls.has(toolCallId);
+  const trackCompletion = (toolCallId: string, invalidate: () => void): void => {
+    if (!collapseOnCompletion.has(toolCallId)) collapseOnCompletion.set(toolCallId, invalidate);
+  };
+  pi.on("tool_execution_end", (event) => {
+    if (event.isError || !["create_goal", "update_goal"].includes(event.toolName)) return;
+    completedCalls.add(event.toolCallId);
+    if (completedCalls.size > MAX_TRACKED_CALLS) completedCalls.delete(completedCalls.values().next().value!);
+    collapseOnCompletion.get(event.toolCallId)?.();
+    collapseOnCompletion.delete(event.toolCallId);
+  });
+
   // A thrown executor error reaches renderResult without details; success always sets them.
   const errorText = (theme: Theme, result: AgentToolResult<GoalToolResponse | undefined>): Text | undefined => {
     if (result.details !== undefined) return undefined;
@@ -89,7 +111,9 @@ export function registerGoalTools(pi: ExtensionAPI, engine: GoalEngine, sync: Go
   }));
   pi.registerTool(defineTool<typeof createGoalToolSpec.parameters, GoalToolResponse>({
     ...createGoalToolSpec,
-    renderCall(args) {
+    renderCall(args, _theme, context) {
+      if (completed(context.toolCallId)) return new Text("", 0, 0);
+      trackCompletion(context.toolCallId, context.invalidate);
       const budget = args.token_budget !== undefined ? `, ${abbreviateTokens(args.token_budget)} tokens` : "";
       return new Text(`Create Goal: ${args.objective}${budget}`, 0, 0);
     },
@@ -113,7 +137,9 @@ export function registerGoalTools(pi: ExtensionAPI, engine: GoalEngine, sync: Go
   }));
   pi.registerTool(defineTool<typeof updateGoalToolSpec.parameters, GoalToolResponse>({
     ...updateGoalToolSpec,
-    renderCall(args) {
+    renderCall(args, _theme, context) {
+      if (completed(context.toolCallId)) return new Text("", 0, 0);
+      trackCompletion(context.toolCallId, context.invalidate);
       const action = UPDATE_ACTIONS[args.status] ?? args.status;
       const threadId = engine.getThreadId();
       const objective = threadId ? engine.service.getGoal(threadId)?.objective : undefined;
