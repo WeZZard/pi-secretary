@@ -11,6 +11,8 @@ import {
   formatElapsed,
   consumptionText,
   abbreviateTokens,
+  normalizeObjective,
+  EXPAND_HINT,
   STATUS_COLORS,
 } from "../../extensions/secretary/goal-ui.ts";
 import { type ThreadGoal } from "../../extensions/secretary/goal/goal-record.ts";
@@ -97,10 +99,10 @@ test("trailing segment is truncated when the width is tight", () => {
   assert.ok(top(lines).includes("▶ Goal: active"));
 });
 
-test("body wraps at the inner width", () => {
-  const lines = renderGoalBox("▶ Goal: active", "1 tokens, 1 sec", ["one two three four five six seven eight"], 24);
-  assert.ok(lines.length > 3, "the objective wraps to multiple lines");
-  for (const line of lines.slice(1, -1)) assert.ok(line.startsWith("│ ") && line.endsWith(" │"));
+test("the dashboard body is one fitted line at the inner width", () => {
+  const d = renderGoalDashboard(goal({ objective: "one two three four five six seven eight" }), 24, 1000);
+  const text = bodyText(d.widget).trimEnd();
+  assert.ok(text.endsWith(EXPAND_HINT), "the objective is truncated with the hint");
 });
 
 test("status colors follow severity semantics", () => {
@@ -116,4 +118,81 @@ test("unavailable box renders without an icon", () => {
   const lines = renderGoalBox("Goal: unavailable", "", ["Goal status is unavailable."], 60);
   assert.ok(top(lines).startsWith("╭─ Goal: unavailable"));
   assert.ok(!top(lines).includes("╮ ") || top(lines).endsWith("╮"));
+});
+
+// --- One-line objective design: normalize → truncate → render -----------------
+// The widget body is always exactly one line. The objective is normalized
+// (whitespace runs collapsed, ends trimmed), truncated to the inner width at a
+// word boundary, and suffixed with the `/goal` expansion hint when truncated.
+
+const bodyText = (lines: string[]): string => {
+  assert.equal(lines.length, 3, "the widget is exactly three lines");
+  const body = lines[1]!;
+  assert.ok(body.startsWith("│ ") && body.endsWith(" │"), "the body line carries the borders");
+  return body.slice(2, -2);
+};
+
+test("normalizeObjective collapses whitespace runs and trims the ends", () => {
+  assert.equal(normalizeObjective("  leading and trailing  "), "leading and trailing");
+  assert.equal(normalizeObjective(`paragraph one
+
+paragraph two`), "paragraph one paragraph two");
+  // The CR cannot be a literal source character; the line break after it is.
+  assert.equal(normalizeObjective(`tabs\tand\r
+ CRLF`), "tabs and CRLF");
+  assert.equal(normalizeObjective("multiple   \t  spaces"), "multiple spaces");
+  assert.equal(normalizeObjective("already clean"), "already clean");
+});
+
+test("a multi-line objective renders as a single bordered body line", () => {
+  const objective = `First sentence explains context.
+
+Second paragraph asks the real question.`;
+  const d = renderGoalDashboard(goal({ objective }), 120, 1000);
+  const text = bodyText(d.widget);
+  assert.equal(text.trimEnd(), "First sentence explains context. Second paragraph asks the real question.");
+  for (const line of d.widget) assert.equal(line.length, 120, "every line spans the full width");
+});
+
+test("the widget is always three lines regardless of objective length", () => {
+  const long = "Develop a few mapping functions for converting boolean probability into real grayscale, render the images with the app, take snapshots, and tell me which mapping function works better for this drawing.";
+  for (const width of [24, 44, 80, 120]) {
+    const d = renderGoalDashboard(goal({ objective: long }), width, 1000);
+    assert.equal(d.widget.length, 3, `width ${width} renders exactly three lines`);
+    for (const line of d.widget) assert.equal(line.length, width);
+  }
+});
+
+test("a long objective is truncated at a word boundary with the expansion hint", () => {
+  const objective = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu";
+  const width = 44;
+  const d = renderGoalDashboard(goal({ objective }), width, 1000);
+  const text = bodyText(d.widget).trimEnd();
+  assert.ok(text.endsWith(EXPAND_HINT), `body ends with the hint: ${text}`);
+  const shown = text.slice(0, -EXPAND_HINT.length).trimEnd();
+  assert.ok(objective.startsWith(shown), "the shown text is a prefix of the objective");
+  assert.equal(objective[shown.length], " ", "the cut happens at a word boundary");
+});
+
+test("an objective that fits renders without an ellipsis or hint", () => {
+  const d = renderGoalDashboard(goal({ objective: "ship the feature" }), 80, 1000);
+  const text = bodyText(d.widget).trimEnd();
+  assert.equal(text, "ship the feature");
+  assert.ok(!text.includes("…") && !text.includes("/goal"));
+});
+
+test("the hint is dropped when the width cannot carry it", () => {
+  const objective = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu";
+  const d = renderGoalDashboard(goal({ objective }), 12, 1000);
+  const text = bodyText(d.widget).trimEnd();
+  assert.ok(text.endsWith("…"), `body still ends with an ellipsis: ${text}`);
+  assert.ok(!text.includes("/goal"), "the hint does not fit at this width");
+});
+
+test("leading and trailing whitespace do not shift the body text", () => {
+  const objective = `
+   ship the feature 
+ `;
+  const d = renderGoalDashboard(goal({ objective }), 80, 1000);
+  assert.equal(bodyText(d.widget).trimEnd(), "ship the feature");
 });

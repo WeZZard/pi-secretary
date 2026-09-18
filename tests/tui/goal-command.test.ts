@@ -97,3 +97,44 @@ test("applyGoalEdit rejects an empty objective", () => {
   assert.equal((result as any).error, true);
   assert.equal(e.service.getGoal(THREAD)!.objective, "original");
 });
+
+// --- One-line objective design: the view dialog is the expansion surface ------
+// The widget truncates to one line, so bare `/goal` must present the verbatim
+// objective; the set-goal notify stays a single line.
+
+test("bare /goal view preserves the verbatim multi-line objective", () => {
+  const e = engine();
+  const objective = `First sentence explains context.
+
+Second paragraph asks the real question.`;
+  applyGoalCommand(e, THREAD, objective);
+  const result = applyGoalCommand(e, THREAD, "");
+  assert.equal(result.kind, "view");
+  assert.ok((result as any).body.join("\n").includes(objective), "the view shows the verbatim objective");
+});
+
+test("the set-goal notify normalizes a multi-line objective into one line", () => {
+  const e = engine();
+  const objective = `First sentence explains context.
+
+Second paragraph asks the real question.`;
+  const result = applyGoalCommand(e, THREAD, objective);
+  assert.equal(result.kind, "notify");
+  const message = (result as any).message as string;
+  assert.ok(!message.includes("\n"), "the notify message is a single line");
+  assert.ok(message.includes("First sentence explains context. Second paragraph"));
+});
+
+test("applyGoalEdit notify normalizes a multi-line objective into one line", () => {
+  const e = engine();
+  applyGoalCommand(e, THREAD, "original");
+  const edited = `revised first part.
+
+revised second part.`;
+  const result = applyGoalEdit(e, THREAD, edited);
+  assert.equal(result.kind, "notify");
+  const message = (result as any).message as string;
+  assert.ok(!message.includes("\n"), "the notify message is a single line");
+  assert.ok(message.includes("revised first part. revised second part."));
+  assert.equal(e.service.getGoal(THREAD)!.objective, edited, "the stored objective stays verbatim");
+});

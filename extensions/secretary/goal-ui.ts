@@ -112,6 +112,40 @@ function fitSegment(text: string, width: number): string {
   return text.slice(0, width - 1) + ELLIPSIS;
 }
 
+/**
+ * Collapse every whitespace run (spaces, tabs, newlines, CRLF) into a single
+ * space and trim the ends. Presentation only: the stored objective stays
+ * verbatim for the `/goal` view dialog and `/goal edit` prefill.
+ */
+export function normalizeObjective(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/** Suffix marking a truncated objective; `/goal` is the expansion surface. */
+export const EXPAND_HINT = "… (/goal)";
+
+/**
+ * Fit a normalized objective into one line at the given column budget:
+ * word-boundary truncation with the expansion hint; the hint drops to a bare
+ * ellipsis when the width cannot carry it.
+ */
+function fitObjectiveLine(text: string, width: number): string {
+  if (text.length <= width) return text;
+  const budget = width - EXPAND_HINT.length;
+  if (budget >= 1) {
+    let cut = text.lastIndexOf(" ", budget);
+    if (cut <= 0) cut = budget;
+    return text.slice(0, cut) + EXPAND_HINT;
+  }
+  return fitSegment(text, width);
+}
+
+/** The widget body is always exactly one fitted line of the objective. */
+function objectiveBody(objective: string, width: number): string[] {
+  // renderGoalBox reserves two border columns and one padding column per side.
+  return [fitObjectiveLine(normalizeObjective(objective), Math.max(width - 4, 1))];
+}
+
 function wrapText(text: string, width: number): string[] {
   if (width < 1) return [""];
   const lines: string[] = [];
@@ -159,7 +193,7 @@ export function renderGoalBox(leading: string, trailing: string, body: string[],
 export function renderGoalDashboard(goal: ThreadGoal | null, width = 80, nowMs = Date.now()): GoalStatusLine {
   if (!goal) return { widget: [] };
   const leading = `${STATUS_ICONS[goal.status]} Goal: ${goal.status}`;
-  return { widget: renderGoalBox(leading, consumptionText(goal, nowMs), [goal.objective], width) };
+  return { widget: renderGoalBox(leading, consumptionText(goal, nowMs), objectiveBody(goal.objective, width), width) };
 }
 
 /**
@@ -212,8 +246,11 @@ export function applyGoalCommand(
   }
 
   if (trimmed === "") {
-    const { widget } = renderGoalDashboard(engine.service.getGoal(threadId));
-    return { kind: "view", body: widget };
+    // The view dialog is the expansion surface for the one-line widget, so it
+    // presents the verbatim objective, not the fitted widget body.
+    const goal = engine.service.getGoal(threadId);
+    if (!goal) return { kind: "view", body: [] };
+    return { kind: "view", body: [`Goal [${goal.status}]:`, "", goal.objective] };
   }
 
   // `/goal <objective>` sets (create or replace) the goal as Active, matching
@@ -225,7 +262,7 @@ export function applyGoalCommand(
       : engine.service.createGoal(threadId, trimmed, undefined, "user", receipt);
     return {
       kind: "notify",
-      message: outcome.goal ? `Goal [${outcome.goal.status}]: ${outcome.goal.objective}` : "No current goal.",
+      message: outcome.goal ? `Goal [${outcome.goal.status}]: ${normalizeObjective(trimmed)}` : "No current goal.",
     };
   } catch (err) {
     return { kind: "notify", message: (err as Error).message, error: true };
@@ -259,7 +296,7 @@ export function applyGoalEdit(
       "user",
       receipt,
     );
-    return { kind: "notify", message: `Goal [${outcome.goal?.status}]: ${trimmed}` };
+    return { kind: "notify", message: `Goal [${outcome.goal?.status}]: ${normalizeObjective(trimmed)}` };
   } catch (err) {
     return { kind: "notify", message: (err as Error).message, error: true };
   }
@@ -293,8 +330,11 @@ export function registerGoalUI(pi: ExtensionAPI, engine: GoalEngine): {
     clearTick();
     if (goal.status === "active") tick = setInterval(() => tui.requestRender(), 1000);
     return {
-      render: (width: number) => renderGoalBox(leading, consumptionText(engine.service.getGoal(goal.threadId) ?? goal, Date.now()), [goal.objective], width)
-        .map((line) => theme.fg(color, line)),
+      render: (width: number) => {
+        const latest = engine.service.getGoal(goal.threadId) ?? goal;
+        return renderGoalBox(leading, consumptionText(latest, Date.now()), objectiveBody(latest.objective, width), width)
+          .map((line) => theme.fg(color, line));
+      },
       invalidate: () => {},
       dispose: () => clearTick(),
     };
