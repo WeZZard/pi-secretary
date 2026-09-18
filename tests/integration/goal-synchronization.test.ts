@@ -207,26 +207,28 @@ test("goal tools render calls and results with the specified formats", async (t)
   assert.equal(render(create.renderCall({ objective: "Ship the widget", token_budget: 25000 }, theme)),
     "Create Goal: Ship the widget, 25K tokens");
   assert.equal(render(create.renderCall({ objective: "Ship the widget" }, theme)), "Create Goal: Ship the widget");
+  const createdGoal = { threadId: "t", goalId: "g", objective: "Ship the widget", status: "active", tokensUsed: 0, timeUsedSeconds: 0, createdAt: Date.now(), updatedAt: 0 };
   assert.equal(render(create.renderResult({ content: [{ type: "text", text: "x" }],
-    details: { goal: { threadId: "t", goalId: "g", objective: "Ship the widget", status: "active", tokensUsed: 0, timeUsedSeconds: 0, createdAt: Date.now(), updatedAt: 0 },
-      remaining_tokens: null } }, { expanded: false, isPartial: false }, theme)), "Created Goal. Consumed 0 tokens; Used 0 sec");
+    details: { goal: createdGoal, remaining_tokens: null } }, { expanded: false, isPartial: false }, theme)),
+    "Create Goal. Consumed 0 tokens; Used 0 sec");
   assert.equal(render(create.renderResult({ content: [{ type: "text", text: "objective must not be empty" }], details: undefined }, { expanded: false, isPartial: false }, theme)),
     "Error: objective must not be empty");
 
   const update = h.tools.get("update_goal");
-  assert.equal(render(update.renderCall({ status: "complete" }, theme)), "Completed Goal");
-  assert.equal(render(update.renderCall({ status: "paused" }, theme)), "Paused Goal");
+  assert.equal(render(update.renderCall({ status: "complete" }, theme)), "Complete Goal");
+  assert.equal(render(update.renderCall({ status: "paused" }, theme)), "Pause Goal");
   await h.tool("create_goal", { objective: "Report format", token_budget: 25000 });
+  assert.equal(render(update.renderCall({ status: "complete" }, theme)), "Complete Goal: Report format");
   h.engine.service.requestTerminalUpdate(h.state.threadId, "complete", "agent");
   const goal = h.engine.service.getGoal(h.state.threadId)!;
   const result = (expanded: boolean) => render(update.renderResult(
     { content: [{ type: "text", text: "x" }], details: { goal, remaining_tokens: 25000 } },
     { expanded, isPartial: false }, theme));
-  assert.equal(result(false), "Completed Goal. Consumed 0 tokens; Used 0 sec; Budget 25K tokens");
-  assert.equal(result(true), `Completed Goal. Consumed 0 tokens; Used 0 sec; Budget 25K tokens\n\nObjective: Report format`);
+  assert.equal(result(false), "Complete Goal. Consumed 0 tokens; Used 0 sec; Budget 25K tokens");
+  assert.equal(result(true), `Complete Goal. Consumed 0 tokens; Used 0 sec; Budget 25K tokens\n\nObjective: Report format`);
   const noBudget = { ...goal, tokenBudget: undefined };
   assert.equal(render(update.renderResult({ content: [{ type: "text", text: "x" }], details: { goal: noBudget, remaining_tokens: null } },
-    { expanded: false, isPartial: false }, theme)), "Completed Goal. Consumed 0 tokens; Used 0 sec");
+    { expanded: false, isPartial: false }, theme)), "Complete Goal. Consumed 0 tokens; Used 0 sec");
   assert.equal(render(update.renderResult({ content: [{ type: "text", text: "no goal" }], details: undefined },
     { expanded: false, isPartial: false }, theme)), "Error: no goal");
 });

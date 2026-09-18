@@ -74,7 +74,7 @@ export function registerGoalTools(pi: ExtensionAPI, engine: GoalEngine, sync: Go
     const text = result.content[0];
     return new Text(theme.fg("error", `Error: ${text?.type === "text" ? text.text : ""}`), 0, 0);
   };
-  const UPDATE_ACTIONS: Record<string, string> = { complete: "Completed", blocked: "Blocked", paused: "Paused" };
+  const UPDATE_ACTIONS: Record<string, string> = { complete: "Complete", blocked: "Block", paused: "Pause" };
   const updateSummary = (goal: ThreadGoal, nowMs: number): string => {
     const parts = [`Consumed ${abbreviateTokens(goal.tokensUsed)} tokens`, `Used ${elapsedText(goal, nowMs)}`];
     if (goal.tokenBudget !== undefined) parts.push(`Budget ${abbreviateTokens(goal.tokenBudget)} tokens`);
@@ -83,23 +83,27 @@ export function registerGoalTools(pi: ExtensionAPI, engine: GoalEngine, sync: Go
 
   pi.registerTool(defineTool<typeof getGoalToolSpec.parameters, GoalToolResponse>({
     ...getGoalToolSpec,
+    renderShell: "self",
     async execute(_id, _params, _signal, _onUpdate, ctx) {
       return result(executeGetGoal(engine.service, threadOf(ctx)));
     },
   }));
   pi.registerTool(defineTool<typeof createGoalToolSpec.parameters, GoalToolResponse>({
     ...createGoalToolSpec,
-    renderCall(args, theme) {
+    renderShell: "self",
+    renderCall(args) {
       const budget = args.token_budget !== undefined ? `, ${abbreviateTokens(args.token_budget)} tokens` : "";
-      return new Text(theme.fg("toolTitle", theme.bold("Create Goal: ")) + theme.fg("text", args.objective + budget), 0, 0);
+      return new Text(`Create Goal: ${args.objective}${budget}`, 0, 0);
     },
     renderResult(rendered, options, theme) {
       const failure = errorText(theme, rendered);
       if (failure) return failure;
       const goal = rendered.details?.goal;
-      if (!goal) return new Text(theme.fg("muted", "No goal was created."), 0, 0);
-      const color = STATUS_COLORS[goal.status];
-      let text = theme.fg(color, `Created Goal. ${updateSummary(goal, Date.now())}`);
+      if (!goal) {
+        const text = rendered.content[0];
+        return new Text(text?.type === "text" ? text.text : "", 0, 0);
+      }
+      let text = theme.fg(STATUS_COLORS[goal.status], `Create Goal. ${updateSummary(goal, Date.now())}`);
       if (options.expanded) text += `\n\nObjective: ${goal.objective}`;
       return new Text(text, 0, 0);
     },
@@ -111,19 +115,23 @@ export function registerGoalTools(pi: ExtensionAPI, engine: GoalEngine, sync: Go
   }));
   pi.registerTool(defineTool<typeof updateGoalToolSpec.parameters, GoalToolResponse>({
     ...updateGoalToolSpec,
-    renderCall(args, theme) {
+    renderShell: "self",
+    renderCall(args) {
       const action = UPDATE_ACTIONS[args.status] ?? args.status;
-      const color = STATUS_COLORS[args.status as ThreadGoal["status"]] ?? "toolTitle";
-      return new Text(theme.fg(color, theme.bold(`${action} Goal`)), 0, 0);
+      const threadId = engine.getThreadId();
+      const objective = threadId ? engine.service.getGoal(threadId)?.objective : undefined;
+      return new Text(objective ? `${action} Goal: ${objective}` : `${action} Goal`, 0, 0);
     },
     renderResult(rendered, options, theme) {
       const failure = errorText(theme, rendered);
       if (failure) return failure;
       const goal = rendered.details?.goal;
-      if (!goal) return new Text(theme.fg("muted", "No current goal."), 0, 0);
-      const action = UPDATE_ACTIONS[goal.status] ?? "Updated";
-      const color = STATUS_COLORS[goal.status] ?? "text";
-      let text = theme.fg(color, `${action} Goal. ${updateSummary(goal, Date.now())}`);
+      if (!goal) {
+        const text = rendered.content[0];
+        return new Text(text?.type === "text" ? text.text : "", 0, 0);
+      }
+      const action = UPDATE_ACTIONS[goal.status] ?? "Update";
+      let text = theme.fg(STATUS_COLORS[goal.status], `${action} Goal. ${updateSummary(goal, Date.now())}`);
       if (options.expanded) text += `\n\nObjective: ${goal.objective}`;
       return new Text(text, 0, 0);
     },
