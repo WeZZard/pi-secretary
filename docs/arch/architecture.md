@@ -215,6 +215,12 @@ flowchart LR
     SYNC --> CONTEXT[Current model context]
 ```
 
+#### 5.1.1 Multi-process access
+
+- The goals database is a single file shared by every concurrently running pi session (`pi-secretary-goals.sqlite`); any session can write while others read. The connection must therefore be opened for multi-process access: WAL journal mode, so a writer does not exclude readers, plus a nonzero busy timeout, so the remaining writer-versus-writer waits resolve instead of returning `SQLITE_BUSY`.
+- WAL persists in the database file, so a session opening an existing store inherits the mode without coordination. The store lives on a local filesystem; WAL's unsuitability for network filesystems is not a constraint here.
+- A bounded `SQLITE_BUSY` surface can still occur (for example, a writer stalled past the busy timeout). Every storage read site must therefore tolerate a transient read fault; the UI degradation contract is §13.6, and the context-injection fault policy is §13.3. A storage read fault is never a process-fatal condition.
+
 ### 5.2 Mutation ordering
 
 1. Retain the receipt sequence for a user decision or the originating intent sequence for an automatic result; do not assign precedence from the time an asynchronous handler happens to finish.
@@ -452,6 +458,7 @@ palette, keybindings) and the interaction model.
 | Removing pi-goal-x features surprises users | Guarded by the product vision (Codex-faithful replicate) + README. |
 | The model retains an obsolete active-goal instruction. | Remove extension-owned state and steering messages from the outgoing context on every request; outside active pursuit, no goal text remains to steer from. |
 | A UI listener fails after storage commits. | Isolate listener failures and reconcile from storage at the next lifecycle or request boundary. |
+| A storage read fails during a periodic display refresh. | Open the store for multi-process access (§5.1.1) and treat a remaining transient read fault as the unavailable display state (§13.6); a refresh must never terminate the host process. |
 | Run-wide cancellation disrupts unrelated input. | Resolve obsolete work by ordering and current-state reconciliation rather than blanket session abort. |
 | Wall-clock timestamps tie or move backwards. | Use one monotonic sequence within the session epoch for ordering, and retain timestamps only for diagnostics. |
 | UI publication is mistaken for user acknowledgment. | Record what was published and when, without claiming to observe the user's attention or Ghostty's actual paint time. |
@@ -602,6 +609,7 @@ flowchart TD
 
 - Bind a fresh `ExtensionContext` on `session_start` and detach listeners, pending requests, and UI references on shutdown. Session replacement must not reuse captured context from the previous session.
 - Reconcile the UI on lifecycle entry and committed changes. A request-boundary reconciliation can repair a missed UI event; it must not mutate goal state.
+- A periodic display refresh that re-reads the service must tolerate a transient storage read fault (§5.1.1). On such a fault the refresh keeps the last confirmed display or degrades to the unavailable display state and retries on a later refresh; it must not throw out of the host's render path. A display refresh is never allowed to terminate the host process.
 - Restore accounting and explicitly evaluate eligible idle dispatch after startup is ready. Start a new ordering epoch, reconcile current state, and never replay pending requests from the old epoch. Test startup, reload, resume, new, and fork independently; a later `agent_settled` event is not guaranteed to bootstrap an idle session.
 - Track provider failures by originating run, goal, and intent sequence. Use `agent_settled` plus verified host recovery information to distinguish an unrecovered failure from an intermediate `turn_end` error. A newer accepted decision supersedes an older failure even when no status field changed; outcome processing time is not its authority.
 - Finalize each originating turn exactly once even if the current goal is no longer active. Account eligible late usage against the captured goal identity with the existing stopped/completed accounting rules, and never transfer it to a replacement goal.
@@ -618,6 +626,7 @@ flowchart TD
 - Exercise decisions between scheduling and dispatch, decisions after dispatch, delayed processing of earlier user messages, valid no-op decisions, status-only questions, and unrelated input interleaved with automatic work. Verify that late completion and error judgments cannot override newer intent.
 - Test equal timestamps, a backwards wall-clock adjustment, UI-publication failure, headless operation, and a new session epoch. Ordering must depend on the controller sequence rather than timestamps or an assumed human acknowledgment.
 - Verify that pure accounting updates refresh usage without invalidating valid continuation and that reaching the limit does invalidate it.
+- Verify multi-process store access (§5.1.1): while a second process holds a write transaction on the shared store, a display refresh degrades or waits without terminating the host process, and reads succeed again once the write completes. Exercise both the storage connection semantics and the interactive display path.
 - Verify that state-only updates create no model turns and that ordinary continuation and budget wrap-up obey the ordering rules. An already-dispatched wake-up may receive a response; assert that it receives current state and cannot authorize obsolete goal work, not that every stale provider invocation is prevented.
 - A successful mock test proves controller logic, not Pi's actual event ordering. Run supported-Pi integration tests with a deterministic fake provider and isolated state to verify input ingress, command handling, dispatch correlation, model/tool boundaries, retry, and preservation of unrelated user input.
 - Release requires type checking, unit tests, adapter integration tests, host integration tests, Markdown-link checks, and Mermaid validation. A passing legacy component suite alone is not evidence of synchronization correctness.

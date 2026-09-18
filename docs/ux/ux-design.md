@@ -203,6 +203,7 @@ flowchart TD
 | A temporary connection problem is recovered from. | The goal does not remain labeled blocked merely because the temporary failure occurred. |
 | An error prevents work from continuing. | The stopped status and explanation distinguish an execution error from a task that needs the user's input. |
 | The goal's current information cannot be loaded. | The interface says the information is unavailable rather than presenting an old status as current or implying that the goal was cleared. |
+| The goal information is temporarily unreadable while the display refreshes. | The refresh waits or retries quietly, keeping the last confirmed display. If the information stays unreadable, the display reports the goal as unavailable; the session itself is not interrupted. |
 | An action cannot have the requested effect. | Feedback and the goal display agree about what actually happened, with a reason and a supported next step when known. |
 | An earlier attempt reports an error after the user pauses or changes the goal. | The user's newer decision remains in effect. Explain the old attempt's result without presenting it as a fresh blocker for the current goal. |
 | An earlier request takes longer to process than a later decision. | The delayed request does not silently replace the user's newer decision. Explain that it was superseded rather than claiming it succeeded. |

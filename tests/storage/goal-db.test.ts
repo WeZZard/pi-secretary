@@ -302,3 +302,134 @@ test("budget and usage limited goals accept final in-flight accounting only in s
     assert.equal(db.getThreadGoal(status)?.status, status);
   }
 });
+
+// Architecture §5.1.1: the goals file is shared by every concurrently running
+// pi session, so a file-backed store opens in WAL with a busy timeout.
+test("file-backed store opens in WAL with a busy timeout", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "goal-db-wal-"));
+  try {
+    const path = join(dir, "goals.sqlite");
+    const db = GoalDb.open(path);
+    try {
+      assert.equal((db.connection.prepare("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode, "wal");
+      assert.equal((db.connection.prepare("PRAGMA busy_timeout").get() as { timeout: number }).timeout, 5000);
+    } finally {
+      db.close();
+    }
+    // WAL persists in the file; a raw connection observes the mode too.
+    const raw = new DatabaseSync(path);
+    try {
+      assert.equal((raw.prepare("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode, "wal");
+    } finally {
+      raw.close();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a pre-existing rollback-journal store is switched to WAL on open", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "goal-db-migrate-"));
+  try {
+    const path = join(dir, "goals.sqlite");
+    const legacy = new DatabaseSync(path);
+    legacy.exec("PRAGMA journal_mode = DELETE");
+    legacy.close();
+    const db = GoalDb.open(path);
+    try {
+      assert.equal((db.connection.prepare("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode, "wal");
+      // Existing data survives the mode switch.
+      db.insertThreadGoal(THREAD, "optimize the benchmark", "active");
+    } finally {
+      db.close();
+    }
+    const raw = new DatabaseSync(path);
+    try {
+      assert.deepEqual({ ...raw.prepare("SELECT objective FROM thread_goals WHERE thread_id = ?").get(THREAD) },
+        { objective: "optimize the benchmark" });
+    } finally {
+      raw.close();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("reads proceed while a concurrent connection holds a write transaction", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "goal-db-concurrent-"));
+  try {
+    const path = join(dir, "goals.sqlite");
+    const db = GoalDb.open(path);
+    const writer = new DatabaseSync(path);
+    writer.exec("PRAGMA journal_mode = WAL");
+    try {
+      db.insertThreadGoal(THREAD, "optimize the benchmark", "active");
+      writer.exec("BEGIN IMMEDIATE");
+      writer.prepare("UPDATE thread_goals SET updated_at_ms = ?").run(Date.now());
+      // Under WAL a writer does not exclude readers; no SQLITE_BUSY.
+      assert.equal(db.getThreadGoal(THREAD)?.status, "active");
+      writer.exec("ROLLBACK");
+      assert.equal(db.getThreadGoal(THREAD)?.status, "active");
+    } finally {
+      writer.close();
+      db.close();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a writer waits out a concurrent write within the busy timeout", async () => {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { spawnSync } = await import("node:child_process");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "goal-db-busy-"));
+  try {
+    const path = join(dir, "goals.sqlite");
+    // A sibling process holds the write lock for 300 ms, then commits. The
+    // busy wait inside node:sqlite blocks the event loop, so the release
+    // cannot come from this process.
+    const holder = `import { DatabaseSync } from "node:sqlite";
+const db = new DatabaseSync(${JSON.stringify(path)});
+db.exec("PRAGMA journal_mode = WAL");
+db.exec("PRAGMA busy_timeout = 30000");
+db.exec("BEGIN IMMEDIATE");
+setTimeout(() => { db.exec("COMMIT"); db.close(); }, 300);
+`;
+    const script = join(dir, "holder.mjs");
+    (await import("node:fs")).writeFileSync(script, holder);
+    const db = GoalDb.open(path);
+    try {
+      db.insertThreadGoal(THREAD, "optimize the benchmark", "active");
+      const child = (await import("node:child_process")).spawn(process.execPath, ["--no-warnings", script], { stdio: "ignore" });
+      // Give the holder a moment to take the lock, then write through the
+      // busy timeout: the update blocks ~300 ms and succeeds after release.
+      spawnSync(process.execPath, ["-e", "setTimeout(() => {}, 400)"], { stdio: "ignore" });
+      const outcome = db.updateThreadGoal(THREAD, { status: "paused" });
+      assert.equal(outcome?.status, "paused");
+      await new Promise(resolve => child.once("close", resolve));
+    } finally {
+      db.close();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("in-memory stores are unchanged (no WAL pragmas)", () => {
+  const db = freshDb();
+  assert.equal((db.connection.prepare("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode, "memory");
+});

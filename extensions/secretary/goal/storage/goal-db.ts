@@ -63,6 +63,16 @@ export class GoalDb {
   /** Open (or create) a goal database at `path`. Use `:memory:` for tests. */
   static open(path: string): GoalDb {
     const db = new DatabaseSync(path);
+    // Architecture §5.1.1: the goals file is shared by every concurrently
+    // running pi session. WAL keeps readers unblocked while another session
+    // writes, and the busy timeout resolves the remaining writer-versus-writer
+    // waits instead of surfacing SQLITE_BUSY. WAL persists in the file, so
+    // existing stores migrate on first open. In-memory databases are
+    // single-connection by definition; WAL is not applicable there.
+    if (path !== ":memory:") {
+      db.exec("PRAGMA journal_mode = WAL");
+      db.exec("PRAGMA busy_timeout = 5000");
+    }
     return new GoalDb(db);
   }
 

@@ -186,6 +186,7 @@
 - After a goal is cleared, the display and subsequent status answers report that there is no current goal.
 - Returning to a session shows the current goal even if an earlier display update failed.
 - If current goal information is unavailable, the interface and agent do not present an older status as certain.
+- The goal display continues to report the current goal while another session is using the goal store, rather than failing or going blank.
 
 #### US-D4: Keep the UI and agent synchronized
 
@@ -218,6 +219,7 @@
 
 - **Compatibility:** Preserve the three public goal tools (`get_goal`, `create_goal`, and `update_goal`) and the six existing goal statuses. Detailed schemas belong in the architecture document.
 - **Persistence constraint:** Retain SQLite as the goal store; this work does not introduce another persistence format.
-- **Reliability:** A failure must not produce a false success message, lose the current goal, or restart work the user stopped.
+- **Shared store:** Several agent sessions may run concurrently against the same goal store. One session's use of the store must not interrupt another session.
+- **Reliability:** A failure must not produce a false success message, lose the current goal, or restart work the user stopped. A transient inability to read current goal information degrades to an unavailable report and recovers on a later attempt; it must never terminate the session.
 - **Inspectability:** The user can inspect the goal and usage without changing them, and unknown stopping reasons are reported honestly.
 - **Accessibility:** Status meaning and goal controls remain understandable without relying on color or a mouse.

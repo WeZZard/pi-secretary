@@ -375,7 +375,12 @@ export function registerGoalUI(pi: ExtensionAPI, engine: GoalEngine): {
     if (goal.status === "active") tick = setInterval(() => tui.requestRender(), 1000);
     return {
       render: (width: number) => {
-        const latest = engine.service.getGoal(goal.threadId) ?? goal;
+        // Architecture §13.6: a refresh read fault degrades to the last
+        // confirmed snapshot and never escapes the host's render path.
+        let latest = goal;
+        try {
+          latest = engine.service.getGoal(goal.threadId) ?? goal;
+        } catch { /* Transient read fault; keep the last confirmed display. */ }
         return renderGoalBox(leading, consumptionText(latest, Date.now()), objectiveBody(latest.objective, width), width)
           .map((line) => theme.fg(color, line));
       },
@@ -384,11 +389,26 @@ export function registerGoalUI(pi: ExtensionAPI, engine: GoalEngine): {
     };
   };
 
+  const unavailableComponent = (_tui: unknown, theme: { fg(color: string, text: string): string }) => ({
+    render: (width: number) => renderGoalBox("Goal: unavailable", "", ["Goal status is unavailable; this does not establish that it was cleared."], width)
+      .map((line) => theme.fg("error", line)),
+    invalidate: () => {},
+  });
+
   const refresh = (): void => {
-    const goal = engine.getThreadId()
-      ? engine.service.getGoal(engine.getThreadId()!) ?? null
-      : null;
     if (!latestUi) return;
+    // Architecture §13.6: a transient storage read fault degrades to the
+    // unavailable display state; it must never throw out of refresh.
+    let goal: ThreadGoal | null;
+    try {
+      goal = engine.getThreadId()
+        ? engine.service.getGoal(engine.getThreadId()!) ?? null
+        : null;
+    } catch {
+      clearTick();
+      latestUi.setWidget("secretary:goal", unavailableComponent);
+      return;
+    }
     if (!goal) { hiddenGoal = undefined; clearTick(); latestUi.setWidget("secretary:goal", undefined); return; }
     if (hiddenGoal && (hiddenGoal.goalId !== goal.goalId || hiddenGoal.status !== goal.status)) hiddenGoal = undefined;
     if (hiddenGoal) { clearTick(); latestUi.setWidget("secretary:goal", undefined); return; }
@@ -418,11 +438,7 @@ export function registerGoalUI(pi: ExtensionAPI, engine: GoalEngine): {
   const unavailable = (): void => {
     if (!latestUi) return;
     clearTick();
-    latestUi.setWidget("secretary:goal", (_tui: unknown, theme: { fg(color: string, text: string): string }) => ({
-      render: (width: number) => renderGoalBox("Goal: unavailable", "", ["Goal status is unavailable; this does not establish that it was cleared."], width)
-        .map((line) => theme.fg("error", line)),
-      invalidate: () => {},
-    }));
+    latestUi.setWidget("secretary:goal", unavailableComponent);
   };
 
   pi.registerCommand("goal", {

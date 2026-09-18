@@ -21,6 +21,7 @@ The default `npm test` and `npm run verify` commands do not include the paid-pro
 ## Procedures and references
 
 - Follow [Subagent E2E Tests](subagent-e2e.md) for provider setup, interaction modes, fixture layout, and live-run evidence.
+- The shared-store concurrency case `tests/e2e/cases/interactive/goal-widget-storage-lock.test.ts` ([architecture §13.7](../arch/architecture.md#137-verification-requirements)) drives the interactive TUI with a real provider while an external process holds a write transaction on the goals database; its fast complement asserts the storage read succeeds under the lock. Run it with the interactive suite (`npm run test:e2e:interactive`) or by file path.
 - Follow the [deterministic TUI recording procedure](../../doc/acceptance/tui-recording.md) for the longer inspector and keyboard walkthrough.
 - Read the [acceptance specification index](../../doc/acceptance/README.md) for scenario identities, source-hash checks, and approval tags.
 - Follow the [test artifact policy](test-artifacts.md) when recording, sharing, retaining, or deleting generated output.
