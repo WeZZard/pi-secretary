@@ -209,11 +209,14 @@ test("goal tools render calls and results with the specified formats", async (t)
   assert.equal(render(create.renderCall({ objective: "Ship the widget", token_budget: 25000 }, theme, context())),
     "Create Goal: Ship the widget, 25000");
   assert.equal(render(create.renderCall({ objective: "Ship the widget" }, theme, context())), "Create Goal: Ship the widget");
-  const createdGoal = { threadId: "t", goalId: "g", objective: "Ship the widget", status: "active", tokensUsed: 0, timeUsedSeconds: 0, createdAt: Date.now(), updatedAt: 0 };
-  assert.equal(render(create.renderResult({ content: [{ type: "text", text: "x" }],
-    details: { goal: createdGoal, remaining_tokens: null } }, { expanded: false, isPartial: false }, theme)),
-    "Create Goal. Consumed 0 tokens; Used 0 sec");
-  assert.equal(render(create.renderResult({ content: [{ type: "text", text: "objective must not be empty" }], details: undefined }, { expanded: false, isPartial: false }, theme)),
+  // The design line is identical from call to result, collapsed and expanded.
+  const createCtx = { args: { objective: "Ship the widget", token_budget: 25000 }, toolCallId: "create-x", invalidate: () => {}, lastComponent: undefined, state: {}, cwd: "/tmp" };
+  for (const expanded of [false, true]) {
+    assert.equal(render(create.renderResult({ content: [{ type: "text", text: "x" }],
+      details: { goal: null, remaining_tokens: null } }, { expanded, isPartial: false }, theme, createCtx)),
+      "Create Goal: Ship the widget, 25000", `expanded=${expanded} makes no change`);
+  }
+  assert.equal(render(create.renderResult({ content: [{ type: "text", text: "objective must not be empty" }], details: undefined }, { expanded: false, isPartial: false }, theme, createCtx)),
     "Error: objective must not be empty");
 
   const update = h.tools.get("update_goal");
@@ -235,21 +238,21 @@ test("goal tools render calls and results with the specified formats", async (t)
     { expanded: false, isPartial: false }, theme)), "Error: no goal");
 });
 
-test("a completed call region collapses so only the designed result line remains", async (t) => {
+test("a completed update_goal call region collapses so only the designed result line remains", async (t) => {
   const h = goalHarness(); t.after(() => h.close()); await h.start();
   const theme: any = { fg: (_c: string, text: string) => text, bold: (text: string) => text };
-  const create = h.tools.get("create_goal");
+  const update = h.tools.get("update_goal");
   let invalidated = 0;
   const context = { args: {}, toolCallId: "collapse-1", invalidate: () => { invalidated++; }, lastComponent: undefined, state: {}, cwd: "/tmp" };
-  const running = create.renderCall({ objective: "Collapse after success" }, theme, context);
+  const running = update.renderCall({ status: "complete" }, theme, context);
   assert.ok(running.render(80).some((line: string) => line.trim().length > 0), "the call shows while running");
-  await h.emit("tool_execution_end", { toolCallId: "collapse-1", toolName: "create_goal", isError: false });
+  await h.emit("tool_execution_end", { toolCallId: "collapse-1", toolName: "update_goal", isError: false });
   assert.equal(invalidated, 1, "completion invalidates the call region for redraw");
-  const collapsed = create.renderCall({ objective: "Collapse after success" }, theme, context);
+  const collapsed = update.renderCall({ status: "complete" }, theme, context);
   assert.deepEqual(collapsed.render(80), [], "the call region renders zero lines after completion");
   const failed = { ...context, toolCallId: "collapse-2" };
-  await h.emit("tool_execution_end", { toolCallId: "collapse-2", toolName: "create_goal", isError: true });
-  const afterError = create.renderCall({ objective: "Keep after failure" }, theme, failed);
+  await h.emit("tool_execution_end", { toolCallId: "collapse-2", toolName: "update_goal", isError: true });
+  const afterError = update.renderCall({ status: "complete" }, theme, failed);
   assert.ok(afterError.render(80).some((line: string) => line.trim().length > 0), "a failed call keeps its line");
 });
 

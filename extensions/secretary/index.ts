@@ -83,7 +83,7 @@ export function registerGoalTools(pi: ExtensionAPI, engine: GoalEngine, sync: Go
     if (!collapseOnCompletion.has(toolCallId)) collapseOnCompletion.set(toolCallId, invalidate);
   };
   pi.on("tool_execution_end", (event) => {
-    if (event.isError || !["create_goal", "update_goal"].includes(event.toolName)) return;
+    if (event.isError || event.toolName !== "update_goal") return;
     completedCalls.add(event.toolCallId);
     if (completedCalls.size > MAX_TRACKED_CALLS) completedCalls.delete(completedCalls.values().next().value!);
     collapseOnCompletion.get(event.toolCallId)?.();
@@ -111,23 +111,17 @@ export function registerGoalTools(pi: ExtensionAPI, engine: GoalEngine, sync: Go
   }));
   pi.registerTool(defineTool<typeof createGoalToolSpec.parameters, GoalToolResponse>({
     ...createGoalToolSpec,
-    renderCall(args, _theme, context) {
-      if (completed(context.toolCallId)) return new Text("", 0, 0);
-      trackCompletion(context.toolCallId, context.invalidate);
+    // The entire approved display is one line, identical while running, after
+    // completion, collapsed, and expanded: no tint, no summary, no appendix.
+    renderCall(args) {
       const budget = args.token_budget !== undefined ? `, ${args.token_budget}` : "";
       return new Text(`Create Goal: ${args.objective}${budget}`, 0, 0);
     },
-    renderResult(rendered, options, theme) {
+    renderResult(rendered, _options, theme, context) {
       const failure = errorText(theme, rendered);
       if (failure) return failure;
-      const goal = rendered.details?.goal;
-      if (!goal) {
-        const text = rendered.content[0];
-        return new Text(text?.type === "text" ? text.text : "", 0, 0);
-      }
-      let text = theme.fg(STATUS_COLORS[goal.status], `Create Goal. ${updateSummary(goal, Date.now())}`);
-      if (options.expanded) text += `\n\nObjective: ${goal.objective}`;
-      return new Text(text, 0, 0);
+      const budget = context.args.token_budget !== undefined ? `, ${context.args.token_budget}` : "";
+      return new Text(`Create Goal: ${context.args.objective}${budget}`, 0, 0);
     },
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const response = executeCreateGoal(engine.service, threadOf(ctx), params, engine.maxGoalTokenBudget(), sync.userDecision());
