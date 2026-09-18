@@ -83,7 +83,7 @@ export function registerGoalTools(pi: ExtensionAPI, engine: GoalEngine, sync: Go
     if (!collapseOnCompletion.has(toolCallId)) collapseOnCompletion.set(toolCallId, invalidate);
   };
   pi.on("tool_execution_end", (event) => {
-    if (event.isError || event.toolName !== "update_goal") return;
+    if (event.isError || !["create_goal", "update_goal"].includes(event.toolName)) return;
     completedCalls.add(event.toolCallId);
     if (completedCalls.size > MAX_TRACKED_CALLS) completedCalls.delete(completedCalls.values().next().value!);
     collapseOnCompletion.get(event.toolCallId)?.();
@@ -113,7 +113,9 @@ export function registerGoalTools(pi: ExtensionAPI, engine: GoalEngine, sync: Go
     ...createGoalToolSpec,
     // The entire approved display is one line, identical while running, after
     // completion, collapsed, and expanded: no tint, no summary, no appendix.
-    renderCall(args) {
+    renderCall(args, _theme, context) {
+      if (completed(context.toolCallId)) return new Text("", 0, 0);
+      trackCompletion(context.toolCallId, context.invalidate);
       const budget = args.token_budget !== undefined ? `, ${args.token_budget}` : "";
       return new Text(`Create Goal: ${args.objective}${budget}`, 0, 0);
     },

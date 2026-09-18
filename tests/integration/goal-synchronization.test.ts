@@ -238,6 +238,23 @@ test("goal tools render calls and results with the specified formats", async (t)
     { expanded: false, isPartial: false }, theme)), "Error: no goal");
 });
 
+test("a completed create_goal row collapses to the single designed line", async (t) => {
+  const h = goalHarness(); t.after(() => h.close()); await h.start();
+  const theme: any = { fg: (_c: string, text: string) => text, bold: (text: string) => text };
+  const render = (component: any) => component.render(80).map((line: string) => line.trimEnd()).join("\n").trimEnd();
+  const create = h.tools.get("create_goal");
+  let invalidated = 0;
+  const context = { args: { objective: "Ship the widget" }, toolCallId: "create-collapse", invalidate: () => { invalidated++; }, lastComponent: undefined, state: {}, cwd: "/tmp" };
+  assert.equal(render(create.renderCall({ objective: "Ship the widget" }, theme, context)), "Create Goal: Ship the widget");
+  await h.emit("tool_execution_end", { toolCallId: "create-collapse", toolName: "create_goal", isError: false });
+  assert.equal(invalidated, 1, "completion invalidates the call region for redraw");
+  assert.deepEqual(create.renderCall({ objective: "Ship the widget" }, theme, context).render(80), [], "the call region collapses after completion");
+  assert.equal(render(create.renderResult({ content: [{ type: "text", text: "x" }], details: { goal: null, remaining_tokens: null } },
+    { expanded: false, isPartial: false }, theme, context)), "Create Goal: Ship the widget", "the result keeps the design line");
+  assert.equal(render(create.renderResult({ content: [{ type: "text", text: "x" }], details: { goal: null, remaining_tokens: null } },
+    { expanded: true, isPartial: false }, theme, context)), "Create Goal: Ship the widget", "expansion makes no change");
+});
+
 test("a completed update_goal call region collapses so only the designed result line remains", async (t) => {
   const h = goalHarness(); t.after(() => h.close()); await h.start();
   const theme: any = { fg: (_c: string, text: string) => text, bold: (text: string) => text };
