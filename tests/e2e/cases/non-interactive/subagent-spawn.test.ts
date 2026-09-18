@@ -4,14 +4,14 @@ import { readFileSync, writeFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
-import { createCleanPiEnvironment } from "../environment/isolation.ts";
-import { useGlobalLiteLLM } from "../environment/global-litellm.ts";
-import { useInstalledWidgetExtensions } from "../environment/widget-extensions.ts";
-import { startPi } from "../environment/pi-process.ts";
-import { readTranscript, sessionFiles, messageText } from "../environment/transcripts.ts";
+import { createCleanPiEnvironment } from "../../environment/isolation.ts";
+import { useGlobalLiteLLM } from "../../environment/global-litellm.ts";
+import { useInstalledWidgetExtensions } from "../../environment/widget-extensions.ts";
+import { startPi } from "../../environment/pi-process.ts";
+import { readTranscript, sessionFiles, messageText } from "../../environment/transcripts.ts";
 
-// Run explicitly with npm run test:e2e. This case uses the real provider and may incur charges.
-const repository = fileURLToPath(new URL("../../../", import.meta.url));
+// Run explicitly with npm run test:e2e:headless or test:e2e. This case uses the real provider and may incur charges.
+const repository = fileURLToPath(new URL("../../../../", import.meta.url));
 const fixtures = join(repository, "tests/e2e/fixtures/subagents");
 
 for (const repositoryState of ["none", "unborn", "committed"] as const) {

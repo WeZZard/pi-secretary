@@ -1,17 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, writeFileSync, realpathSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
-import { createCleanPiEnvironment } from "../environment/isolation.ts";
-import { useGlobalLiteLLM } from "../environment/global-litellm.ts";
-import { useInstalledWidgetExtensions } from "../environment/widget-extensions.ts";
-import { startInteractivePi } from "../environment/interactive-pi-process.ts";
-import { messageText, readTranscript } from "../environment/transcripts.ts";
+import { createCleanPiEnvironment } from "../../environment/isolation.ts";
+import { useGlobalLiteLLM } from "../../environment/global-litellm.ts";
+import { useInstalledWidgetExtensions } from "../../environment/widget-extensions.ts";
+import { startInteractivePi } from "../../environment/interactive-pi-process.ts";
+import { messageText, readTranscript } from "../../environment/transcripts.ts";
 
-const repository = fileURLToPath(new URL("../../../", import.meta.url));
+const repository = fileURLToPath(new URL("../../../../", import.meta.url));
 const fixtures = join(repository, "tests/e2e/fixtures/subagents");
 
 test("interactive Pi parent spawns an isolated child with real provider and widget extensions", { timeout: 330000 }, async t => {
@@ -47,6 +47,7 @@ test("interactive Pi parent spawns an isolated child with real provider and widg
   const observer = join(environment.artifacts, "ui-lifecycle.jsonl");
   const prompt = readFileSync(join(fixtures, "spawn-isolated-prompt.txt"), "utf8").trim();
   const expected = readFileSync(join(fixtures, "project/fixture.txt"), "utf8").trim();
+  assert.ok(!prompt.includes(expected), "The parent must not be given the fixture contents");
   const evidence: Record<string, unknown> = {};
   let passed = false, failure: string | undefined;
   const pi = startInteractivePi(environment, { prompt, model: `${profile.provider}/${profile.model}`,
@@ -82,6 +83,7 @@ test("interactive Pi parent spawns an isolated child with real provider and widg
     const result = messages.find(message => message.role === "toolResult" && message.toolCallId === calls[0].id);
     assert.ok(result);
     evidence.agentToolResult = { isError: result.isError, details: result.details, text: messageText(result) };
+    let childPath = "", childCwd = "";
     const db = new DatabaseSync(join(environment.state, "pi-secretary-goals.sqlite"), { readOnly: true });
     try {
       const agents = db.prepare("SELECT json FROM secretary_agents").all();
@@ -95,6 +97,7 @@ test("interactive Pi parent spawns an isolated child with real provider and widg
       assert.ok(messageText(result).includes(`Run: ${run.runId}\n`));
       assert.equal(agent.parentId, parent[0].id);
       assert.equal(agent.model, `${profile.provider}/${profile.model}`);
+      childPath = agent.sessionPath; childCwd = agent.cwd;
       if (agent.sessionPath && existsSync(agent.sessionPath)) {
         const child = readTranscript(agent.sessionPath);
         evidence.childTranscript = agent.sessionPath;
@@ -106,6 +109,26 @@ test("interactive Pi parent spawns an isolated child with real provider and widg
     assert.equal(result.details?.status, "succeeded", messageText(result));
     assert.ok(messageText(result).includes(expected));
     assert.ok(messages.some(message => message.role === "assistant" && messageText(message).includes(expected)));
+    const child = readTranscript(childPath);
+    const childMessages = child.flatMap(entry => entry.message ? [entry.message] : []);
+    const reads = childMessages.filter(message => message.role === "assistant").flatMap(message => Array.isArray(message.content)
+      ? message.content.filter(block => block.type === "toolCall") : []);
+    assert.equal(reads.length, 1); assert.equal(reads[0].name, "read");
+    assert.equal(realpathSync(resolve(childCwd, String(reads[0].arguments?.path))), realpathSync(join(childCwd, "fixture.txt")));
+    const readResult = childMessages.find(message => message.role === "toolResult" && message.toolCallId === reads[0].id);
+    assert.ok(readResult); assert.equal(readResult.isError, false); assert.equal(messageText(readResult).trim(), expected);
+    assert.equal(readFileSync(join(environment.project, "fixture.txt"), "utf8").trim(), expected);
+    const childFinal = childMessages.filter(message => message.role === "assistant").at(-1)!;
+    assert.equal(childFinal.stopReason, "stop"); assert.equal(messageText(childFinal).trim(), expected);
+    const childEvents = observations.filter(entry => entry.sessionId === child[0].id);
+    assert.deepEqual(childEvents.map(entry => entry.event), ["session_start", "agent_end", "session_shutdown"]);
+    for (const entry of childEvents) {
+      assert.equal(entry.mode, "print"); assert.equal(entry.hasUI, false);
+      assert.equal(entry.setWidget, "function"); assert.equal(entry.onTerminalInput, "function");
+    }
+    for (const entry of observations.filter(entry => entry.sessionId === terminal.parentSessionId)) {
+      assert.equal(entry.mode, "tui"); assert.equal(entry.hasUI, true); assert.equal(entry.setWidget, "function");
+    }
     passed = true;
   } catch (error) {
     failure = environment.redact(String(error));

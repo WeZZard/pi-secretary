@@ -443,7 +443,7 @@ sequenceDiagram
 - The effective tool set is the intersection of parent-authorized tools and the definition's allowlist, minus explicit denials and child-incompatible operations.
 - Late-registered tools undergo the same checks. Descriptions or active-tool filtering alone are not sufficient enforcement.
 - Safety and permission hooks must not be dropped merely to simplify child startup.
-- Interactive prompts that cannot be routed safely to the parent fail explicitly. This release does not build a separate permission system or auto-approve child prompts.
+- Tools that require human interaction must check UI availability and reject unsupported headless execution explicitly. This release does not route child dialogs to the parent or auto-approve child prompts. The SDK's cancellation defaults for optional dialogs are not permission grants.
 
 ### 8.2 Supported pi APIs and compatibility tests
 
@@ -454,7 +454,17 @@ sequenceDiagram
 - Model-runtime inheritance, permission propagation, lifecycle teardown, and editor composition are implementation prerequisites to test against the installed SDK. The design does not assume that a private getter or internal field is a stable API.
 - The implementation must either pass the supported package-version matrix or narrow its peer dependency range. Passing only the installed version is not evidence for the full declared range.
 
-### 8.3 Tool-name collisions
+### 8.3 Child UI capabilities
+
+- The parent owns the terminal. An interactive parent retains `mode: "tui"`, its real UI context, and its widgets while child execution proceeds independently.
+- Every fresh child SDK session binds extensions in `mode: "print"` without supplying `uiContext`. This also applies when restoring a saved conversation into a new SDK session. Omitting a context on a session that was already bound to a custom UI does not clear that earlier binding.
+- Pi's native headless context supplies the complete UI interface and reports `hasUI: false`. Optional widget and notification methods are no-ops, confirmation returns `false`, and input dialogs return `undefined`. Interactive-only extensions must not interpret these cancellation results as approval or successful input.
+- Secretary must not supply a synthetic UI merely to intercept notifications. Pi treats a supplied context as UI availability, regardless of print mode. In Pi 0.85.1, its object-spread wrapper also drops methods supplied only by a proxy's property getter.
+- Child tool activity, text, and completion flow through the session event subscription and service records. The parent renders that progress. Child UI methods do not borrow the parent's editor, terminal subscriptions, or widgets.
+- The normal extension error listener remains active. Headless operation does not justify swallowing unrelated initialization or execution errors.
+- Real-SDK regression tests cover startup, resumption, concurrent sessions, cancellation, idempotent shutdown, and dialog cancellation defaults. The real-provider interactive E2E test additionally verifies that the parent remains a TUI while the child completes with installed widget extensions. See the [E2E testing instructions](../testing/subagent-e2e.md).
+
+### 8.4 Tool-name collisions
 
 - Secretary does not silently override another extension's `Agent`, `SendMessage`, `TaskStop`, or `TaskOutput` tool.
 - A collision disables Secretary's delegation execution for the session and reports which extension must be disabled or reconfigured.

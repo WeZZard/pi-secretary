@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { InMemoryCredentialStore, type AssistantMessage, type Usage } from "@earendil-works/pi-ai";
 import {
   createAgentSession, DefaultResourceLoader, getAgentDir, ModelRuntime, SessionManager, SettingsManager,
-  type AgentSession, type ExtensionContext, type ExtensionUIContext,
+  type AgentSession, type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentRecord, AgentRun, RunnerHooks, RunningChild } from "./records.ts";
 import { runInChildSession } from "./child-context.ts";
@@ -141,15 +141,10 @@ export async function createChildRunner(options: {
       const path = session.sessionFile;
       if (!path) throw new Error("Child session has no persistent path");
       hooks.session(path);
-      // Interactivity cannot be silently auto-approved or routed to the parent's editor.
-      const ui = new Proxy({} as ExtensionUIContext, { get(_target, key) {
-        if (["select", "confirm", "input", "custom", "editor"].includes(String(key))) {
-          return () => { throw new Error(`Interactive child UI is unavailable: ${String(key)}`); };
-        }
-        if (key === "notify") return (text: string) => hooks.activity(text);
-        return () => {};
-      } });
-      await session.bindExtensions({ mode: "print", uiContext: ui,
+      // The parent owns the terminal. Keep the SDK's complete headless UI context:
+      // supplying any custom context would advertise hasUI=true, even in print mode.
+      // Child progress is forwarded by the session subscription, not by UI methods.
+      await session.bindExtensions({ mode: "print",
         onError: (error) => { partial = `Child extension error: ${error.error}`; },
       });
       // Startup hooks may register providers too. Never silently accept a replacement.

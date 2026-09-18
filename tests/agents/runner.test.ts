@@ -85,6 +85,128 @@ test("SDK child inherits public provider, project instructions, role, tools, and
   await child.dispose(); await child.dispose();
 });
 
+async function installUIProbe(f: Awaited<ReturnType<typeof fixture>>) {
+  await mkdir(join(f.root, ".pi", "extensions"), { recursive: true });
+  const log = join(f.root, "ui-lifecycle.jsonl");
+  await writeFile(join(f.root, ".pi", "extensions", "ui-probe.js"), `
+    import assert from "node:assert/strict";
+    import { appendFileSync } from "node:fs";
+    export default function(pi) {
+      async function probe(event, ctx) {
+        assert.equal(ctx.mode, "print");
+        assert.equal(ctx.hasUI, false, "Child must not advertise a terminal it does not own");
+        ctx.ui.setWidget("probe", () => { throw new Error("Child rendered a widget"); });
+        ctx.ui.notify("Optional child notification");
+        const unsubscribe = ctx.ui.onTerminalInput(() => { throw new Error("Child received terminal input"); });
+        assert.equal(typeof unsubscribe, "function");
+        unsubscribe();
+        assert.equal(ctx.ui.getEditorText(), "");
+        assert.equal(await ctx.ui.confirm("Approval", "Proceed?"), false);
+        assert.equal(await ctx.ui.select("Choose", ["yes"]), undefined);
+        assert.equal(await ctx.ui.input("Input"), undefined);
+        assert.equal(await ctx.ui.editor("Editor"), undefined);
+        assert.equal(await ctx.ui.custom(() => { throw new Error("Child opened a dialog"); }), undefined);
+        appendFileSync(${JSON.stringify(log)}, JSON.stringify({ event: event.type, reason: event.reason,
+          sessionId: ctx.sessionManager.getSessionId() }) + "\\n");
+      }
+      pi.on("session_start", probe);
+      pi.on("before_agent_start", probe);
+      pi.on("session_shutdown", probe);
+    }
+  `);
+  return async () => (await readFile(log, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+}
+
+test("native child UI remains complete and non-interactive through startup, resume, and shutdown", async t => {
+  const f = await fixture(t, ["first", "second"]);
+  let parentCalls = 0;
+  const parentUI = { setWidget() { parentCalls++; }, notify() { parentCalls++; } };
+  Object.assign(f.ctx, { mode: "tui", hasUI: true, ui: parentUI });
+  const readEvents = await installUIProbe(f);
+  const first = await f.start();
+  assert.equal((await first.result).status, "succeeded");
+  await first.dispose(); await first.dispose();
+  f.agent.sessionPath = f.path; f.run.runId = "resumed-ui";
+  const second = await f.start();
+  assert.equal((await second.result).status, "succeeded");
+  await second.dispose();
+  const events = await readEvents();
+  assert.deepEqual(events.map(e => e.event), ["session_start", "before_agent_start", "session_shutdown",
+    "session_start", "before_agent_start", "session_shutdown"]);
+  assert.equal(events[0].reason, "startup"); assert.equal(events[3].reason, "resume");
+  assert.equal(events[0].sessionId, events[3].sessionId);
+  assert.equal(f.ctx.mode, "tui"); assert.equal(f.ctx.hasUI, true); assert.equal(f.ctx.ui, parentUI);
+  assert.equal(parentCalls, 0);
+});
+
+test("concurrent children retain separate lifecycles without borrowing the parent terminal", { timeout: 10000 }, async t => {
+  const f = await fixture(t, ["first", "second"]);
+  const readEvents = await installUIProbe(f);
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  f.setGate(() => gate);
+  const children = await Promise.all([f.start(), f.start()]);
+  while (f.calls.length < 2) await new Promise(resolve => setImmediate(resolve));
+  release();
+  assert.deepEqual((await Promise.all(children.map(child => child.result))).map(result => result.status), ["succeeded", "succeeded"]);
+  await Promise.all(children.map(child => child.dispose()));
+  const events = await readEvents();
+  const ids = new Set(events.map(event => event.sessionId));
+  assert.equal(ids.size, 2);
+  for (const id of ids) assert.deepEqual(events.filter(event => event.sessionId === id).map(event => event.event),
+    ["session_start", "before_agent_start", "session_shutdown"]);
+});
+
+test("native child UI remains safe during cancellation and idempotent disposal", { timeout: 10000 }, async t => {
+  const f = await fixture(t);
+  const readEvents = await installUIProbe(f);
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  f.setGate(() => gate);
+  const child = await f.start();
+  while (!f.calls.length) await new Promise(resolve => setImmediate(resolve));
+  const stopped = child.abort(); release(); await stopped;
+  assert.equal((await child.result).status, "cancelled");
+  await child.dispose(); await child.dispose();
+  assert.deepEqual((await readEvents()).map(event => event.event), ["session_start", "before_agent_start", "session_shutdown"]);
+});
+
+test("UI-required extension tools reject headless execution without prompting the parent", async t => {
+  const f = await fixture(t, [{ tool: "ui_required" }, "Interactive operation unavailable"]);
+  f.agent.tools = ["ui_required"];
+  await mkdir(join(f.root, ".pi", "extensions"), { recursive: true });
+  await writeFile(join(f.root, ".pi", "extensions", "interactive.js"), `
+    export default function(pi) {
+      pi.registerTool({ name: "ui_required", label: "Interactive operation", description: "Requires user input",
+        parameters: { type: "object", properties: {} },
+        async execute(_id, _args, _signal, _update, ctx) {
+          if (!ctx.hasUI) throw new Error("This operation requires an interactive UI");
+          throw new Error("Incorrectly entered the interactive execution path");
+        }
+      });
+    }
+  `);
+  const child = await f.start();
+  assert.equal((await child.result).output, "Interactive operation unavailable");
+  const result = f.calls[1].messages.find(message => message.role === "toolResult");
+  assert.ok(result && result.role === "toolResult");
+  assert.equal(result.isError, true);
+  assert.match(JSON.stringify(result.content), /requires an interactive UI/);
+  assert.doesNotMatch(JSON.stringify(result.content), /Incorrectly entered/);
+});
+
+test("headless UI does not suppress genuine extension startup failures", async t => {
+  const f = await fixture(t);
+  await mkdir(join(f.root, ".pi", "extensions"), { recursive: true });
+  await writeFile(join(f.root, ".pi", "extensions", "failing.js"), `
+    export default function(pi) {
+      pi.on("session_start", () => { throw new Error("Independent startup failure"); });
+    }
+  `);
+  await assert.rejects(f.start(), /Child extension error: Independent startup failure/);
+  assert.equal(f.calls.length, 0);
+});
+
 async function installCompetingProvider(f: Awaited<ReturnType<typeof fixture>>, when: "load" | "startup" | "turn") {
   await mkdir(join(f.root, ".pi", "extensions"), { recursive: true });
   const log = join(f.root, "provider-startup.log");
