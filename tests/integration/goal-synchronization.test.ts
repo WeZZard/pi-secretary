@@ -207,7 +207,7 @@ test("goal tools render calls and results with the specified formats", async (t)
 
   const create = h.tools.get("create_goal");
   assert.equal(render(create.renderCall({ objective: "Ship the widget", token_budget: 25000 }, theme, context())),
-    "Create Goal: Ship the widget, 25K tokens");
+    "Create Goal: Ship the widget, 25000");
   assert.equal(render(create.renderCall({ objective: "Ship the widget" }, theme, context())), "Create Goal: Ship the widget");
   const createdGoal = { threadId: "t", goalId: "g", objective: "Ship the widget", status: "active", tokensUsed: 0, timeUsedSeconds: 0, createdAt: Date.now(), updatedAt: 0 };
   assert.equal(render(create.renderResult({ content: [{ type: "text", text: "x" }],

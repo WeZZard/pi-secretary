@@ -114,7 +114,7 @@ export function registerGoalTools(pi: ExtensionAPI, engine: GoalEngine, sync: Go
     renderCall(args, _theme, context) {
       if (completed(context.toolCallId)) return new Text("", 0, 0);
       trackCompletion(context.toolCallId, context.invalidate);
-      const budget = args.token_budget !== undefined ? `, ${abbreviateTokens(args.token_budget)} tokens` : "";
+      const budget = args.token_budget !== undefined ? `, ${args.token_budget}` : "";
       return new Text(`Create Goal: ${args.objective}${budget}`, 0, 0);
     },
     renderResult(rendered, options, theme) {
