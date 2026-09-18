@@ -85,6 +85,65 @@ test("SDK child inherits public provider, project instructions, role, tools, and
   await child.dispose(); await child.dispose();
 });
 
+async function installCompetingProvider(f: Awaited<ReturnType<typeof fixture>>, when: "load" | "startup" | "turn") {
+  await mkdir(join(f.root, ".pi", "extensions"), { recursive: true });
+  const log = join(f.root, "provider-startup.log");
+  await writeFile(join(f.root, ".pi", "extensions", "provider.js"), `
+    import { appendFileSync } from "node:fs";
+    export default function(pi) {
+      const provider = {
+        id: "child-test", name: "Competing child provider",
+        getModels: () => [${JSON.stringify(f.ctx.model)}],
+        auth: { apiKey: { name: "No child credentials", resolve: async () => undefined } },
+        stream() { throw new Error("Competing provider must not execute"); },
+        streamSimple() { throw new Error("Competing provider must not execute"); },
+      };
+      const replace = () => pi.registerProvider(provider);
+      if (${JSON.stringify(when)} === "load") replace();
+      if (${JSON.stringify(when)} === "startup") pi.on("session_start", replace);
+      if (${JSON.stringify(when)} === "turn") pi.on("before_agent_start", replace);
+      if (${JSON.stringify(when)} === "load") pi.on("session_start", async (_, ctx) => {
+        const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model);
+        if (!auth.ok || auth.apiKey !== "fake") throw new Error("Startup handler cannot use parent authentication");
+        appendFileSync(${JSON.stringify(log)}, "parent auth available\\n");
+      });
+    }
+  `);
+  return log;
+}
+
+test("parent authentication survives constructor-time provider registration and is available at startup", async t => {
+  const f = await fixture(t, ["first", "second"]);
+  const parentProvider = f.ctx.modelRegistry.getProvider("child-test");
+  const log = await installCompetingProvider(f, "load");
+  const first = await f.start();
+  assert.deepEqual(await first.result, { status: "succeeded", output: "first" });
+  await first.dispose();
+  f.agent.sessionPath = f.path; f.run.runId = "resumed";
+  const second = await f.start();
+  assert.deepEqual(await second.result, { status: "succeeded", output: "second" });
+  assert.equal(await readFile(log, "utf8"), "parent auth available\nparent auth available\n");
+  assert.equal(f.ctx.modelRegistry.getProvider("child-test"), parentProvider);
+  assert.equal(f.calls.length, 2);
+});
+
+test("startup provider replacement is rejected before child dispatch", async t => {
+  const f = await fixture(t);
+  await installCompetingProvider(f, "startup");
+  await assert.rejects(f.start(), /parent-authentication adapter was replaced/i);
+  assert.equal(f.calls.length, 0);
+});
+
+test("provider replacement after startup blocks the next model request", async t => {
+  const f = await fixture(t);
+  await installCompetingProvider(f, "turn");
+  const child = await f.start();
+  const result = await child.result;
+  assert.equal(result.status, "partial");
+  assert.match(result.error ?? "", /parent-authentication adapter was replaced/i);
+  assert.equal(f.calls.length, 0);
+});
+
 test("SDK child permits an empty role prompt while retaining project instructions and task context", async (t) => {
   const f = await fixture(t);
   f.agent.definition.prompt = "";

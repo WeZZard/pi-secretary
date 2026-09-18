@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import type { WorktreeRecord } from "./records.ts";
 const exec = promisify(execFile);
 interface Manifest { version: 1; agentId: string; record: WorktreeRecord; gitDir: string; commonDir: string }
-async function git(cwd: string, args: string[], signal?: AbortSignal): Promise<string> {
+export async function runGit(cwd: string, args: string[], signal?: AbortSignal): Promise<string> {
   const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0" };
   for (const key of Object.keys(env)) {
     if (/^GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|CONFIG.*)$/.test(key)) delete env[key];
@@ -14,6 +14,8 @@ async function git(cwd: string, args: string[], signal?: AbortSignal): Promise<s
   const { stdout } = await exec("git", ["-C", cwd, ...args], { signal, encoding: "utf8", maxBuffer: 16 * 1024 * 1024, env });
   return stdout.trim();
 }
+
+const git = runGit;
 
 export class WorktreeManager {
   private readonly root: string;
@@ -36,7 +38,7 @@ export class WorktreeManager {
     if (await git(source, ["rev-parse", "--verify", `${baseCommit}^{commit}`]) !== baseCommit) throw new Error("Invalid base commit");
     const storage = await this.storage();
     const id = randomUUID();
-    const record: WorktreeRecord = { id, repo: source, path: join(storage, id), branch: `secretary/${id}`, baseCommit, state: "allocated" };
+    const record: WorktreeRecord = { kind: "git-worktree", id, repo: source, path: join(storage, id), branch: `secretary/${id}`, baseCommit, state: "allocated" };
     // Persist the allocation intent before Git can create anything. Failed allocations remain inspectable.
     const manifest: Manifest = { version: 1, agentId, record, gitDir: "", commonDir: await realpath(await git(source, ["rev-parse", "--path-format=absolute", "--git-common-dir"])) };
     await writeFile(join(storage, `${id}.json`), JSON.stringify(manifest), { flag: "wx", mode: 0o600 });

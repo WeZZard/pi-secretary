@@ -9,7 +9,9 @@ test("Agent contract is strict without resume or turn-limit inputs", () => {
   for (const model of ["sonnet", "opus", "haiku", "fable"]) assert.equal(Value.Check(agentSchema, { ...valid, model }), true);
   for (const extra of [{ resume: "id" }, { max_turns: 2 }, { model: "p/id" }, { unknown: true }, { name: "../bad" }, { name: "a".repeat(65) }]) assert.equal(Value.Check(agentSchema, { ...valid, ...extra }), false);
   assert.equal(Value.Check(agentSchema, { prompt: "Do work" }), false);
-  assert.equal(Value.Check(agentSchema, { ...valid, isolation: "remote", team_name: "unused", mode: "plan" }), true);
+  assert.equal(Value.Check(agentSchema, { ...valid, isolation: "worktree", team_name: "unused", mode: "plan" }), true);
+  assert.equal(Value.Check(agentSchema, { ...valid, isolation: "remote" }), false);
+  assert.equal((agentSchema.required as readonly string[]).includes("isolation"), false);
   assert.equal(Value.Check(agentSchema, { ...valid, name: "a-1_A" }), true);
   assert.equal(Object.hasOwn(agentSchema.properties.model, "default"), false);
   assert.equal(Object.hasOwn(agentSchema.properties.run_in_background, "default"), false);

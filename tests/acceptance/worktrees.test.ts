@@ -59,7 +59,7 @@ async function fixture(t: TestContext) {
 const bindings: ScenarioBindings = {
   "ACC-SA-06-01": async ({ t }) => {
     const f = await fixture(t); const agent = await f.launch();
-    assert.ok(agent.worktree); assert.notEqual(agent.cwd, f.root);
+    assert.ok(agent.worktree); assert.ok(agent.worktree.kind !== "directory-snapshot"); assert.notEqual(agent.cwd, f.root);
     assert.equal(await git(agent.cwd, "rev-parse", "HEAD"), agent.worktree.baseCommit);
     assert.equal(await git(agent.cwd, "branch", "--show-current"), agent.worktree.branch);
     assert.equal(f.service.list()[0].agent.worktree!.path, agent.cwd);

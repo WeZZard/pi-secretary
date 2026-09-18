@@ -51,7 +51,7 @@ export class Inspector implements Component, Focusable {
       const label = messageEligible(recipient) ? recipient && active(recipient) ? "Queue guidance" : "Resume conversation" : "Submission unavailable; draft retained";
       return [clip(`${label}: ${d.agentId}`, width), ...this.input.render(Math.max(1, width)).map(l => width <= 0 ? "" : l), clip(d.error ?? "Enter sends · Escape keeps draft", width)];
     }
-    if (d.kind === "confirming") return [`Confirm ${d.target.action}: ${d.target.agentId}`, d.target.action === "stop" ? `Run: ${d.target.runId}. File changes are not rolled back.` : `Worktree: ${d.target.worktreeId}. Cleanup disables future resumption.`, "Enter confirms · Escape dismisses"].map(l => clip(l, width));
+    if (d.kind === "confirming") return [`Confirm ${d.target.action}: ${d.target.agentId}`, d.target.action === "stop" ? `Run: ${d.target.runId}. File changes are not rolled back.` : `Workspace: ${d.target.worktreeId}. Cleanup disables future resumption.`, "Enter confirms · Escape dismisses"].map(l => clip(l, width));
     if (d.kind === "submitting" || d.kind === "uncertain") return [`${d.kind}: ${d.operation.action} ${d.operation.agentId}`, `Operation: ${d.operation.id}`, ...(d.operation.action === "message" ? [d.operation.text] : []), d.kind === "uncertain" ? d.reason : "Waiting for acceptance; this is not completion.", "Escape dismisses without cancelling or retrying"].map(l => clip(l, width));
     const nav = s.navigation;
     if (nav.kind !== "inspector") return [];
@@ -60,7 +60,10 @@ export class Inspector implements Component, Focusable {
     const list = s.snapshots.slice(Math.max(0, selectedIndex - 4), Math.max(8, selectedIndex + 4)).map(a => `${a.agent.agentId === selected ? ">" : " "} ${a.agent.name ?? a.agent.agentId} · ${a.run?.status ?? "idle"}`);
     const record = s.snapshots.find(a => a.agent.agentId === selected);
     const details: string[] = [];
-    if (record) details.push(`${record.agent.agentId} · ${record.agent.model} · ${record.run?.status ?? "idle"}`, `Task: ${record.run?.description ?? ""}`, `Definition: ${record.agent.definition.source}`, `Output: ${record.run?.outputPath ?? "unavailable"}`, ...(record.agent.worktree ? [`Worktree: ${record.agent.worktree.path} (${record.agent.worktree.branch}; ${record.agent.worktree.state})`, `Base commit: ${record.agent.worktree.baseCommit}`, "Uncommitted parent changes are excluded; this is not a security sandbox."] : []));
+    if (record) details.push(`${record.agent.agentId} · ${record.agent.model} · ${record.run?.status ?? "idle"}`, `Task: ${record.run?.description ?? ""}`, `Definition: ${record.agent.definition.source}`, `Output: ${record.run?.outputPath ?? "unavailable"}`, ...(record.agent.worktree?.kind === "directory-snapshot"
+      ? [`Directory snapshot: ${record.agent.worktree.path} (${record.agent.worktree.state})`, `Source: ${record.agent.worktree.repo}; reason: ${record.agent.worktree.reason}`, "Current files copied without Git metadata; this is not a security sandbox."]
+      : record.agent.worktree ? [`Worktree: ${record.agent.worktree.path} (${record.agent.worktree.branch}; ${record.agent.worktree.state})`, `Base commit: ${record.agent.worktree.baseCommit}`, "Uncommitted parent changes are excluded; this is not a security sandbox."]
+      : ["Isolation: none; using the parent's working directory."]));
     if (nav.detail.kind === "loading") details.push("Loading transcript…");
     else if (nav.detail.kind === "unavailable") details.push(nav.detail.reason, "r retries");
     else if (nav.detail.kind === "ready") {

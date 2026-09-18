@@ -13,7 +13,7 @@ export interface AgentDefinition {
   model?: string;
   maxTurns?: number;
   background?: boolean;
-  isolation?: "worktree";
+  isolation?: "none" | "worktree";
   resumable: boolean;
 }
 export interface GoalOrigin {
@@ -24,6 +24,7 @@ export interface GoalOrigin {
   controlGeneration: number;
 }
 export interface WorktreeRecord {
+  kind?: "git-worktree";
   id: string;
   repo: string;
   path: string;
@@ -31,6 +32,21 @@ export interface WorktreeRecord {
   baseCommit: string;
   state: "allocated" | "cleaning" | "removed" | "uncertain";
 }
+export interface DirectorySnapshotRecord {
+  kind: "directory-snapshot";
+  id: string;
+  repo: string;
+  path: string;
+  reason: "no-git" | "unborn-head";
+  branch?: undefined;
+  baseCommit?: undefined;
+  state: "allocated" | "cleaning" | "removed" | "uncertain";
+}
+export type WorkspaceRecord = WorktreeRecord | DirectorySnapshotRecord;
+export type WorkspacePlan =
+  | { kind?: "git-worktree"; repo: string; baseCommit: string; relativeCwd?: string }
+  | { kind: "directory-snapshot"; repo: string; reason: "no-git" | "unborn-head"; relativeCwd?: string };
+
 export interface AgentRecord {
   agentId: string;
   parentId: string;
@@ -42,8 +58,9 @@ export interface AgentRecord {
   cwd: string;
   configCwd: string;
   sessionPath?: string;
-  worktree?: WorktreeRecord;
-  requestedWorktree?: { repo: string; baseCommit: string };
+  /** Historical storage key; kind distinguishes a linked worktree from a directory snapshot. */
+  worktree?: WorkspaceRecord;
+  requestedWorktree?: WorkspacePlan;
   resumable: boolean;
   createdAt: number;
 }

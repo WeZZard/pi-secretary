@@ -83,7 +83,7 @@ const bindings: ScenarioBindings = {
     else if (text.includes("unavailable resolved model")) { h.ctx.model = { ...h.ctx.model, id: "unavailable" }; diagnostic = /Model unavailable/; }
     else if (text.includes("empty task")) { args.prompt = " \n"; diagnostic = /prompt.*nonempty/i; }
     else if (text.includes("name reserved")) { await h.tool("Agent", { ...task, name: "reserved", run_in_background: false }); args.name = "reserved"; diagnostic = /already exists|already in use/i; }
-    else if (text.includes("remote isolation")) { args.isolation = "remote"; diagnostic = /Remote execution.*not supported/; }
+    else if (text.includes("remote isolation")) { args.isolation = "remote"; diagnostic = /Invalid Agent input/; }
     else { assert.match(text, /conversation fork/); args.subagent_type = "fork"; diagnostic = /fork|unsupported/i; }
     const calls = h.calls.length, runs = h.repository.runs("parent").length;
     await assert.rejects(h.tool("Agent", args), diagnostic!);

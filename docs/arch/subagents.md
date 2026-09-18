@@ -36,7 +36,9 @@
 The implementation follows Claude's canonical names, core field shapes, and the selected feature profile. It does not emulate the entire Claude environment.
 
 - `model` accepts only `sonnet`, `opus`, `haiku`, and `fable`. It does not accept arbitrary provider identifiers in tool input.
-- `isolation: "remote"` remains in the source-compatible enum but returns an unsupported-feature error before creating resources.
+- The default is the parent's working directory, independently of foreground or background execution. No Git initialization or commit is required for ordinary spawning.
+- The optional invocation `isolation` accepts `none` or `worktree`. Omission uses the agent definition's setting, then defaults to `none`. An explicit `none` overrides an isolated definition. It is an explicit pi compatibility addition that gives model callers an unambiguous opt-out; it is not advertised as a Claude Code enum value.
+- Unsupported `remote` isolation is not advertised. A legacy or invalid request for it still fails rather than silently changing execution mode.
 - `subagent_type: "fork"` is rejected because conversation forks are out of scope.
 - `team_name` and `mode` are accepted as deprecated, ignored fields, as in the inspected baseline. They never grant permissions or create a team.
 - `SendMessage` exposes only the required-string-message variant. It does not expose team protocol objects or `notify_when_idle`.
@@ -146,7 +148,7 @@ interface AgentInput {
   model?: "sonnet" | "opus" | "haiku" | "fable";
   run_in_background?: boolean;
   name?: string;
-  isolation?: "worktree" | "remote";
+  isolation?: "none" | "worktree";
   team_name?: string;
   mode?: "acceptEdits" | "auto" | "bypassPermissions"
     | "default" | "dontAsk" | "plan";
@@ -262,7 +264,7 @@ Discovery order, from highest to lowest precedence, is:
 - The initial frontmatter subset includes `name`, `description`, `tools`, `disallowedTools`, `model`, `maxTurns`, `background`, and `isolation`.
 - Tool lists use actual pi tool names. This is an explicit agent-definition adaptation, not a tool-schema change.
 - Unsupported behavioral fields such as permission overrides, hooks, nested delegation, or remote execution fail validation rather than being ignored.
-- The definition's `background` field is a boolean with the resolution rules in Section 4.1. The definition's `isolation` field accepts `worktree` in this release; unsupported values fail registry validation. Explicit invocation isolation wins over the definition default, but an explicit unsupported value is rejected rather than replaced.
+- The definition's `background` field is a boolean with the resolution rules in Section 4.1. The definition's `isolation` field accepts `none` or `worktree`; unsupported values fail registry validation. Explicit invocation isolation wins over the definition default, but an explicit unsupported value is rejected rather than replaced.
 - Project trust is checked before project definitions, extensions, and configuration are honored.
 - A user definition can override a packaged agent; the inspector records the selected source and content hash.
 - Changes to definitions affect new agents. Resumption uses the stored definition snapshot, while current trust and permissions may narrow or refuse it.
@@ -459,25 +461,28 @@ sequenceDiagram
 - No child run starts while the public control tools are ambiguous.
 - Existing goal tools remain available; the collision does not disable unrelated goal management.
 
-## 9. Worktree Isolation
+## 9. Workspace Isolation
 
 ### 9.1 Allocation
 
-- A worktree launch requires a Git repository and a resolvable `HEAD` commit.
-- The base commit is captured at launch acceptance. Allocation uses that commit even if the parent moves to another branch while the run waits.
-- The host creates a unique branch and worktree under its managed storage, with a persisted ownership record.
-- Parent uncommitted and staged changes are excluded. The result and inspector state this explicitly.
-- Worktree creation does not stash, commit, reset, or clean the parent checkout.
-- Tool working directories are rooted in the child worktree. Configuration discovery retains the trusted source-project configuration rather than accidentally losing model and agent definitions.
-- The host never falls back to the parent checkout if the recorded worktree disappears.
+- Ordinary spawning uses the parent's current working directory. The background flag does not request isolation, and no Git command is needed on this default path.
+- Explicit invocation settings take precedence over definition settings. Only effective `worktree` isolation allocates another workspace; effective `none` uses the parent directory.
+- For a Git checkout with a valid `HEAD`, the host captures that commit at launch acceptance and creates a unique branch and linked worktree from it. Uncommitted parent changes remain excluded from this mode.
+- For a project without Git, or a Git checkout whose current branch has no initial commit, the host creates an owned directory snapshot containing its current regular files and directories. Git metadata is excluded. This fallback includes current uncommitted files, does not initialize or commit the original project, and is reported as `directory-snapshot`, not as a Git worktree.
+- Repository corruption, permission errors, and other failed Git operations are not treated as evidence of an unborn or absent repository. They remain explicit errors.
+- A snapshot copies from the project directory for non-Git projects and from the repository root for an unborn checkout. The child retains the parent's relative working-directory location within the isolated copy.
+- Snapshot copying is bounded to 10,000 files and 128 MiB. Symbolic links and special files are rejected rather than followed into the parent or outside directories. Source files that change during copying cause an explicit failure. These safeguards prevent unsafe or unbounded copies; a directory snapshot is not a security sandbox or an atomic filesystem snapshot.
+- Managed snapshot storage must be outside the copied source tree. Failed allocations preserve their owned artifacts for diagnosis rather than deleting uncertain evidence.
+- The result and inspector report the actual mechanism, workspace path, and source. Only a genuine Git worktree reports a branch and base commit.
+- Configuration discovery remains rooted at the trusted source project. The host never falls back to the parent directory if an isolated workspace disappears.
 
-Using `HEAD` is a proposed Secretary policy and a deliberate difference from Claude versions that default worktrees to the repository's default branch.
+Using `HEAD` for committed Git repositories remains a deliberate difference from Claude versions that default worktrees to the repository's default branch. The shared-directory default matches Claude Code's documented default behavior.
 
 ### 9.2 Retention and cleanup
 
 - Worktrees remain available after execution to support inspection and resumption.
 - The host does not auto-commit agent edits. Existing commits created deliberately by the agent remain on its branch.
-- Cleanup is permitted only for an idle agent whose owned worktree is unchanged, whose branch still points to its base commit, and whose Git metadata matches the ownership record.
+- Cleanup is permitted only for an idle agent with a verified owned workspace. A Git worktree must be unchanged, remain at its base commit, and retain matching Git metadata. A directory snapshot must match its recorded initial file hashes, permissions, and directory inventory; changed or unverifiable snapshots are retained.
 - Confirmation captures the agent, worktree, and record revision without holding a database transaction open. After confirmation, a transaction rechecks those identities and the absence of an active run, then persists a cleanup reservation. A stale confirmation fails.
 - The cleanup reservation excludes new runs and resumption. After reserving, the manager revalidates Git metadata and filesystem state before removal. It does not rely on the checks performed before the dialog opened.
 - Successful removal and non-resumability are recorded before the reservation is released. Failure before removal releases the reservation only if the intact worktree is verified.
@@ -826,7 +831,7 @@ The following details are proposed rather than confirmed by the user:
 - The first release keeps `TaskOutput` despite upstream deprecation.
 - Claude Code 2.1.272 is selected as the compatibility baseline.
 - Packaged `Explore` and `Plan` remain one-shot, while custom agents and `general-purpose` can resume.
-- Worktrees use captured `HEAD`, remain until explicit cleanup, and are not auto-committed.
+- Requested isolation uses captured `HEAD` when available and an explicitly reported directory snapshot for absent Git or an unborn branch. Owned workspaces remain until explicit cleanup, and the original project is never auto-committed.
 - Print and JSON mode reject explicit background execution instead of silently accepting work that will stop at exit.
 - Concurrency, queue, and cleanup timeout values are initial policy defaults.
 - Transcript retention is explicit and indefinite until a future retention feature is designed.

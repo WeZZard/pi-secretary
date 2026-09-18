@@ -1,0 +1,7 @@
+{
+  "packages": [],
+  "extensions": ["{{EXTENSION_UNDER_TEST}}"],
+  "compaction": { "enabled": false },
+  "retry": { "enabled": false },
+  "quietStartup": true
+}

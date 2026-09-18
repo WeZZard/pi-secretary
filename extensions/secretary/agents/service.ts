@@ -4,7 +4,8 @@ import { join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentConfiguration } from "./configuration.ts";
 import { AgentRepository } from "./storage/agent-repository.ts";
-import { WorktreeManager } from "./worktrees.ts";
+import { WorkspaceManager } from "./workspaces.ts";
+import { resolveIsolation } from "./configuration.ts";
 import { createChildRunner } from "./runner.ts";
 import { formatSessionTranscript } from "./transcript-format.ts";
 import { TERMINAL_STATUSES, type AgentDefinition, type AgentRecord, type AgentRun, type AgentSnapshot, type GoalOrigin, type RunningChild, type RunnerHooks, type UsageRecord } from "./records.ts";
@@ -19,7 +20,7 @@ export interface LaunchSpec {
   description: string;
   name?: string;
   background: boolean;
-  isolation?: "worktree";
+  isolation?: "none" | "worktree";
   goal?: GoalOrigin;
 }
 export interface ServiceOptions {
@@ -43,7 +44,7 @@ const rejected = (message: string): Error & { definitive: true } => Object.assig
 /** Owns state transitions; a UI or tool result never determines execution state. */
 export class AgentService {
   private readonly repo: AgentRepository;
-  private readonly worktrees: WorktreeManager;
+  private readonly worktrees: WorkspaceManager;
   private readonly active = new Map<string, Active>();
   private readonly cleanups = new Set<Promise<unknown>>();
   private readonly messages = new Map<string, Promise<AgentRun>>();
@@ -56,7 +57,7 @@ export class AgentService {
     this.options = options;
     this.repo = options.repository;
     mkdirSync(options.root, { recursive: true, mode: 0o700 });
-    this.worktrees = new WorktreeManager(join(options.root, "worktrees"));
+    this.worktrees = new WorkspaceManager(options.root);
   }
   /** Call only after acquiring exclusive parent ownership. */
   async recover(): Promise<void> {
@@ -116,7 +117,8 @@ export class AgentService {
     this.capacity();
     if (!spec.prompt.trim() || !spec.description.trim()) throw new Error("Agent prompt and description must be nonempty.");
     if (spec.name && (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(spec.name) || /^(main|team-lead)$/i.test(spec.name) || /^(agent|run)_/.test(spec.name))) throw new Error("Invalid or reserved agent name.");
-    const requestedWorktree = spec.isolation ? await this.worktrees.captureBase(this.options.ctx.cwd) : undefined;
+    const isolation = resolveIsolation(spec.isolation, spec.definition.isolation);
+    const requestedWorktree = isolation === "worktree" ? await this.worktrees.captureBase(this.options.ctx.cwd) : undefined;
     this.capacity();
     const duplicate = this.repo.findLaunch(this.options.parentId, spec.launchKey);
     if (duplicate) return { agent: this.resolve(duplicate.agentId), run: duplicate };
@@ -177,8 +179,8 @@ export class AgentService {
       if (!agent.tools.length) throw new Error("The saved agent no longer has tools permitted by its parent.");
       if (agent.requestedWorktree && !agent.worktree) {
         const base = agent.requestedWorktree;
-        agent.worktree = await this.worktrees.create(agent.agentId, base.repo, base.baseCommit, entry.controller.signal);
-        agent.cwd = agent.worktree.path; this.repo.putAgent(agent);
+        agent.worktree = await this.worktrees.create(agent.agentId, base, entry.controller.signal);
+        agent.cwd = join(agent.worktree.path, base.relativeCwd ?? ""); this.repo.putAgent(agent);
       }
       if (agent.worktree) {
         if (agent.worktree.state !== "allocated") throw new Error("Worktree is unavailable or reserved for cleanup.");

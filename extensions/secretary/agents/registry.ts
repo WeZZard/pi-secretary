@@ -43,7 +43,7 @@ function definition(content: string, source: string): AgentDefinition {
     result.background = data.background;
   }
   if (Object.hasOwn(data, "isolation")) {
-    if (data.isolation !== "worktree") throw new Error(`${source}: unsupported isolation`);
+    if (data.isolation !== "none" && data.isolation !== "worktree") throw new Error(`${source}: unsupported isolation`);
     result.isolation = data.isolation;
   }
   return result;

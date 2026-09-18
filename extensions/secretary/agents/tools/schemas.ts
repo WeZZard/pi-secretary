@@ -9,7 +9,9 @@ export const agentSchema = Type.Object({
   model: Type.Optional(StringEnum(MODEL_ALIASES)),
   run_in_background: Type.Optional(Type.Boolean()),
   name: Type.Optional(Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$", maxLength: 64 })),
-  isolation: Type.Optional(StringEnum(["worktree", "remote"])),
+  isolation: Type.Optional(StringEnum(["none", "worktree"], {
+    description: "Optional workspace isolation. Normally omit this field to use the agent definition's setting, which defaults to none (the parent's working directory). Use none to explicitly keep the parent directory. Request worktree only when separate workspace isolation is explicitly needed; projects without Git history receive a reported directory snapshot. Background execution does not require isolation. Remote execution is unavailable.",
+  })),
   team_name: Type.Optional(Type.String({ deprecated: true, description: "Deprecated; ignored." })),
   mode: Type.Optional({ ...StringEnum(["acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"]), deprecated: true, description: "Deprecated; ignored." }),
 }, { additionalProperties: false });

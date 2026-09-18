@@ -8,7 +8,7 @@ import { AgentService } from "./service.ts";
 import { formatAgentOutcome } from "./presentation.ts";
 import { AgentRepository, acquireParentLock } from "./storage/agent-repository.ts";
 import { discoverAgents, resolveAgentModel } from "./registry.ts";
-import { loadAgentConfiguration } from "./configuration.ts";
+import { loadAgentConfiguration, resolveIsolation } from "./configuration.ts";
 import { createAgentSchema, sendMessageSchema, taskStopSchema, taskOutputSchema, type AgentInput } from "./tools/schemas.ts";
 import { registerAgentUI } from "./ui/commands.ts";
 import { TERMINAL_STATUSES, type AgentRun, type GoalOrigin } from "./records.ts";
@@ -140,7 +140,7 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
             const controller = current();
             const launched = await controller.launch({ launchKey: id, definition, model: `${model.provider}/${model.id}`,
               thinkingLevel: toolCtx.thinkingLevel, tools, prompt: params.prompt, description: params.description,
-              name: params.name, background, isolation: params.isolation === "worktree" ? "worktree" : definition.isolation, goal: origin() });
+              name: params.name, background, isolation: resolveIsolation(params.isolation, definition.isolation), goal: origin() });
             const run = launched.run!;
             if (background) return { ...result(run), content: [{ type: "text" as const, text: `${runText(run)}\nModel: ${launched.agent.model}\nLaunch accepted; execution is not yet complete. You will be notified on completion.` }] };
             const abort = () => { void controller.stop(run.runId, `foreground-abort:${id}`); };

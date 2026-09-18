@@ -11,6 +11,12 @@ export interface AgentConfiguration {
   shutdownTimeoutMs: number;
 }
 
+/** Omission inherits the definition; an explicit none keeps the parent directory. */
+export function resolveIsolation(requested: unknown, definition?: "none" | "worktree"): "none" | "worktree" {
+  if (requested !== undefined && requested !== "none" && requested !== "worktree") throw new Error("Unsupported isolation: use none or worktree");
+  return requested ?? definition ?? "none";
+}
+
 export function isExactModelIdentifier(value: unknown): value is string {
   return typeof value === "string" && /^[^/\s]+\/[^\s]+$/.test(value);
 }

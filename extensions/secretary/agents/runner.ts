@@ -44,7 +44,7 @@ export async function createChildRunner(options: {
       modelsStorePath: join(sessionDir, "models-store.json"), allowModelNetwork: false, refreshOnCreate: false, signal });
     // Delegate authentication through the public registry, not its private runtime or copied credentials.
     // Bind provider methods: native implementations need not store methods as enumerable own properties.
-    runtime.registerNativeProvider({
+    const parentAuthAdapter: Parameters<ModelRuntime["registerNativeProvider"]>[0] = {
       id: provider.id, name: provider.name, baseUrl: provider.baseUrl, headers: provider.headers,
       getModels: () => provider.getModels(),
       auth: { apiKey: { name: "Parent session authentication", resolve: async () => {
@@ -57,7 +57,9 @@ export async function createChildRunner(options: {
       streamSimple: (m, context, request) => { authorize(); return provider.streamSimple(m, context, request); },
       ...(provider.fetchDeferred ? { fetchDeferred: provider.fetchDeferred.bind(provider) } : {}),
       ...(provider.cancelDeferred ? { cancelDeferred: provider.cancelDeferred.bind(provider) } : {}),
-    });
+    };
+    runtime.registerNativeProvider(parentAuthAdapter);
+    let enforceProviderIdentity = false;
     let session: AgentSession | undefined;
     let settled = false;
     let cancelled = false;
@@ -76,8 +78,12 @@ export async function createChildRunner(options: {
     function authorize() {
       if (cancelled || signal.aborted) throw new Error("Child cancelled");
       if (partial) throw new Error(partial);
-      try { hooks.authorize(); }
-      catch (error) { partial = String(error); throw error; }
+      try {
+        if (enforceProviderIdentity && runtime.getRegisteredNativeProvider(parentAuthAdapter.id) !== parentAuthAdapter) {
+          throw new Error(`Child parent-authentication adapter was replaced: ${parentAuthAdapter.id}`);
+        }
+        hooks.authorize();
+      } catch (error) { partial = String(error); throw error; }
     }
     const onAbort = () => {
       if (settled) return;
@@ -120,6 +126,16 @@ export async function createChildRunner(options: {
         tools: allowed(), resourceLoader: loader, settingsManager: settings, sessionManager: manager,
         sessionStartEvent: { type: "session_start", reason: agent.sessionPath ? "resume" : "startup" },
       }));
+      // Session construction flushes queued provider registrations from loaded extensions.
+      // Restore delegation after that flush, before session_start handlers can resolve auth.
+      runtime.registerNativeProvider(parentAuthAdapter);
+      enforceProviderIdentity = true;
+      const refreshed = await runtime.refresh({ allowNetwork: false, providers: [provider.id], signal });
+      signal.throwIfAborted();
+      if (refreshed.aborted) throw new Error("Child provider refresh was aborted");
+      if (refreshed.errors.size) {
+        throw new Error(`Child provider refresh failed: ${[...refreshed.errors].map(([id, error]) => `${id}: ${String(error)}`).join("; ")}`);
+      }
       session.clearQueue();
       session.agent.clearAllQueues();
       const path = session.sessionFile;
@@ -136,6 +152,8 @@ export async function createChildRunner(options: {
       await session.bindExtensions({ mode: "print", uiContext: ui,
         onError: (error) => { partial = `Child extension error: ${error.error}`; },
       });
+      // Startup hooks may register providers too. Never silently accept a replacement.
+      authorize();
       const availableTools = new Set(session.getAllTools().map((tool) => tool.name));
       const missingTools = allowed().filter((name) => !availableTools.has(name));
       if (missingTools.length) throw new Error(`Approved child tools cannot be loaded: ${missingTools.join(", ")}`);
