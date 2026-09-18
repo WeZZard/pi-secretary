@@ -4,8 +4,8 @@ import { join, resolve } from "node:path";
 import type { CleanPiEnvironment } from "./isolation.ts";
 
 /** Opt-in reproduction using installed widget extensions, never synthetic UI failures. */
-export function useInstalledWidgetExtensions(environment: CleanPiEnvironment, globalAgentDir: string) {
-  const names = [...new Set((process.env.PI_E2E_WIDGET_PACKAGES ?? "").split(",").filter(Boolean))];
+export function useInstalledWidgetExtensions(environment: CleanPiEnvironment, globalAgentDir: string, requested?: readonly string[]) {
+  const names = [...new Set(requested ?? (process.env.PI_E2E_WIDGET_PACKAGES ?? "").split(",").filter(Boolean))];
   const allowed = new Set(["pi-recap", "@juicesharp/rpiv-todo"]);
   const packages = names.map(name => {
     if (!allowed.has(name)) throw new Error(`Unsupported widget reproduction package: ${name}`);

@@ -86,7 +86,7 @@ export function useGlobalLiteLLM(environment: CleanPiEnvironment, source = proce
         for (const name of readdirSync(directory)) {
           const path = join(directory, name);
           if (statSync(path).isDirectory()) visit(path);
-          else if (/\.(jsonl?|log|txt)$/.test(name)) {
+          else if (/\.(jsonl?|log|txt|cast)$/.test(name)) {
             const original = readFileSync(path, "utf8");
             const clean = environment.redact(original);
             if (clean !== original) writeFileSync(path, clean);

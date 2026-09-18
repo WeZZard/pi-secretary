@@ -49,6 +49,7 @@
     "test:serial": "node --experimental-strip-types --test --test-concurrency=1 tests/**/*.test.ts",
     "test:subagents": "node --experimental-strip-types --test --test-concurrency=1 tests/agents/*.test.ts",
     "test:e2e": "node --experimental-strip-types --test --test-concurrency=1 tests/e2e/cases/*.test.ts",
+    "test:e2e:tui": "node --experimental-strip-types --test --test-concurrency=1 tests/e2e/interactive/*.test.ts",
     "test:acceptance": "node --experimental-strip-types --test --test-concurrency=1 tests/acceptance/*.test.ts",
     "record:tui": "python3 scripts/record-agent-tui.py",
     "render:tui": "node --experimental-strip-types scripts/render-tui-recording.ts",
