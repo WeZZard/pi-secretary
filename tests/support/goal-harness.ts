@@ -21,7 +21,17 @@ export function goalHarness(options: { engine?: GoalEngine; threadId?: string; h
     abort: () => { state.aborts++; },
     ui: {
       setStatus: (_key: string, value: string | undefined) => { state.status = value; },
-      setWidget: (_key: string, value: string[] | undefined) => { state.widget = value; },
+      setWidget: (_key: string, value: unknown) => {
+        // The goal widget is a component factory; render it to lines like the TUI does.
+        if (typeof value === "function") {
+          const component = (value as (tui: unknown, theme: unknown) => { render(width: number): string[]; dispose?(): void })(
+            { requestRender: () => {} }, {});
+          state.widget = component.render(80);
+          component.dispose?.();
+          return;
+        }
+        state.widget = value as string[] | undefined;
+      },
       notify: (message: string) => notices.push(message),
       confirm: async () => state.confirm,
       input: async () => undefined,

@@ -15,7 +15,7 @@ test("real Pi host synchronizes tool/command/service changes to UI and fresh pro
   await h.session.prompt("Create the requested goal.");
   assert.equal(h.calls.length, 2, JSON.stringify(h.session.messages));
   assert.equal(h.engine.service.getGoal(h.threadId)?.objective, "Tool-created objective");
-  assert.equal(h.statuses.get("secretary:goal"), "goal active");
+  assert.match(h.widgets.get("secretary:goal")?.[0] ?? "", /▶ Goal: active/);
   assert.match(snapshot(h.calls[1].context)!, /Tool-created objective/);
 
   h.api.sendMessage({ customType: "secretary:goal", content: "LEGACY_STALE_GOAL_SENTINEL", display: false });
@@ -29,7 +29,7 @@ test("real Pi host synchronizes tool/command/service changes to UI and fresh pro
     "filtering provider context must not rewrite session history");
 
   await h.session.prompt("/goal pause");
-  assert.equal(h.statuses.get("secretary:goal"), "goal paused");
+  assert.match(h.widgets.get("secretary:goal")?.[0] ?? "", /⏸ Goal: paused/);
   await h.session.prompt("What is the current status?");
   assert.equal(snapshot(h.calls.at(-1)!.context), undefined, "a paused goal injects no goal message");
   assert.equal(h.engine.service.getGoal(h.threadId)?.status, "paused");
@@ -183,7 +183,8 @@ test("context abort cancels drained user steering and TUI-equivalent abort resto
 for (const reason of ["reload", "new", "resume", "fork"] as const) {
   test(`host session_start ${reason} initializes the current UI and request context`, { timeout: 15000 }, async (t) => {
     const h = await hostSession(t, { startReason: reason, startupGoal: reason === "new" ? undefined : "Stopped session goal", startupPaused: true });
-    assert.equal(h.statuses.get("secretary:goal"), reason === "new" ? undefined : "goal paused");
+    if (reason === "new") assert.equal(h.widgets.get("secretary:goal"), undefined);
+    else assert.match(h.widgets.get("secretary:goal")?.[0] ?? "", /⏸ Goal: paused/);
     await h.session.prompt("Inspect status without resuming.");
     assert.equal(snapshot(h.calls.at(-1)!.context), undefined, "a non-active session injects no goal message");
     if (reason === "fork") {

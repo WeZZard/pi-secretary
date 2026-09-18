@@ -1,10 +1,16 @@
 /**
- * Goal UI dashboard rendering tests.
- * Ports the pi-goal-x presentation for the single-thread goal model.
+ * Goal UI dashboard rendering tests for the bordered widget design:
+ * a box whose top border leads with "<icon> Goal: <status>" and trails with
+ * "<tokens> tokens, <elapsed>". The bottom information bar is not used.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { renderGoalDashboard } from "../../extensions/secretary/goal-ui.ts";
+import {
+  renderGoalDashboard,
+  renderGoalBox,
+  formatElapsed,
+  consumptionText,
+} from "../../extensions/secretary/goal-ui.ts";
 import { type ThreadGoal } from "../../extensions/secretary/goal/goal-record.ts";
 
 function goal(partial: Partial<ThreadGoal>): ThreadGoal {
@@ -21,33 +27,75 @@ function goal(partial: Partial<ThreadGoal>): ThreadGoal {
   };
 }
 
-test("no goal clears the dashboard and status", () => {
-  const d = renderGoalDashboard(null);
-  assert.equal(d.status, undefined);
-  assert.deepEqual(d.widget, []);
+const top = (lines: string[]) => lines[0]!;
+
+test("no goal renders no widget", () => {
+  assert.deepEqual(renderGoalDashboard(null).widget, []);
 });
 
-test("active goal renders objective and status", () => {
-  const d = renderGoalDashboard(goal({ objective: "ship the feature" }));
-  assert.ok(d.status?.includes("goal active"));
+test("active goal leads with the play icon and status", () => {
+  const d = renderGoalDashboard(goal({ objective: "ship the feature" }), 80, 1000);
+  assert.ok(top(d.widget).startsWith("╭ ▶ Goal: active"));
   assert.ok(d.widget.some((l) => l.includes("ship the feature")));
+  assert.ok(d.widget.at(-1)!.startsWith("╰"));
 });
 
-test("budgeted goal renders usage and remaining", () => {
-  const d = renderGoalDashboard(
-    goal({ tokenBudget: 1000, tokensUsed: 300, status: "active" }),
-  );
-  assert.ok(d.widget.some((l) => l.includes("tokens 300/1000")));
-  assert.ok(d.widget.some((l) => l.includes("remaining 700")));
+test("status icons map to the documented marks", () => {
+  const cases: Array<[ThreadGoal["status"], string]> = [
+    ["active", "▶"], ["paused", "⏸"], ["complete", "⏹"],
+    ["blocked", "ℹ"], ["budget_limited", "$"], ["usage_limited", "⚠"],
+  ];
+  for (const [status, icon] of cases) {
+    const d = renderGoalDashboard(goal({ status }), 80, 1000);
+    assert.ok(top(d.widget).includes(`${icon} Goal: ${status}`), `${status} renders ${icon}`);
+  }
 });
 
-test("elapsed time is rendered when positive", () => {
-  const d = renderGoalDashboard(goal({ timeUsedSeconds: 42 }));
-  assert.ok(d.widget.some((l) => l.includes("42s")));
+test("tokens are grouped in thousands", () => {
+  assert.match(consumptionText(goal({ tokensUsed: 150707 }), 0), /150,707 tokens/);
+  assert.match(consumptionText(goal({ tokensUsed: 42 }), 0), /42 tokens/);
 });
 
-test("budget_limited status propagates", () => {
-  const d = renderGoalDashboard(goal({ status: "budget_limited", tokenBudget: 10, tokensUsed: 10 }));
-  assert.ok(d.status?.includes("budget_limited"));
-  assert.ok(d.widget.some((l) => l.includes("remaining 0")));
+test("elapsed duration uses applicable abbreviated units", () => {
+  const t0 = Date.UTC(2026, 0, 1, 0, 0, 0);
+  assert.equal(formatElapsed(t0, t0 + 42_000), "42 sec");
+  assert.equal(formatElapsed(t0, t0 + 622_000), "10 min 22 sec");
+  assert.equal(formatElapsed(t0, t0 + 3_723_000), "1 hr 2 min 3 sec");
+  assert.equal(formatElapsed(t0, t0 + 90_061_000), "1 day 1 hr 1 min 1 sec");
+});
+
+test("elapsed years and months follow the calendar", () => {
+  const t0 = Date.UTC(2025, 0, 31, 0, 0, 0); // Jan 31: February has no 31st
+  const feb28 = Date.UTC(2025, 1, 28, 0, 0, 0);
+  assert.equal(formatElapsed(t0, feb28), "28 day");
+  const t1 = Date.UTC(2024, 1, 29, 0, 0, 0); // leap day: adding a year rolls to Mar 1
+  assert.equal(formatElapsed(t1, Date.UTC(2025, 1, 28, 0, 0, 0)), "11 mo 30 day");
+  assert.equal(formatElapsed(t1, Date.UTC(2025, 2, 1, 0, 0, 0)), "1 yr");
+  const t2 = Date.UTC(2026, 0, 1, 0, 0, 0);
+  assert.equal(formatElapsed(t2, Date.UTC(2026, 2, 1, 0, 0, 0)), "2 mo");
+});
+
+test("top border trails with the consumption text", () => {
+  const t0 = Date.UTC(2026, 0, 1);
+  const d = renderGoalDashboard(goal({ tokensUsed: 1234567, createdAt: t0 }), 100, t0 + 622_000);
+  assert.match(top(d.widget), /1,234,567 tokens, 10 min 22 sec ╮$/);
+});
+
+test("trailing segment is truncated when the width is tight", () => {
+  const lines = renderGoalBox("▶ Goal: active", "150,707 tokens, 10 min 22 sec", ["body"], 44);
+  assert.ok(top(lines).includes("…"));
+  assert.ok(top(lines).endsWith("╮"));
+  assert.ok(top(lines).includes("▶ Goal: active"));
+});
+
+test("body wraps at the inner width", () => {
+  const lines = renderGoalBox("▶ Goal: active", "1 tokens, 1 sec", ["one two three four five six seven eight"], 24);
+  assert.ok(lines.length > 3, "the objective wraps to multiple lines");
+  for (const line of lines.slice(1, -1)) assert.ok(line.startsWith("│ ") && line.endsWith(" │"));
+});
+
+test("unavailable box renders without an icon", () => {
+  const lines = renderGoalBox("Goal: unavailable", "", ["Goal status is unavailable."], 60);
+  assert.ok(top(lines).startsWith("╭ Goal: unavailable"));
+  assert.ok(!top(lines).includes("╮ ") || top(lines).endsWith("╮"));
 });

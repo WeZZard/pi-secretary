@@ -58,6 +58,14 @@ export async function hostSession(t: TestContext, options: {
     notify(message, type) { notices.push({ message, type }); },
     setStatus(key, value) { statuses.set(key, value); },
     setWidget(key: string, value: unknown) {
+      // The goal widget is a component factory; render it to lines like the TUI does.
+      if (typeof value === "function") {
+        const component = (value as (tui: unknown, theme: unknown) => { render(width: number): string[]; dispose?(): void })(
+          { requestRender: () => {} }, {});
+        widgets.set(key, component.render(80));
+        component.dispose?.();
+        return;
+      }
       assert.ok(value === undefined || Array.isArray(value));
       widgets.set(key, value as string[] | undefined);
     },

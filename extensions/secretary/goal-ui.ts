@@ -1,9 +1,10 @@
 /**
  * pi-secretary goal UI wiring.
  *
- * Ports the pi-goal-x presentation to the goal engine: an above-editor widget,
- * a status-line entry, and a `/goal` slash command. The goal dashboard shows
- * the single active thread goal (Codex single-goal-per-thread semantics).
+ * Renders the single thread goal (Codex single-goal-per-thread semantics) as a
+ * bordered above-editor widget: the top border carries "<icon> Goal: <status>"
+ * on the leading edge and "<tokens> tokens, <elapsed>" on the trailing edge.
+ * The bottom information bar is not used.
  */
 
 import {
@@ -11,43 +12,129 @@ import {
   type ExtensionCommandContext,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { type ThreadGoal } from "./goal/goal-record.ts";
+import { type ThreadGoal, type ThreadGoalStatus } from "./goal/goal-record.ts";
 import { type GoalEngine } from "./goal-engine.ts";
 import { type GoalReceipt } from "./goal/ordering.ts";
 
 export interface GoalStatusLine {
-  /** Status-bar text (short). */
-  status: string | undefined;
   /** Above-editor widget lines. */
   widget: string[];
 }
 
+const STATUS_ICONS: Record<ThreadGoalStatus, string> = {
+  active: "▶",
+  paused: "⏸",
+  complete: "⏹",
+  blocked: "ℹ",
+  budget_limited: "$",
+  usage_limited: "⚠",
+};
+
+function groupThousands(value: number): string {
+  const digits = String(Math.max(0, Math.floor(value)));
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+/** Calendar-accurate duration: years and months from the epoch, then the remainder. */
+export function formatElapsed(fromMs: number, toMs: number): string {
+  let remaining = Math.max(0, Math.floor((toMs - fromMs) / 1000));
+  const cursor = new Date(fromMs);
+  let years = 0;
+  for (;;) {
+    const next = new Date(cursor.getTime());
+    next.setFullYear(next.getFullYear() + 1);
+    const span = Math.floor((next.getTime() - cursor.getTime()) / 1000);
+    if (span > remaining) break;
+    years++; remaining -= span; cursor.setTime(next.getTime());
+  }
+  let months = 0;
+  for (;;) {
+    const next = new Date(cursor.getTime());
+    next.setMonth(next.getMonth() + 1);
+    const span = Math.floor((next.getTime() - cursor.getTime()) / 1000);
+    if (span > remaining) break;
+    months++; remaining -= span; cursor.setTime(next.getTime());
+  }
+  const days = Math.floor(remaining / 86400); remaining -= days * 86400;
+  const hours = Math.floor(remaining / 3600); remaining -= hours * 3600;
+  const minutes = Math.floor(remaining / 60); remaining -= minutes * 60;
+  const seconds = remaining;
+  const parts: string[] = [];
+  if (years > 0) parts.push(`${years} yr`);
+  if (months > 0) parts.push(`${months} mo`);
+  if (days > 0) parts.push(`${days} day`);
+  if (hours > 0) parts.push(`${hours} hr`);
+  if (minutes > 0) parts.push(`${minutes} min`);
+  if (seconds > 0 || parts.length === 0) parts.push(`${seconds} sec`);
+  return parts.join(" ");
+}
+
+/** Trailing consumption segment shared by the widget and tests. */
+export function consumptionText(goal: ThreadGoal, nowMs: number): string {
+  return `${groupThousands(goal.tokensUsed)} tokens, ${elapsedText(goal, nowMs)}`;
+}
+
+/** Duration text: live wall-clock ticking while active, the frozen accounting otherwise. */
+export function elapsedText(goal: ThreadGoal, nowMs: number): string {
+  if (goal.status === "active") return formatElapsed(goal.createdAt, nowMs);
+  return formatElapsed(0, goal.timeUsedSeconds * 1000);
+}
+
+const ELLIPSIS = "…";
+
+function fitSegment(text: string, width: number): string {
+  if (text.length <= width) return text;
+  if (width <= 1) return ELLIPSIS.slice(0, Math.max(width, 0));
+  return text.slice(0, width - 1) + ELLIPSIS;
+}
+
+function wrapText(text: string, width: number): string[] {
+  if (width < 1) return [""];
+  const lines: string[] = [];
+  let remaining = text;
+  while (remaining.length > width) {
+    let cut = remaining.lastIndexOf(" ", width);
+    if (cut <= 0) cut = width;
+    lines.push(remaining.slice(0, cut));
+    remaining = remaining.slice(cut).trimStart();
+  }
+  if (remaining.length > 0 || lines.length === 0) lines.push(remaining);
+  return lines;
+}
+
 /**
- * Render goal dashboard + status from a single goal. Pure and unit-testable.
- * No goal → no widget/status (cleared).
+ * Render the bordered goal widget at a fixed width. Pure and unit-testable.
+ * The top border leads with "<icon> Goal: <status>" and trails with the
+ * consumption text; the objective wraps inside the box.
  */
-export function renderGoalDashboard(goal: ThreadGoal | null): GoalStatusLine {
-  if (!goal) return { status: undefined, widget: [] };
-
-  const remaining =
-    goal.tokenBudget !== undefined
-      ? Math.max(goal.tokenBudget - goal.tokensUsed, 0)
-      : undefined;
-
-  const lines = [`▨ goal: ${goal.status}`, `   ${goal.objective}`];
-  const usage: string[] = [];
-  if (goal.tokenBudget !== undefined) {
-    usage.push(`tokens ${goal.tokensUsed}/${goal.tokenBudget}`);
-    usage.push(`remaining ${remaining}`);
+export function renderGoalBox(leading: string, trailing: string, body: string[], width: number): string[] {
+  const inner = Math.max(width - 2, 1); // width of the body lines' inner column
+  const lead = ` ${leading} `;
+  const trail = trailing ? ` ${trailing} ` : "";
+  // The top rule spans width-2 columns between the corners, shared by lead, fill, and trail.
+  const rule = width - 2;
+  let top: string;
+  if (lead.length + trail.length > rule) {
+    // Reserve one column per padding space around the fitted segment.
+    const fitted = fitSegment(trail.trim(), Math.max(rule - lead.length - 2, 0)).trim();
+    const trailPart = fitted ? ` ${fitted} ` : "";
+    top = `╭${lead}${trailPart}${"─".repeat(Math.max(rule - lead.length - trailPart.length, 0))}╮`;
   } else {
-    usage.push(`tokens ${goal.tokensUsed}`);
+    top = `╭${lead}${"─".repeat(Math.max(rule - lead.length - trail.length, 0))}${trail}╮`;
   }
-  if (goal.timeUsedSeconds > 0) {
-    usage.push(`${goal.timeUsedSeconds}s`);
-  }
-  if (usage.length > 0) lines.push(`   ${usage.join(" · ")}`);
+  const bodyLines = body.flatMap((line) => wrapText(line, inner - 2)).map((line) => `│ ${line.padEnd(inner - 2)} │`);
+  const bottom = `╰${"─".repeat(rule)}╯`;
+  return [top, ...bodyLines, bottom];
+}
 
-  return { status: `goal ${goal.status}`, widget: lines };
+/**
+ * Render goal widget lines from a single goal at a reference width and time.
+ * Pure and unit-testable. No goal → no widget (cleared).
+ */
+export function renderGoalDashboard(goal: ThreadGoal | null, width = 80, nowMs = Date.now()): GoalStatusLine {
+  if (!goal) return { widget: [] };
+  const leading = `${STATUS_ICONS[goal.status]} Goal: ${goal.status}`;
+  return { widget: renderGoalBox(leading, consumptionText(goal, nowMs), [goal.objective], width) };
 }
 
 /**
@@ -165,27 +252,41 @@ export function registerGoalUI(pi: ExtensionAPI, engine: GoalEngine): {
 } {
   // Session lifecycle binding is independent of command invocation.
   let disposed = false;
-  let latestUi: {
-    setStatus(key: string, text: string | undefined): void;
-    setWidget(key: string, content: string[] | undefined): void;
-  } | null = null;
+  let latestUi: ExtensionContext["ui"] | null = null;
+  let tick: ReturnType<typeof setInterval> | undefined;
+
+  const clearTick = (): void => { if (tick) clearInterval(tick); tick = undefined; };
+
+  const goalComponent = (goal: ThreadGoal) => (tui: { requestRender(force?: boolean): void }) => {
+    const leading = `${STATUS_ICONS[goal.status]} Goal: ${goal.status}`;
+    clearTick();
+    if (goal.status === "active") tick = setInterval(() => tui.requestRender(), 1000);
+    return {
+      render: (width: number) => renderGoalBox(leading, consumptionText(engine.service.getGoal(goal.threadId) ?? goal, Date.now()), [goal.objective], width),
+      invalidate: () => {},
+      dispose: () => clearTick(),
+    };
+  };
 
   const refresh = (): void => {
     const goal = engine.getThreadId()
       ? engine.service.getGoal(engine.getThreadId()!) ?? null
       : null;
-    const { status, widget } = renderGoalDashboard(goal);
     if (!latestUi) return;
-    latestUi.setStatus("secretary:goal", status);
-    latestUi.setWidget("secretary:goal", widget.length ? widget : undefined);
+    if (!goal) { clearTick(); latestUi.setWidget("secretary:goal", undefined); return; }
+    latestUi.setWidget("secretary:goal", goalComponent(goal));
   };
 
   const bind = (ctx: ExtensionContext): void => {
     if (!disposed) latestUi = ctx.hasUI ? ctx.ui : null;
   };
   const unavailable = (): void => {
-    latestUi?.setStatus("secretary:goal", "goal status unavailable");
-    latestUi?.setWidget("secretary:goal", ["Goal status is unavailable; this does not establish that it was cleared."]);
+    if (!latestUi) return;
+    clearTick();
+    latestUi.setWidget("secretary:goal", () => ({
+      render: (width: number) => renderGoalBox("Goal: unavailable", "", ["Goal status is unavailable; this does not establish that it was cleared."], width),
+      invalidate: () => {},
+    }));
   };
 
   pi.registerCommand("goal", {
@@ -253,6 +354,6 @@ export function registerGoalUI(pi: ExtensionAPI, engine: GoalEngine): {
     bind,
     refresh,
     unavailable,
-    dispose: () => { disposed = true; latestUi = null; },
+    dispose: () => { disposed = true; clearTick(); latestUi = null; },
   };
 }
