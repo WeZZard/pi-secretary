@@ -30,6 +30,29 @@ const STATUS_ICONS: Record<ThreadGoalStatus, string> = {
   usage_limited: "⚠",
 };
 
+/** Severity colors (theme keys): running/success/muted/resource-warning/error semantics. */
+export const STATUS_COLORS: Record<ThreadGoalStatus, string> = {
+  active: "accent",
+  paused: "muted",
+  complete: "success",
+  blocked: "error",
+  budget_limited: "warning",
+  usage_limited: "warning",
+};
+
+/** Collapsible token count: exact below 1,000; one-decimal K/M/B/T above. */
+export function abbreviateTokens(value: number): string {
+  const units: Array<[number, string]> = [[1e12, "T"], [1e9, "B"], [1e6, "M"], [1e3, "K"]];
+  const v = Math.max(0, Math.floor(value));
+  for (const [scale, suffix] of units) {
+    if (v >= scale) {
+      const n = Math.floor((v / scale) * 10) / 10;
+      return `${Number.isInteger(n) ? n.toFixed(0) : n.toFixed(1)}${suffix}`;
+    }
+  }
+  return String(v);
+}
+
 function groupThousands(value: number): string {
   const digits = String(Math.max(0, Math.floor(value)));
   return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
@@ -71,7 +94,7 @@ export function formatElapsed(fromMs: number, toMs: number): string {
 
 /** Trailing consumption segment shared by the widget and tests. */
 export function consumptionText(goal: ThreadGoal, nowMs: number): string {
-  return `${groupThousands(goal.tokensUsed)} tokens, ${elapsedText(goal, nowMs)}`;
+  return `${abbreviateTokens(goal.tokensUsed)} tokens, ${elapsedText(goal, nowMs)}`;
 }
 
 /** Duration text: live wall-clock ticking while active, the frozen accounting otherwise. */
@@ -105,12 +128,13 @@ function wrapText(text: string, width: number): string[] {
 /**
  * Render the bordered goal widget at a fixed width. Pure and unit-testable.
  * The top border leads with "<icon> Goal: <status>" and trails with the
- * consumption text; the objective wraps inside the box.
+ * consumption text; both segments carry one horizontal-bar padding against
+ * their edges. The objective wraps inside the box.
  */
 export function renderGoalBox(leading: string, trailing: string, body: string[], width: number): string[] {
   const inner = Math.max(width - 2, 1); // width of the body lines' inner column
-  const lead = ` ${leading} `;
-  const trail = trailing ? ` ${trailing} ` : "";
+  const lead = `─ ${leading} `;
+  const trail = trailing ? ` ${trailing} ─` : "";
   // The top rule spans width-2 columns between the corners, shared by lead, fill, and trail.
   const rule = width - 2;
   let top: string;
@@ -257,12 +281,14 @@ export function registerGoalUI(pi: ExtensionAPI, engine: GoalEngine): {
 
   const clearTick = (): void => { if (tick) clearInterval(tick); tick = undefined; };
 
-  const goalComponent = (goal: ThreadGoal) => (tui: { requestRender(force?: boolean): void }) => {
+  const goalComponent = (goal: ThreadGoal) => (tui: { requestRender(force?: boolean): void }, theme: { fg(color: string, text: string): string }) => {
     const leading = `${STATUS_ICONS[goal.status]} Goal: ${goal.status}`;
+    const color = STATUS_COLORS[goal.status];
     clearTick();
     if (goal.status === "active") tick = setInterval(() => tui.requestRender(), 1000);
     return {
-      render: (width: number) => renderGoalBox(leading, consumptionText(engine.service.getGoal(goal.threadId) ?? goal, Date.now()), [goal.objective], width),
+      render: (width: number) => renderGoalBox(leading, consumptionText(engine.service.getGoal(goal.threadId) ?? goal, Date.now()), [goal.objective], width)
+        .map((line) => theme.fg(color, line)),
       invalidate: () => {},
       dispose: () => clearTick(),
     };
@@ -283,8 +309,9 @@ export function registerGoalUI(pi: ExtensionAPI, engine: GoalEngine): {
   const unavailable = (): void => {
     if (!latestUi) return;
     clearTick();
-    latestUi.setWidget("secretary:goal", () => ({
-      render: (width: number) => renderGoalBox("Goal: unavailable", "", ["Goal status is unavailable; this does not establish that it was cleared."], width),
+    latestUi.setWidget("secretary:goal", (_tui: unknown, theme: { fg(color: string, text: string): string }) => ({
+      render: (width: number) => renderGoalBox("Goal: unavailable", "", ["Goal status is unavailable; this does not establish that it was cleared."], width)
+        .map((line) => theme.fg("error", line)),
       invalidate: () => {},
     }));
   };

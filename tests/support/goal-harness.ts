@@ -25,7 +25,7 @@ export function goalHarness(options: { engine?: GoalEngine; threadId?: string; h
         // The goal widget is a component factory; render it to lines like the TUI does.
         if (typeof value === "function") {
           const component = (value as (tui: unknown, theme: unknown) => { render(width: number): string[]; dispose?(): void })(
-            { requestRender: () => {} }, {});
+            { requestRender: () => {} }, { fg: (_color: string, text: string) => text });
           state.widget = component.render(80);
           component.dispose?.();
           return;

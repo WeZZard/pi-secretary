@@ -10,6 +10,8 @@ import {
   renderGoalBox,
   formatElapsed,
   consumptionText,
+  abbreviateTokens,
+  STATUS_COLORS,
 } from "../../extensions/secretary/goal-ui.ts";
 import { type ThreadGoal } from "../../extensions/secretary/goal/goal-record.ts";
 
@@ -33,9 +35,9 @@ test("no goal renders no widget", () => {
   assert.deepEqual(renderGoalDashboard(null).widget, []);
 });
 
-test("active goal leads with the play icon and status", () => {
+test("active goal leads with the play icon and status behind one padding bar", () => {
   const d = renderGoalDashboard(goal({ objective: "ship the feature" }), 80, 1000);
-  assert.ok(top(d.widget).startsWith("╭ ▶ Goal: active"));
+  assert.ok(top(d.widget).startsWith("╭─ ▶ Goal: active"));
   assert.ok(d.widget.some((l) => l.includes("ship the feature")));
   assert.ok(d.widget.at(-1)!.startsWith("╰"));
 });
@@ -51,9 +53,16 @@ test("status icons map to the documented marks", () => {
   }
 });
 
-test("tokens are grouped in thousands", () => {
-  assert.match(consumptionText(goal({ tokensUsed: 150707 }), 0), /150,707 tokens/);
-  assert.match(consumptionText(goal({ tokensUsed: 42 }), 0), /42 tokens/);
+test("tokens collapse to K, M, B, and T abbreviations", () => {
+  assert.equal(abbreviateTokens(42), "42");
+  assert.equal(abbreviateTokens(999), "999");
+  assert.equal(abbreviateTokens(1000), "1K");
+  assert.equal(abbreviateTokens(1500), "1.5K");
+  assert.equal(abbreviateTokens(150707), "150.7K");
+  assert.equal(abbreviateTokens(1234567), "1.2M");
+  assert.equal(abbreviateTokens(2_500_000_000), "2.5B");
+  assert.equal(abbreviateTokens(3_000_000_000_000), "3T");
+  assert.match(consumptionText(goal({ tokensUsed: 150707 }), 0), /150\.7K tokens/);
 });
 
 test("elapsed duration uses applicable abbreviated units", () => {
@@ -75,10 +84,10 @@ test("elapsed years and months follow the calendar", () => {
   assert.equal(formatElapsed(t2, Date.UTC(2026, 2, 1, 0, 0, 0)), "2 mo");
 });
 
-test("top border trails with the consumption text", () => {
+test("top border trails with the consumption text against one padding bar", () => {
   const t0 = Date.UTC(2026, 0, 1);
   const d = renderGoalDashboard(goal({ tokensUsed: 1234567, createdAt: t0 }), 100, t0 + 622_000);
-  assert.match(top(d.widget), /1,234,567 tokens, 10 min 22 sec ╮$/);
+  assert.match(top(d.widget), /1\.2M tokens, 10 min 22 sec ─╮$/);
 });
 
 test("trailing segment is truncated when the width is tight", () => {
@@ -94,8 +103,17 @@ test("body wraps at the inner width", () => {
   for (const line of lines.slice(1, -1)) assert.ok(line.startsWith("│ ") && line.endsWith(" │"));
 });
 
+test("status colors follow severity semantics", () => {
+  assert.equal(STATUS_COLORS.active, "accent");
+  assert.equal(STATUS_COLORS.complete, "success");
+  assert.equal(STATUS_COLORS.paused, "muted");
+  assert.equal(STATUS_COLORS.blocked, "error");
+  assert.equal(STATUS_COLORS.budget_limited, "warning");
+  assert.equal(STATUS_COLORS.usage_limited, "warning");
+});
+
 test("unavailable box renders without an icon", () => {
   const lines = renderGoalBox("Goal: unavailable", "", ["Goal status is unavailable."], 60);
-  assert.ok(top(lines).startsWith("╭ Goal: unavailable"));
+  assert.ok(top(lines).startsWith("╭─ Goal: unavailable"));
   assert.ok(!top(lines).includes("╮ ") || top(lines).endsWith("╮"));
 });
