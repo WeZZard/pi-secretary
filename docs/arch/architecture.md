@@ -240,7 +240,7 @@ flowchart TD
     R[Session start or replacement] --> B[Bind fresh session context and epoch]
     B --> G[Read goal through service]
     G --> U[Refresh or clear dashboard]
-    G --> C[Prepare current model snapshot]
+    G --> C[Reconcile model context from current state]
     G --> A{Goal active?}
     A -->|Yes| M[Restore accounting and evaluate idle dispatch]
     A -->|No| N[Clear active accounting and invalidate automatic work]
@@ -325,7 +325,7 @@ winds down with a wrap-up prompt.
 ## 8. Steering Prompts
 
 - Pi custom messages carry bounded behavioral instructions with explicit untrusted-data framing for the objective.
-- A separate, replaceable context message carries the current authoritative snapshot before every model request, as specified in §13.3. Historical steering is not the current state.
+- A separate, replaceable context message carries the current authoritative snapshot while the goal is active, as specified in §13.3. Historical steering is not the current state.
 - Status synchronization alone must not start a model turn.
 
 | Template | Trigger |
@@ -363,7 +363,7 @@ flowchart LR
     SVC -- "Committed change" --> SYNC[Session synchronization]
     SYNC --> WID
     SYNC --> STAT
-    SYNC -- "Current snapshot before each request" --> MODEL[Model]
+    SYNC -- "Current snapshot while the goal is active" --> MODEL[Model]
     RT -- "Validated behavioral instructions" --> MODEL
     CMD -- "mutate" --> SVC[GoalService]
     SVC --> DB
@@ -432,7 +432,7 @@ palette, keybindings) and the interaction model.
 7. The TUI renders only from the authoritative service snapshot.
 8. Prompts escape objective data and honor hard size caps.
 9. Behavior is covered by unit + integration tests (serial mode).
-10. Every model request receives one current goal snapshot, including an explicit no-goal snapshot after clear.
+10. Every model request while a goal is active receives one current goal snapshot; all other requests receive no goal message.
 11. Every lifecycle entry initializes or clears the UI without a prior command.
 12. Newer accepted decisions supersede older pending work and late control results. Work dispatched earlier may finish, but it cannot authorize subsequent work under obsolete intent or restore superseded goal state.
 13. Command confirmations, tool text, and the dashboard agree with the resulting service state.
@@ -450,7 +450,7 @@ palette, keybindings) and the interaction model.
 | SQLite migration/opacity | Inspectable DB; expose a read path in TUI/CLI; no schema churn. |
 | Late async results clobber state | Compare originating goal and intent with current intent; receipt or completion time alone is not authority. |
 | Removing pi-goal-x features surprises users | Guarded by the product vision (Codex-faithful replicate) + README. |
-| The model retains an obsolete active-goal instruction. | Replace extension-owned state context on every request and invalidate obsolete behavioral messages. |
+| The model retains an obsolete active-goal instruction. | Remove extension-owned state and steering messages from the outgoing context on every request; outside active pursuit, no goal text remains to steer from. |
 | A UI listener fails after storage commits. | Isolate listener failures and reconcile from storage at the next lifecycle or request boundary. |
 | Run-wide cancellation disrupts unrelated input. | Resolve obsolete work by ordering and current-state reconciliation rather than blanket session abort. |
 | Wall-clock timestamps tie or move backwards. | Use one monotonic sequence within the session epoch for ordering, and retain timestamps only for diagnostics. |
@@ -507,30 +507,44 @@ interface GoalChangedEvent {
 ### 13.3 Authoritative context before each model request
 
 - Register a Pi `context` handler, not only `before_agent_start`, because tools, retries, and queued messages can cause multiple model requests within one run.
-- At each request, read the current thread through the service and append exactly one hidden extension-owned current-state message to the outgoing context. The message contains the thread and goal identifiers, status, objective, budget, usage, remaining tokens, and any known current stop cause.
-- When no goal exists, inject an explicit “No current goal” snapshot. Omitting the snapshot would leave old active-goal messages uncorrected.
-- A failed service read is not evidence of absence. Report that current goal state could not be read, surface diagnostics, and defer new automatic work rather than labeling stale data as current or silently treating the goal as cleared.
+- At each request, read the current thread through the service and, when a goal exists with status `active`, append exactly one hidden extension-owned current-state message to the outgoing context. The message contains the thread and goal identifiers, status, objective, budget, usage, remaining tokens, and any known current stop cause.
+- Context injection is positive-only: the handler appends goal context while a goal is active and appends nothing otherwise. The injection rules are:
+  - While a goal has status `active`, inject the full snapshot and policy on every request. The snapshot supersedes any historical status or objective claims.
+  - When no goal exists, or the goal's status is not `active`, inject nothing. The handler removes prior extension-owned state and steering messages from the outgoing copy, so no goal text remains in context outside active pursuit.
+  - When the service read fails, treat it as a process-level fault rather than context. Record an in-process reported flag, surface one diagnostic notification to the user, and inject no goal message on that request or any later request in the same process. A session can outlive several process lifecycles, so the flag belongs to the process, not the session. A failed read is not evidence of absence: the model must not treat old state as current or infer that the goal was cleared, and automatic goal work stays suspended while reads fail.
 - Remove prior extension-owned current-state messages from the outgoing copy, so repeated requests do not accumulate snapshots. Do not delete transcript entries or rewrite user messages, assistant prose, or tool results.
 - Filter obsolete extension-owned behavioral messages using thread, epoch, goal identity, originating intent sequence, control generation, and instruction kind. Legacy `secretary:goal` messages without this metadata must not remain authoritative; remove them from the outgoing copy and regenerate any eligible instruction from current state.
 - A wake-up already submitted before a newer decision may still produce a model invocation. Supply the newer state, remove its obsolete work instruction, and preserve unrelated user messages. Do not call run-wide abort merely to eliminate that invocation. A response to that wake-up does not authorize stale goal actions or another automatic retry loop.
-- Keep static goal policy separate from current state. The snapshot explicitly says that it supersedes historical status claims, that “work is possible” is not evidence of `active`, and that state changes require a successful command or tool result.
-- Format objective text as quoted untrusted data. Bound the message size without dropping status, identity, or no-goal information. Reuse the existing accounting quantities and formulas; do not introduce a second usage calculation for display.
+- Keep static goal policy attached to the snapshot, and keep both out of requests that carry no active goal. The snapshot explicitly says that it supersedes historical status claims, that “work is possible” is not evidence of `active`, and that state changes require a successful command or tool result.
+- Format objective text as quoted untrusted data. Bound the message size without dropping status or identity. Reuse the existing accounting quantities and formulas; do not introduce a second usage calculation for display.
 - Model-visible tool text must include the fields promised by `get_goal`. Structured `details` alone are not a model notification. A fresh `get_goal` result remains the appropriate evidence for an explicit status answer.
+- The Secretary agents roster message follows the same rule: inject it only when the thread has agents or undelivered outcomes to report.
+- Process-level faults, including the goal-read failure above, are reported once per process and then recorded in memory. Repeated occurrences do not repeat user-facing alerts within the same process; diagnostics remain available in logs.
 - This hook does not call `sendMessage` or start a turn. Notification delivery must not create an automatic loop.
+
+```mermaid
+flowchart TD
+    REQ[Model request] --> READ[Read goal state through service]
+    READ --> FAIL{Read failed?}
+    FAIL -->|yes| FAULT[Record process-level fault flag;<br/>notify user once per process;<br/>inject nothing]
+    FAIL -->|no| GOAL{Goal active?}
+    GOAL -->|yes| FULL[Inject full snapshot and policy]
+    GOAL -->|no| STRIP[Strip extension-owned goal messages;<br/>inject nothing]
+```
 
 ### 13.4 Transition delivery matrix
 
 | Event | UI behavior | Model behavior | Automatic-work behavior |
 | --- | --- | --- | --- |
-| A tool or command creates a goal. | The dashboard renders the committed snapshot without requiring a previous command. | The tool result, if applicable, and next request snapshot show the new goal. | Dispatch requires current intent, an active result, and an idle host with no unresolved user input. |
-| A user changes the objective. | The dashboard shows the committed objective and status. | The next snapshot shows the new objective, and one current objective-update instruction replaces obsolete steering. | Pending work based on earlier intent is discarded; already-dispatched work cannot restore the old objective or authorize subsequent old-goal actions. |
-| A tool or command pauses the goal. | The dashboard and confirmation show the resulting status, including budget precedence. | The tool result, if applicable, and next snapshot report the resulting state. | Pending continuation is discarded; older work may finish without overriding the pause or scheduling further goal work. |
-| A user clears the goal. | The widget and footer are cleared after the service confirms deletion. | The next snapshot explicitly reports no goal, and old goal instructions are removed. | Pending continuation and wrap-up are invalidated. |
-| A user resumes the goal. | Feedback reports the actual result, including an already-active goal. | The next snapshot reports current state and accepted intent. | A valid new resume decision supersedes older failure judgments even without a status change; dispatch still requires available budget and current intent. |
-| A tool completes or blocks the goal. | The dashboard reflects the result. | Tool text and the next snapshot agree. | Pending continuation is invalidated, while originating-turn cleanup still runs. |
-| An unrecovered runtime failure is reported. | The dashboard shows a stop only if the failure still applies to the current intent. | The next snapshot reports current status; an obsolete error is historical evidence, not a new blocker. | Only a still-current failure may stop the goal; its arrival time cannot override a newer decision. |
+| A tool or command creates a goal. | The dashboard renders the committed snapshot without requiring a previous command. | The tool result, if applicable, and the next snapshot while the goal is active show the new goal. | Dispatch requires current intent, an active result, and an idle host with no unresolved user input. |
+| A user changes the objective. | The dashboard shows the committed objective and status. | The next snapshot while the goal is active shows the new objective, and one current objective-update instruction replaces obsolete steering. | Pending work based on earlier intent is discarded; already-dispatched work cannot restore the old objective or authorize subsequent old-goal actions. |
+| A tool or command pauses the goal. | The dashboard and confirmation show the resulting status, including budget precedence. | The tool result reports the resulting state; a status question is answered through `get_goal`, and no goal message is injected. | Pending continuation is discarded; older work may finish without overriding the pause or scheduling further goal work. |
+| A user clears the goal. | The widget and footer are cleared after the service confirms deletion. | Old goal instructions and snapshots are removed from the outgoing context; no replacement message is injected. | Pending continuation and wrap-up are invalidated. |
+| A user resumes the goal. | Feedback reports the actual result, including an already-active goal. | The next snapshot reports current state and accepted intent while the goal is active. | A valid new resume decision supersedes older failure judgments even without a status change; dispatch still requires available budget and current intent. |
+| A tool completes or blocks the goal. | The dashboard reflects the result. | Tool text reports the result; a later status question is answered through `get_goal`, and no goal message is injected. | Pending continuation is invalidated, while originating-turn cleanup still runs. |
+| An unrecovered runtime failure is reported. | The dashboard shows a stop only if the failure still applies to the current intent. | A still-active goal's next snapshot reports current status; an obsolete error is historical evidence, not a new blocker. | Only a still-current failure may stop the goal; its arrival time cannot override a newer decision. |
 | Accounting reaches the token budget. | The dashboard shows `budget_limited` and current usage. | The next eligible request receives the snapshot and one budget wrap-up instruction. | Normal continuation stops; only the identified budget wrap-up may run. |
-| A session starts, reloads, or resumes. | The fresh UI renders or clears immediately from storage. | The next request receives a fresh snapshot rather than trusting session history. | The new epoch evaluates fresh dispatch; no old pending request is replayed. |
+| A session starts, reloads, or resumes. | The fresh UI renders or clears immediately from storage. | An active goal's next request receives a fresh snapshot rather than trusting session history; otherwise no goal message is injected. | The new epoch evaluates fresh dispatch; no old pending request is replayed. |
 | A session forks. | The target UI renders the imported snapshot. | Target context uses the target thread and inherited goal snapshot. | The target uses a new epoch and never inherits source requests. |
 
 ### 13.5 Intent ordering and continuation dispatch
@@ -599,7 +613,7 @@ interface GoalChangedEvent {
 
 - These technical checks implement the observable outcomes in [US-D3](../user-stories/user-stories.md#us-d3-observe-goal-changes-consistently), [US-D4](../user-stories/user-stories.md#us-d4-keep-the-ui-and-agent-synchronized), and [UX §10](../ux/ux-design.md#10-ux-acceptance-criteria). Test construction belongs here and in the implementation plan rather than in the UX acceptance criteria.
 - Build an integration harness around the real extension installer, registered tools and commands, service storage, UI callbacks, and host message delivery. Do not replace production wiring with manually constructed runtime callbacks in these tests.
-- For every row of §13.4, assert the persisted state, rendered widget/footer, command or tool text, outgoing model snapshot, and pending automatic requests together.
+- For every row of §13.4, assert the persisted state, rendered widget/footer, command or tool text, outgoing model context, and pending automatic requests together.
 - Include tool creation before any `/goal` command, clear followed by a status question, non-active session restore, fork import, and pause/resume under budget precedence.
 - Exercise decisions between scheduling and dispatch, decisions after dispatch, delayed processing of earlier user messages, valid no-op decisions, status-only questions, and unrelated input interleaved with automatic work. Verify that late completion and error judgments cannot override newer intent.
 - Test equal timestamps, a backwards wall-clock adjustment, UI-publication failure, headless operation, and a new session epoch. Ordering must depend on the controller sequence rather than timestamps or an assumed human acknowledgment.

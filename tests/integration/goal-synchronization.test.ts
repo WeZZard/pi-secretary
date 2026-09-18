@@ -28,13 +28,13 @@ test("pause and clear agree across storage, UI, command text and subsequent mode
   await h.command("pause");
   assert.equal(h.state.status, "goal paused"); assert.equal(h.notices.at(-1), "Goal paused.");
   const paused = await h.context(history);
-  assert.match(snapshot(paused), /Goal \[paused\]/);
+  assert.equal(snapshot(paused), undefined, "no goal message is injected outside active pursuit");
   assert.ok(!paused.some((m: any) => m.customType === "secretary:goal"));
   assert.equal(paused[0], history[1]); assert.equal(history.length, 3);
   await h.command("clear");
   assert.equal(h.engine.service.getGoal(h.state.threadId), null);
   assert.equal(h.state.widget, undefined); assert.equal(h.state.status, undefined);
-  assert.match(snapshot(await h.context(paused)), /No current goal/);
+  assert.equal(snapshot(await h.context(paused)), undefined, "clear injects no replacement message");
   await h.flush(); assert.equal(h.sent.length, 0);
 });
 
@@ -46,7 +46,7 @@ test("exhausted-budget resume and pause never claim success", async (t) => {
     await h.command(command);
     assert.equal(h.state.status, "goal budget_limited");
     assert.match(h.notices.at(-1)!, /budget_limited/);
-    assert.match(snapshot(await h.context()), /Goal \[budget_limited\]/);
+    assert.equal(snapshot(await h.context()), undefined, "a non-active status injects no goal message");
   }
 });
 
@@ -96,7 +96,7 @@ test("intermediate provider error stays active after successful retry; unrecover
   await h.emit("turn_end", { message: assistant("error", 0) });
   h.state.idle = true; await h.emit("agent_settled");
   assert.equal(h.state.status, "goal blocked");
-  assert.match(snapshot(await h.context()), /Stop cause: run_error/);
+  assert.equal(snapshot(await h.context()), undefined, "a blocked goal injects no goal message");
 });
 
 test("a failed run cannot override intervening intent, and an abort is not an impasse", async (t) => {
@@ -120,7 +120,7 @@ test("fork imports full snapshot and renders target immediately; unknown legacy 
   await h.emit("session_start", { reason: "fork", previousSessionFile: "source" });
   assert.deepEqual(h.engine.service.getGoal("target"), { ...original, threadId: "target" });
   assert.equal(h.state.status, "goal blocked");
-  assert.match(snapshot(await h.context()), /Stop cause: unavailable/);
+  assert.equal(snapshot(await h.context()), undefined, "a blocked goal injects no goal message");
 });
 
 test("every restored stopped status reaches both UI and agent without resuming", async (t) => {
@@ -131,7 +131,7 @@ test("every restored stopped status reaches both UI and agent without resuming",
     else h.engine.service.setGoal(h.state.threadId, { status }, "system");
     await h.start();
     assert.equal(h.state.status, `goal ${status}`);
-    assert.ok(snapshot(await h.context()).includes(`Goal [${status}]`));
+    assert.equal(snapshot(await h.context()), undefined, "a restored non-active status injects no goal message");
     await h.flush(); assert.equal(h.sent.length, status === "budget_limited" ? 1 : 0);
     if (status === "budget_limited") assert.equal(h.sent[0].details.kind, "budget_wrap_up");
     assert.equal(h.engine.service.getGoal(h.state.threadId)?.status, status);
@@ -146,16 +146,18 @@ test("headless snapshots and automatic continuation work without a UI",  async (
   assert.equal(h.engine.service.ordering.publication(h.state.threadId), undefined);
 });
 
-test("read failure reports unavailable, not absent, and preserves user context", async (t) => {
+test("read failure reports unavailable once per process and injects no goal message", async (t) => {
   const h = goalHarness(); t.after(() => h.close()); await h.start();
   const original = h.engine.service.getGoal.bind(h.engine.service);
   h.engine.service.getGoal = () => { throw new Error("Storage unavailable"); };
   const user = { role: "user", content: "Status?" };
   const context = await h.context([user]);
   assert.equal(context[0], user);
-  assert.match(snapshot(context), /could not be read/);
-  assert.doesNotMatch(snapshot(context), /No current goal/);
+  assert.equal(snapshot(context), undefined, "a read fault injects no goal message");
   assert.equal(h.state.status, "goal status unavailable");
+  assert.equal(h.notices.filter((n) => /Goal synchronization/.test(n)).length, 1, "the fault is reported once");
+  await h.context([user]);
+  assert.equal(h.notices.filter((n) => /Goal synchronization/.test(n)).length, 1, "a repeated fault is not reported again in this process");
   h.engine.service.getGoal = original;
 });
 
@@ -166,7 +168,7 @@ test("revision cursors and UI binding are isolated across threads", async (t) =>
   h.state.threadId = "session-b"; await h.start(); await h.tool("create_goal", { objective: "Second" });
   assert.equal(h.state.status, "goal active"); assert.match(h.state.widget!.join("\n"), /Second/);
   await h.command("pause"); assert.equal(h.state.status, "goal paused");
-  assert.match(snapshot(await h.context()), /Second/);
+  assert.equal(snapshot(await h.context()), undefined, "a paused goal injects no goal message");
 });
 
 test("late failure audit cannot block an edited objective with the same goal ID", async (t) => {

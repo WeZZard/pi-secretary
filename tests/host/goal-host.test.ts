@@ -3,10 +3,10 @@ import { test } from "node:test";
 import { deferred, flushAutomaticScheduling, hostSession } from "../support/host-session.ts";
 import { Type } from "typebox";
 
-function snapshot(context: { messages: unknown[] }): string {
+function snapshot(context: { messages: unknown[] }): string | undefined {
   const messages = context.messages.filter((message) => JSON.stringify(message).includes("Authoritative current goal state."));
-  assert.equal(messages.length, 1, "one current snapshot reaches each provider request");
-  return JSON.stringify(messages[0]);
+  assert.ok(messages.length <= 1, "at most one snapshot reaches each provider request");
+  return messages.length === 1 ? JSON.stringify(messages[0]) : undefined;
 }
 
 test("real Pi host synchronizes tool/command/service changes to UI and fresh provider context", { timeout: 15000 }, async (t) => {
@@ -16,14 +16,14 @@ test("real Pi host synchronizes tool/command/service changes to UI and fresh pro
   assert.equal(h.calls.length, 2, JSON.stringify(h.session.messages));
   assert.equal(h.engine.service.getGoal(h.threadId)?.objective, "Tool-created objective");
   assert.equal(h.statuses.get("secretary:goal"), "goal active");
-  assert.match(snapshot(h.calls[1].context), /Tool-created objective/);
+  assert.match(snapshot(h.calls[1].context)!, /Tool-created objective/);
 
   h.api.sendMessage({ customType: "secretary:goal", content: "LEGACY_STALE_GOAL_SENTINEL", display: false });
   await h.session.prompt("/goal Updated command objective");
   assert.match(h.widgets.get("secretary:goal")!.join("\n"), /Updated command objective/);
   await h.session.prompt("Status only.");
-  assert.match(snapshot(h.calls.at(-1)!.context), /Goal \[active\]/);
-  assert.match(snapshot(h.calls.at(-1)!.context), /Updated command objective/);
+  assert.match(snapshot(h.calls.at(-1)!.context)!, /Goal \[active\]/);
+  assert.match(snapshot(h.calls.at(-1)!.context)!, /Updated command objective/);
   assert.doesNotMatch(JSON.stringify(h.calls.at(-1)!.context), /LEGACY_STALE_GOAL_SENTINEL/);
   assert.ok(h.session.messages.some((message) => message.role === "custom" && message.customType === "secretary:goal"),
     "filtering provider context must not rewrite session history");
@@ -31,15 +31,16 @@ test("real Pi host synchronizes tool/command/service changes to UI and fresh pro
   await h.session.prompt("/goal pause");
   assert.equal(h.statuses.get("secretary:goal"), "goal paused");
   await h.session.prompt("What is the current status?");
-  assert.match(snapshot(h.calls.at(-1)!.context), /Goal \[paused\]/);
+  assert.equal(snapshot(h.calls.at(-1)!.context), undefined, "a paused goal injects no goal message");
   assert.equal(h.engine.service.getGoal(h.threadId)?.status, "paused");
 
   h.engine.service.clearGoal(h.threadId, "user");
   assert.equal(h.statuses.get("secretary:goal"), undefined);
   assert.equal(h.widgets.get("secretary:goal"), undefined);
   await h.session.prompt("What remains?");
-  assert.match(snapshot(h.calls.at(-1)!.context), /No current goal for this thread/);
-  assert.doesNotMatch(snapshot(h.calls.at(-1)!.context), /Updated command objective/);
+  const cleared = snapshot(h.calls.at(-1)!.context);
+  assert.equal(cleared, undefined, "clear injects no replacement message");
+  assert.doesNotMatch(JSON.stringify(h.calls.at(-1)!.context), /Updated command objective/);
   assert.ok(h.lifecycle.some(({ event }) => event === "agent_settled"));
 });
 
@@ -56,7 +57,7 @@ test("real host retry keeps persisted intent active until recovery succeeds", { 
   assert.deepEqual(retryStatuses, ["active"]);
   assert.deepEqual(h.lifecycle.filter(({ event }) => event === "turn_end").map(({ status }) => status), ["active", "active"]);
   assert.equal(h.engine.service.getGoal(h.threadId)?.status, "active");
-  assert.match(snapshot(h.calls[1].context), /Goal \[active\]/);
+  assert.match(snapshot(h.calls[1].context)!, /Goal \[active\]/);
   assert.deepEqual(h.lifecycle.filter(({ event }) => event === "agent_settled").map(({ status }) => status), ["active"]);
 });
 
@@ -184,7 +185,7 @@ for (const reason of ["reload", "new", "resume", "fork"] as const) {
     const h = await hostSession(t, { startReason: reason, startupGoal: reason === "new" ? undefined : "Stopped session goal", startupPaused: true });
     assert.equal(h.statuses.get("secretary:goal"), reason === "new" ? undefined : "goal paused");
     await h.session.prompt("Inspect status without resuming.");
-    assert.match(snapshot(h.calls.at(-1)!.context), reason === "new" ? /No current goal/ : /Goal \[paused\]/);
+    assert.equal(snapshot(h.calls.at(-1)!.context), undefined, "a non-active session injects no goal message");
     if (reason === "fork") {
       assert.equal(h.engine.service.getGoal(h.threadId)?.goalId, h.engine.service.getGoal("fork-source")?.goalId);
     }
@@ -200,8 +201,8 @@ for (const startup of [false, true]) {
     await flushAutomaticScheduling();
     assert.equal(h.engine.service.getGoal(h.threadId)?.status, "complete");
     assert.equal(h.calls.length, 2, "one continuation tool call followed by its final summary");
-    assert.match(snapshot(h.calls[0].context), /Continue working toward the active thread goal\./);
-    assert.match(snapshot(h.calls[1].context), /Goal \[complete\]/);
+    assert.match(snapshot(h.calls[0].context)!, /Continue working toward the active thread goal\./);
+    assert.equal(snapshot(h.calls[1].context), undefined, "a completed goal injects no goal message");
     assert.equal(h.notices.some(({ message }) => /Automatic goal turns are unavailable/.test(message)), false);
     assert.equal(h.session.messages.filter((m) => m.role === "custom" && m.customType === "secretary:goal-automatic").length, 1);
   });
@@ -242,7 +243,7 @@ for (const response of ["sentinel", "complete_goal"] as const) {
       assert.equal(h.calls[0].options?.signal?.aborted, false);
       const question = h.calls.find((call) => JSON.stringify(call.context).includes("QUEUED_STATUS_QUESTION"));
       assert.ok(question, "unrelated queued user question must reach the provider");
-      assert.match(snapshot(question.context), /Goal \[paused\]/);
+      assert.equal(snapshot(question.context), undefined, "a paused goal injects no goal message");
       assert.equal(h.restoredUserMessages.length, 0);
       assert.equal(h.session.pendingMessageCount, 0);
       assert.equal(h.session.messages.filter((m) => m.role === "custom" && m.customType === "secretary:goal-automatic").length, 1);
@@ -288,9 +289,8 @@ test("already submitted automatic wakeup receives current state and is not repla
     await h.session.waitForIdle();
     await flushAutomaticScheduling();
     assert.ok(h.calls.length > 0, "a submitted wakeup may still enter the provider");
-    assert.match(snapshot(h.calls[0].context), /Goal \[paused\]/);
-    assert.match(snapshot(h.calls[0].context), /wake-up was superseded/);
-    assert.doesNotMatch(snapshot(h.calls[0].context), /Continue working toward the active thread goal\./);
+    assert.equal(snapshot(h.calls[0].context), undefined, "a superseded wake-up for a paused goal injects no goal message");
+    assert.doesNotMatch(JSON.stringify(h.calls[0].context), /Continue working toward the active thread goal\./);
     assert.equal(h.engine.service.getGoal(h.threadId)?.status, "paused");
     assert.equal(h.session.messages.filter((m) => m.role === "custom" && m.customType === "secretary:goal-automatic").length, 1);
   } finally { release.resolve(); }
@@ -305,8 +305,9 @@ test("budget exhaustion dispatches one wrap-up and no normal goal work", { timeo
   await flushAutomaticScheduling();
   assert.equal(h.engine.service.getGoal(h.threadId)?.status, "budget_limited");
   assert.equal(h.calls.length, 1);
-  assert.doesNotMatch(snapshot(h.calls[0].context), /Continue working toward the active thread goal\./);
-  assert.match(snapshot(h.calls[0].context), /budget/i);
+  const wrapUp = JSON.stringify(h.calls[0].context);
+  assert.doesNotMatch(wrapUp, /Continue working toward the active thread goal\./);
+  assert.match(wrapUp, /reached its token budget/);
   assert.equal(h.session.messages.filter((m) => m.role === "custom" && m.customType === "secretary:goal-automatic").length, 1);
 });
 

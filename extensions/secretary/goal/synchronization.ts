@@ -66,6 +66,8 @@ export class GoalSynchronization {
   private readonly turns = new Map<string, WorkBasis>();
   private currentTurn?: string;
   private budget?: BudgetRecord;
+  /** Process-level fault flag: a goal-read failure is reported to the user once per process. */
+  private readFaultReported = false;
   /** Optional admission check for unchanged outstanding child dependencies. */
   canContinueWithChildren?: () => boolean;
 
@@ -127,8 +129,16 @@ export class GoalSynchronization {
       } else if (this.threadId) this.engine.service.ordering.clearPublication(this.threadId);
     } catch (error) {
       if (this.threadId) this.engine.service.ordering.clearPublication(this.threadId);
-      this.unavailable(); this.diagnostic(error);
+      this.unavailable();
+      this.reportFault(error);
     }
+  }
+
+  /** Process-level fault reporting (architecture §13.3): one user-facing alert per process. */
+  private reportFault(error: unknown): void {
+    if (this.readFaultReported) return;
+    this.readFaultReported = true;
+    this.diagnostic(error);
   }
 
   private changed(event: GoalChangedEvent): void {
@@ -272,12 +282,17 @@ export class GoalSynchronization {
     this.bind(ctx);
     const messages = event.messages.filter((message) => !(message.role === "custom" &&
       [SNAPSHOT_TYPE, AUTOMATIC_TYPE, "secretary:goal", "secretary:goal-objective"].includes(message.customType)));
-    let content: string;
+    let content = "";
     try {
       const goal = this.engine.service.getGoal(this.threadId!);
       const version = this.engine.service.getVersion(this.threadId!);
       const last = this.engine.service.getLastChange(this.threadId!);
-      content = `${CURRENT_GOAL_POLICY}\n\n${formatGoalSnapshot(goal, last?.stopCause)}\nAccepted intent sequence: ${this.engine.service.ordering.intentSeq(this.threadId!)}.`;
+      // Positive-only injection (architecture §13.3): a snapshot while the goal
+      // is active, the authorized wrap-up instruction on its own dispatch, and
+      // nothing otherwise.
+      if (goal?.status === "active") {
+        content = `${CURRENT_GOAL_POLICY}\n\n${formatGoalSnapshot(goal, last?.stopCause)}\nAccepted intent sequence: ${this.engine.service.ordering.intentSeq(this.threadId!)}.`;
+      }
       let basis = this.capture();
       // Actual message ordering, not latest global input, identifies the request's source.
       let source: Message | undefined;
@@ -294,7 +309,7 @@ export class GoalSynchronization {
           basis.controlGeneration = basis.receipt.basisControlGeneration ?? basis.controlGeneration;
         }
         basis.unresolvedInput = !basis.receipt;
-        if (basis.unresolvedInput) content += "\nInput provenance is unresolved. Do not change the goal from this request; ask for an explicit /goal command if a change is required.";
+        if (basis.unresolvedInput && content) content += "\nInput provenance is unresolved. Do not change the goal from this request; ask for an explicit /goal command if a change is required.";
       } else if (source?.role === "custom") {
         const marker = source.details as AutomaticRequest | undefined;
         if (marker?.requestId === this.dispatched?.requestId) {
@@ -309,12 +324,14 @@ export class GoalSynchronization {
             request.observed = true; // The authorized instruction, not just its marker, was supplied.
             runtime.admitContinuation();
             if (turnId && request.kind === "continuation") runtime.accountingState().markGoalContinuation(turnId);
-            content += `\n\n${request.kind === "continuation" ? runtime.continuationPrompt(goal!) : runtime.budgetLimitPrompt(goal!)}`;
-          } else content += "\nThis wake-up was superseded. Do not start goal actions, change goal status, or schedule more work from it. Already-started work is historical; the current state above governs subsequent work.";
+            const prompt = request.kind === "continuation" ? runtime.continuationPrompt(goal!) : runtime.budgetLimitPrompt(goal!);
+            content = content ? `${content}\n\n${prompt}` : prompt;
+          } else if (content) content += "\nThis wake-up was superseded. Do not start goal actions, change goal status, or schedule more work from it. Already-started work is historical; the current state above governs subsequent work.";
         } else {
+          // A historical automatic request carries no authority; its marker was
+          // removed above and nothing is injected for it.
           basis.unresolvedInput = true;
           basis.unresolvedAutomatic = true;
-          content += "\nThis historical automatic request is not authorized for replay. Report current state only; do not start goal actions.";
         }
       }
       if (goal?.status === "active" && this.objectiveGeneration === version.controlGeneration && !basis.automatic) {
@@ -325,11 +342,12 @@ export class GoalSynchronization {
       else if (this.currentTurn && basis.goalId !== goal?.goalId) accounting.markTurnGoalActive(this.currentTurn, basis.goalId);
       if (this.currentTurn) this.turns.set(this.currentTurn, basis);
     } catch (error) {
-      this.suspendAutomatic(); this.unavailable(); this.diagnostic(error);
+      this.suspendAutomatic(); this.unavailable();
+      this.reportFault(error);
       const work = this.work(); if (work) work.unresolvedInput = true;
-      content = `${CURRENT_GOAL_POLICY}\n\nCurrent goal state could not be read. Do not treat old state as current or infer that the goal was cleared. No automatic goal work is authorized.`;
+      content = "";
     }
-    messages.push({ role: "custom", customType: SNAPSHOT_TYPE, content, display: false, timestamp: Date.now() });
+    if (content) messages.push({ role: "custom", customType: SNAPSHOT_TYPE, content, display: false, timestamp: Date.now() });
     return messages;
   }
 

@@ -42,7 +42,7 @@ test("stale wake-up receives current state and preserves an unrelated status que
   const h = goalHarness(); t.after(() => h.close()); await h.start(); await h.command("First"); await h.flush();
   await h.command("clear"); h.state.idle = false; await h.emit("turn_start");
   const stale = await h.context([h.sent[0]]);
-  assert.match(stale.at(-1).content, /No current goal/); assert.match(stale.at(-1).content, /superseded/);
+  assert.equal(stale.length, 0, "a stale wake-up for a cleared goal leaves no extension message in context");
   await h.emit("input", { source: "interactive", text: "What is the status?" });
   const user = await h.userMessage("What is the status?", 17);
   const context = await h.context([h.sent[0], user]);
@@ -166,7 +166,7 @@ test("a request from an older epoch cannot execute tools or charge a replacement
   try {
     await next.start(); await next.command("New epoch"); next.state.idle = false; await next.emit("turn_start");
     const context = await next.context([old]);
-    assert.match(context.at(-1).content, /not authorized for replay/);
+    assert.ok(!context.some((m: any) => m.customType === "secretary:goal-automatic"), "the replayed wake-up marker is removed");
     assert.equal((await next.emit("tool_call", { toolName: "bash", input: {} })).block, true);
     await next.emit("turn_end", { message: assistant("stop", 15) });
     assert.equal(next.engine.service.getGoal(next.state.threadId)?.tokensUsed, 0);
@@ -193,7 +193,7 @@ test("a budget marker without an authorized wrap-up does not consume delivery", 
   await h.tool("create_goal", { objective: "Budget", token_budget: 1 });
   h.engine.service.accountGoalUsage(h.state.threadId, 0, 1, "active_only"); await h.flush();
   await h.command("resume"); h.state.idle = false; await h.emit("turn_start");
-  const old = await h.context([h.sent[0]]); assert.match(old.at(-1).content, /superseded/);
+  const old = await h.context([h.sent[0]]); assert.equal(old.length, 0, "a superseded wake-up leaves no extension message in context");
   await h.emit("turn_end", { message: assistant("stop", 0) });
   h.state.idle = true; await h.emit("agent_settled"); await h.flush();
   assert.equal(h.sent.length, 2);

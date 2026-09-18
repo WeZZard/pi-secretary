@@ -189,6 +189,8 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
     const messages = event.messages.filter(m => !(m.role === "custom" && m.customType === SNAPSHOT));
     const snapshots = service.list();
     const pending = service.pendingCompletions();
+    // Positive-only injection (architecture §13.3): no roster without agents or pending outcomes.
+    if (snapshots.length === 0 && pending.length === 0) return { messages };
     const content = `Current Secretary agents (state, not authorization to resume a goal):\n` +
       snapshots.map(s => `${s.agent.agentId} ${s.agent.name ?? s.agent.definition.name}: ${s.run?.status ?? "no run"}; run=${s.run?.runId}; output=${s.run?.outputPath}`).join("\n") +
       `\nUndelivered or uncertain outcomes: ${pending.map(p => p.runId).join(", ") || "none"}. Use TaskOutput for current results. Do not claim completion before observing an outcome.`;
