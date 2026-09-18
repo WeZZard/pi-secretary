@@ -5,6 +5,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import {
   renderGoalDashboard,
   renderGoalBox,
@@ -132,6 +133,10 @@ const bodyText = (lines: string[]): string => {
   return body.slice(2, -2);
 };
 
+/** A lone surrogate half renders as U+FFFD; ES2022 typings lack isWellFormed. */
+const hasLoneSurrogate = (text: string): boolean =>
+  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(text);
+
 test("normalizeObjective collapses whitespace runs and trims the ends", () => {
   assert.equal(normalizeObjective("  leading and trailing  "), "leading and trailing");
   assert.equal(normalizeObjective(`paragraph one
@@ -195,4 +200,51 @@ test("leading and trailing whitespace do not shift the body text", () => {
  `;
   const d = renderGoalDashboard(goal({ objective }), 80, 1000);
   assert.equal(bodyText(d.widget).trimEnd(), "ship the feature");
+});
+
+// --- Display-width reproducers ------------------------------------------------
+// Width math must count terminal display cells, not UTF-16 code units: CJK
+// ideographs are 2 cells, emoji are surrogate pairs, ZWJ sequences and
+// combining marks form single glyphs. Every widget line must span exactly the
+// requested width in cells, and truncation must never split a grapheme.
+
+test("reproducer: CJK objective must not overflow the box width", () => {
+  const objective = "开发几个映射函数，把布尔概率转换成真实灰度，渲染图片并截图对比效果";
+  const d = renderGoalDashboard(goal({ objective }), 80, 1000);
+  for (const line of d.widget) {
+    assert.equal(visibleWidth(line), 80, `line spans the full width in cells: ${line}`);
+  }
+});
+
+test("reproducer: CJK truncation respects the display-cell budget", () => {
+  const objective = "开发几个映射函数用于把布尔概率转换成真实灰度，渲染图片截图对比不同映射函数的效果差异。";
+  const d = renderGoalDashboard(goal({ objective }), 44, 1000);
+  const text = bodyText(d.widget).trimEnd();
+  assert.ok(text.endsWith(EXPAND_HINT), "the objective is truncated with the hint");
+  assert.equal(visibleWidth(d.widget[1]!), 44, "the truncated body stays inside the box");
+});
+
+test("reproducer: truncation never splits an emoji surrogate pair", () => {
+  const objective = "🐛🐛🐛🐛🐛🐛🐛🐛🐛🐛🐛🐛🐛🐛🐛";
+  const d = renderGoalDashboard(goal({ objective }), 22, 1000);
+  const text = bodyText(d.widget).trimEnd();
+  assert.ok(!hasLoneSurrogate(text), "the truncated body contains no lone surrogate halves");
+  assert.equal(visibleWidth(d.widget[1]!), 22, "the truncated body stays inside the box");
+});
+
+test("reproducer: a ZWJ emoji sequence is never split", () => {
+  const objective = "👨‍💻👨‍💻👨‍💻👨‍💻👨‍💻👨‍💻👨‍💻👨‍💻";
+  const d = renderGoalDashboard(goal({ objective }), 22, 1000);
+  const text = bodyText(d.widget).trimEnd();
+  assert.ok(!hasLoneSurrogate(text), "the truncated body contains no lone surrogate halves");
+  assert.ok(!text.endsWith("‍" + EXPAND_HINT) && !text.includes("‍…"), "no dangling ZWJ before the ellipsis");
+  assert.equal(visibleWidth(d.widget[1]!), 22, "the truncated body stays inside the box");
+});
+
+test("reproducer: combining marks do not consume display cells", () => {
+  // “é” in decomposed form: the combining accent cannot be a reliable literal
+  // source character, so it stays an escape.
+  const objective = "fix the cafe\u0301 rendering bug";
+  const d = renderGoalDashboard(goal({ objective }), 80, 1000);
+  assert.equal(visibleWidth(d.widget[1]!), 80, "the body line spans the full width in cells");
 });

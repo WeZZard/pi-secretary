@@ -13,6 +13,7 @@ import {
   type ExtensionContext,
   type ThemeColor,
 } from "@earendil-works/pi-coding-agent";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { type ThreadGoal, type ThreadGoalStatus } from "./goal/goal-record.ts";
 import { type GoalEngine } from "./goal-engine.ts";
 import { type GoalReceipt } from "./goal/ordering.ts";
@@ -106,10 +107,37 @@ export function elapsedText(goal: ThreadGoal, nowMs: number): string {
 
 const ELLIPSIS = "…";
 
+/** Terminal display-cell width: CJK is 2 cells, combining marks 0, not UTF-16 units. */
+const cellWidth = (text: string): number => visibleWidth(text);
+
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** Grapheme clusters of the text: the only safe unit for truncation and cutting. */
+function graphemes(text: string): string[] {
+  return Array.from(graphemeSegmenter.segment(text), ({ segment }) => segment);
+}
+
+/**
+ * Truncate to at most maxCells display cells at a grapheme boundary, so emoji
+ * surrogate pairs and ZWJ sequences are never split.
+ */
+function truncateToCells(text: string, maxCells: number): string {
+  if (cellWidth(text) <= maxCells) return text;
+  let out = "";
+  let cells = 0;
+  for (const segment of graphemes(text)) {
+    const width = cellWidth(segment);
+    if (cells + width > maxCells) break;
+    out += segment;
+    cells += width;
+  }
+  return out;
+}
+
 function fitSegment(text: string, width: number): string {
-  if (text.length <= width) return text;
+  if (cellWidth(text) <= width) return text;
   if (width <= 1) return ELLIPSIS.slice(0, Math.max(width, 0));
-  return text.slice(0, width - 1) + ELLIPSIS;
+  return truncateToCells(text, width - 1) + ELLIPSIS;
 }
 
 /**
@@ -125,17 +153,23 @@ export function normalizeObjective(text: string): string {
 export const EXPAND_HINT = "… (/goal)";
 
 /**
- * Fit a normalized objective into one line at the given column budget:
+ * Fit a normalized objective into one line at the given display-cell budget:
  * word-boundary truncation with the expansion hint; the hint drops to a bare
  * ellipsis when the width cannot carry it.
  */
 function fitObjectiveLine(text: string, width: number): string {
-  if (text.length <= width) return text;
-  const budget = width - EXPAND_HINT.length;
+  if (cellWidth(text) <= width) return text;
+  const budget = width - cellWidth(EXPAND_HINT);
   if (budget >= 1) {
-    let cut = text.lastIndexOf(" ", budget);
-    if (cut <= 0) cut = budget;
-    return text.slice(0, cut) + EXPAND_HINT;
+    // Cut at a grapheme boundary first, then look for a word boundary among
+    // the graphemes: a UTF-16 space can hide inside a surrogate pair, so the
+    // search must compare whole clusters, not code units.
+    const head = graphemes(truncateToCells(text, budget));
+    let wordEnd = head.length;
+    for (let i = head.length - 1; i >= 0; i--) {
+      if (head[i] === " ") { wordEnd = i; break; }
+    }
+    return head.slice(0, wordEnd).join("") + EXPAND_HINT;
   }
   return fitSegment(text, width);
 }
@@ -150,9 +184,16 @@ function wrapText(text: string, width: number): string[] {
   if (width < 1) return [""];
   const lines: string[] = [];
   let remaining = text;
-  while (remaining.length > width) {
-    let cut = remaining.lastIndexOf(" ", width);
-    if (cut <= 0) cut = width;
+  // Budget in display cells: a line fitted by cell width must never be
+  // re-wrapped by UTF-16 length, and cuts stay on grapheme boundaries.
+  while (cellWidth(remaining) > width) {
+    const head = truncateToCells(remaining, width);
+    const clusters = graphemes(head);
+    // Prefer a word boundary: the last cluster that is exactly a space.
+    let cut = head.length;
+    for (let i = clusters.length - 1; i > 0; i--) {
+      if (clusters[i] === " ") { cut = clusters.slice(0, i).join("").length; break; }
+    }
     lines.push(remaining.slice(0, cut));
     remaining = remaining.slice(cut).trimStart();
   }
@@ -172,16 +213,19 @@ export function renderGoalBox(leading: string, trailing: string, body: string[],
   const trail = trailing ? ` ${trailing} ─` : "";
   // The top rule spans width-2 columns between the corners, shared by lead, fill, and trail.
   const rule = width - 2;
+  const leadCells = cellWidth(lead);
+  const trailCells = cellWidth(trail);
   let top: string;
-  if (lead.length + trail.length > rule) {
+  if (leadCells + trailCells > rule) {
     // Reserve one column per padding space around the fitted segment.
-    const fitted = fitSegment(trail.trim(), Math.max(rule - lead.length - 2, 0)).trim();
+    const fitted = fitSegment(trail.trim(), Math.max(rule - leadCells - 2, 0)).trim();
     const trailPart = fitted ? ` ${fitted} ` : "";
-    top = `╭${lead}${trailPart}${"─".repeat(Math.max(rule - lead.length - trailPart.length, 0))}╮`;
+    top = `╭${lead}${trailPart}${"─".repeat(Math.max(rule - leadCells - cellWidth(trailPart), 0))}╮`;
   } else {
-    top = `╭${lead}${"─".repeat(Math.max(rule - lead.length - trail.length, 0))}${trail}╮`;
+    top = `╭${lead}${"─".repeat(Math.max(rule - leadCells - trailCells, 0))}${trail}╮`;
   }
-  const bodyLines = body.flatMap((line) => wrapText(line, inner - 2)).map((line) => `│ ${line.padEnd(inner - 2)} │`);
+  const bodyLines = body.flatMap((line) => wrapText(line, inner - 2)).map((line) =>
+    `│ ${line}${" ".repeat(Math.max(inner - 2 - cellWidth(line), 0))} │`);
   const bottom = `╰${"─".repeat(rule)}╯`;
   return [top, ...bodyLines, bottom];
 }
