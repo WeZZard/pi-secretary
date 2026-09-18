@@ -318,7 +318,18 @@ export function registerGoalUI(pi: ExtensionAPI, engine: GoalEngine): {
   });
 
   const bind = (ctx: ExtensionContext): void => {
-    if (!disposed) latestUi = ctx.hasUI ? ctx.ui : null;
+    if (disposed) return;
+    latestUi = ctx.hasUI ? ctx.ui : null;
+    // A completed goal stays hidden across process restarts: the dismissal is
+    // a session-scoped fact, not a process-scoped one. A blocked (unfinished)
+    // goal always shows.
+    if (latestUi && hiddenGoal === undefined) {
+      try {
+        const threadId = engine.getThreadId();
+        const goal = threadId ? engine.service.getGoal(threadId) : null;
+        if (goal?.status === "complete") hiddenGoal = { goalId: goal.goalId, status: goal.status };
+      } catch { /* A read failure is handled by the normal unavailable path. */ }
+    }
   };
   const unavailable = (): void => {
     if (!latestUi) return;

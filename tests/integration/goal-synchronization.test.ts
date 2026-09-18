@@ -130,7 +130,12 @@ test("every restored stopped status reaches both UI and agent without resuming",
     if (status === "budget_limited") h.engine.service.accountGoalUsage(h.state.threadId, 1, 10, "active_only");
     else h.engine.service.setGoal(h.state.threadId, { status }, "system");
     await h.start();
-    assert.match(h.state.widget?.[0] ?? "", new RegExp(`Goal: ${status}`));
+    if (status === "complete") {
+      // A completed goal restored into a new process starts hidden.
+      assert.equal(h.state.widget, undefined);
+    } else {
+      assert.match(h.state.widget?.[0] ?? "", new RegExp(`Goal: ${status}`));
+    }
     assert.equal(snapshot(await h.context()), undefined, "a restored non-active status injects no goal message");
     await h.flush(); assert.equal(h.sent.length, status === "budget_limited" ? 1 : 0);
     if (status === "budget_limited") assert.equal(h.sent[0].details.kind, "budget_wrap_up");
@@ -289,6 +294,29 @@ test("the first user message after completion hides the widget until the goal ch
   assert.equal(h.state.widget, undefined, "per-request refreshes do not repaint the hidden widget");
   await h.tool("create_goal", { objective: "New work" });
   assert.match(h.state.widget?.[0] ?? "", /▶ Goal: active/, "a new goal repaints the widget");
+});
+
+test("a completed goal stays hidden when its session resumes in a new process", async (t) => {
+  const h = goalHarness(); t.after(() => h.close()); await h.start();
+  await h.tool("create_goal", { objective: "Resume stays hidden" });
+  h.state.idle = false; await h.emit("turn_start");
+  await h.emit("message_end", { message: assistant("toolUse", 5) });
+  await h.tool("update_goal", { status: "complete" });
+  await h.emit("turn_end", { message: assistant("toolUse", 5) });
+  assert.match(h.state.widget?.[0] ?? "", /⏹ Goal: complete/);
+  await h.emit("input", { source: "interactive", text: "Thanks" });
+  h.sync.refresh();
+  assert.equal(h.state.widget, undefined, "the first message hides the widget");
+  // Simulate quitting and resuming the session in a new process: a fresh
+  // harness against the same thread rebinds without any dismissal memory.
+  const resumed = goalHarness({ threadId: h.state.threadId });
+  t.after(() => resumed.close());
+  resumed.engine.service.createGoal(resumed.state.threadId, "Resume stays hidden");
+  resumed.engine.service.requestTerminalUpdate(resumed.state.threadId, "complete", "agent");
+  await resumed.start();
+  assert.equal(resumed.state.widget, undefined, "a resumed session does not repaint the completed goal");
+  await resumed.tool("create_goal", { objective: "New work" });
+  assert.match(resumed.state.widget?.[0] ?? "", /▶ Goal: active/, "a new unfinished goal shows");
 });
 
 test("renderer and diagnostic failures do not suppress authoritative model context", async (t) => {
