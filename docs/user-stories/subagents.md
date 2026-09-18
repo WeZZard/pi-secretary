@@ -2,7 +2,7 @@
 
 **Document type:** Software requirements specification.
 
-**Status:** Draft for review. No subagent implementation is claimed.
+**Status:** Maintained requirements for the implemented subagent subsystem. These stories state required outcomes; they do not certify release readiness. Executed checks and remaining limits are recorded in the [verification report](../testing/subagent-verification.md).
 
 **Related documents:** [Research](../research/subagent-system-comparison.md), [interaction design](../ux/subagents.md), and [technical design](../arch/subagents.md).
 
@@ -16,11 +16,11 @@ The following constraints were confirmed during design discussion:
 - nicobailon/pi-subagents provides the reference for the TUI.
 - tintinweb/pi-subagents provides an implementation reference for pi integration.
 - Child execution stops when pi exits. Saved conversations may be resumed explicitly later.
-- The `Agent.model` field retains Claude Code's alias enum. Configuration outside the tool schema maps aliases to pi models.
+- The `Agent.model` field uses Claude Code's alias names. Configuration outside the tool schema maps aliases to pi models, and the tool input exposes only configured aliases.
 - The initial scope includes core delegation, custom agent definitions, worktree isolation, output retrieval, and agent inspection.
 - Conversation forks, nested delegation, agent teams, remote execution, scheduling, and workflow orchestration are deferred.
 
-The remaining choices in the linked design documents are proposed defaults. They are not additional user approvals.
+Behavioral details are specified in the linked architecture. A requirement's presence in this document is not evidence that every host integration has been verified; the verification report distinguishes executed checks from remaining gaps.
 
 ## 2. User Stories and Acceptance Criteria
 
@@ -93,7 +93,7 @@ As a user, I want reusable agent definitions with predictable tool and model sel
 
 - Trusted project definitions can override user definitions and packaged definitions.
 - The selected definition's source is visible in inspection.
-- Explicit model aliases resolve through configuration; missing mappings do not select a different model silently.
+- Explicit model aliases resolve through configuration; missing mappings fail instead of selecting a different model silently.
 - Omitting a model override supports inheritance from the parent when the definition supplies no model.
 - Agent definitions cannot bypass the parent's tool or permission restrictions.
 
@@ -118,15 +118,15 @@ As a client using print, JSON, or RPC mode, I want explicit execution and error 
 
 ## 3. Compatibility and Scope
 
-- The proposed baseline is Claude Code 2.1.272, as inspected in the research report.
-- Initial tool names are `Agent`, `SendMessage`, `TaskStop`, and `TaskOutput`.
-- Keeping `TaskOutput` is a proposed compatibility choice even though current Claude documentation deprecates it.
+- The compatibility baseline is Claude Code 2.1.272, as inspected in the research report.
+- The tool names are `Agent`, `SendMessage`, `TaskStop`, and `TaskOutput`.
+- `TaskOutput` is retained even though current Claude documentation deprecates it; this is a deliberate compatibility deviation.
 - Existing pi built-in tools keep their names. This feature does not rename `read` to `Read` or emulate the entire Claude Code environment.
 - The design promises a documented subset of Claude Code behavior, not complete Claude Code compatibility.
 - External terminal panes, invisible model calls for mentions, agent-definition editing wizards, and workflow engines are outside this release.
 
-## 4. Acceptance and Approval
+## 4. Acceptance and Verification
 
-- Requirements are validated through the scenarios linked from the technical design.
-- Passing tests does not establish visual conformance; TUI interaction review is separate.
-- The confirmed constraints in Section 1 are approved inputs. The remaining detailed policies require review before implementation begins.
+- Requirements are validated through the scenarios linked from the technical design and executed by the acceptance suite.
+- Passing tests do not establish visual conformance; TUI interaction review and human approval are separate.
+- The [verification report](../testing/subagent-verification.md) records which checks have run and which remain open.

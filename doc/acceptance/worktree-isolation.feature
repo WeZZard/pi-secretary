@@ -1,8 +1,12 @@
 @subagents @draft @SA-06
-Feature: Isolate repository changes in owned Git worktrees
+Feature: Isolate child workspaces and retain their changes safely
   As a user,
-  I want a child to work in a separate checkout,
+  I want a child to work in an owned separate workspace when isolation is requested,
   so that its changes can be inspected without silently altering my checkout.
+
+  Workspace lifecycle scenarios in this file cover Git worktrees. Directory-snapshot
+  allocation and shared-directory defaults are covered by the real-provider E2E matrix
+  described in docs/testing/subagent-e2e.md.
 
   @ACC-SA-06-01 @confirmed
   Scenario: Launch a child in a separate worktree.
@@ -48,7 +52,7 @@ Feature: Isolate repository changes in owned Git worktrees
       | commits beyond its base commit    |
 
   @ACC-SA-06-05 @proposed
-  Scenario: Remove an unchanged idle worktree after confirmation.
+  Scenario: Remove an unchanged idle Git worktree after confirmation.
     Given an idle agent has an unchanged owned worktree whose branch still points to its base commit.
     When the user requests cleanup and confirms the identified worktree.
     Then the verified worktree is removed.
@@ -57,7 +61,7 @@ Feature: Isolate repository changes in owned Git worktrees
 
   @ACC-SA-06-06 @proposed @concurrency
   Scenario: Reject stale cleanup after an agent resumes.
-    Given the user opened cleanup confirmation for an idle agent.
+    Given the user opened cleanup confirmation for an idle agent with a Git worktree.
     And the agent resumes before confirmation is submitted.
     When the user confirms the earlier cleanup request.
     Then the active agent's worktree is not removed.
@@ -65,7 +69,7 @@ Feature: Isolate repository changes in owned Git worktrees
 
   @ACC-SA-06-07 @proposed @concurrency
   Scenario: Prevent resumption while cleanup is reserved.
-    Given confirmed cleanup has reserved an idle agent's owned worktree.
+    Given confirmed cleanup has reserved an idle agent's owned Git worktree.
     And removal has not yet finished.
     When another caller sends a message that would resume that agent.
     Then resumption is rejected with a cleanup-in-progress explanation.

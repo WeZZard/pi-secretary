@@ -2,7 +2,7 @@
 
 **Document type:** Behavior-driven development (BDD) acceptance specifications.
 
-**Status:** The specifications have executable scenario bindings. Test execution and terminal evidence are recorded in the [implementation report](../../docs/research/subagent-implementation-evidence.md); the specifications alone are not proof of passing behavior.
+**Status:** The specifications have executable scenario bindings. Test execution and terminal evidence are recorded in the [verification report](../../docs/testing/subagent-verification.md); the specifications alone are not proof of passing behavior.
 
 ## 1. Purpose
 
@@ -34,7 +34,7 @@
 | [messaging.feature](messaging.feature) | SA-03. | The scenarios cover guidance, resumption, delivery acknowledgment, and concurrent requests. |
 | [cancellation.feature](cancellation.feature) | SA-04. | The scenarios cover stopping, foreground interruption, wait cancellation, and stale confirmations. |
 | [session-recovery.feature](session-recovery.feature) | SA-05. | The scenarios cover exit, reload, session ownership, restoration, and recovery after failure. |
-| [worktree-isolation.feature](worktree-isolation.feature) | SA-06. | The scenarios cover separate checkouts, retained changes, cleanup, and resumption races. |
+| [worktree-isolation.feature](worktree-isolation.feature) | SA-06. | The scenarios cover worktree allocation, retained changes, cleanup, and resumption races. Shared-directory defaults and non-Git directory snapshots are covered by the E2E matrix rather than this feature file. |
 | [agent-inspection.feature](agent-inspection.feature) | SA-02. | The scenarios cover FleetView, transcript inspection, focus, scrolling, and accessible status presentation. |
 | [ui-state-machine.feature](ui-state-machine.feature) | SA-02 through SA-06. | The scenarios cover modal transitions, stable targets, duplicate submission, uncertain acknowledgment, and stale responses. |
 | [goal-integration.feature](goal-integration.feature) | SA-08. | The scenarios cover attributed usage, current goal authority, completion, and continuation. |
@@ -85,7 +85,7 @@
 ## 7. Automation and Review
 
 - Each scenario identifier is bound by `tests/acceptance/runtime.test.ts`, `configuration-goals.test.ts`, `ui.test.ts`, or `worktrees.test.ts`. The shared runner uses the official Gherkin compiler to expand Examples rows.
-- The [terminal recording procedure](tui-recording.md) supplements UI adapter tests with actual terminal input and output. Human approval remains a separate review.
+- The [terminal recording procedure](tui-recording.md) supplements UI adapter tests with actual terminal input and output. Human approval remains a separate review. Real-provider spawning scenarios are described in the [E2E testing guide](../../docs/testing/subagent-e2e.md) and are not part of this Gherkin suite.
 - Keep generated run output under ignored `test-results/` or in CI artifact storage, as specified in the [test artifact policy](../../docs/testing/test-artifacts.md). This directory contains versioned specifications and instructions, not generated evidence archives.
 - The configuration-precedence fixture uses the real packaged `general-purpose` definition. Its former `reviewer` name incorrectly assumed a packaged agent that the design does not include; the behavioral precedence requirement is unchanged.
 - Automated checks should distinguish schema validation, service integration, real pi host integration, and TUI interaction tests.

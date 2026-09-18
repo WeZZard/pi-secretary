@@ -11,16 +11,21 @@
 | [Technical architecture](arch/architecture.md) | Implementers define how the system satisfies the requirements and interactions. | Include interfaces, data models, component responsibilities, state transitions, synchronization, failure handling, and technical verification contracts. | Do not redefine the user's intended behavior merely because existing code behaves differently. Cite the UX contract instead. |
 | [Implementation plans](../.plans/) | Implementers and reviewers organize delivery against an agreed design. | Include file targets, dependencies, tasks, tests, exit criteria, rollout, and citations to design decisions. | Do not introduce a new product behavior or technical protocol without updating and citing its owning design document. |
 | [Research](research/) | Readers evaluate evidence, comparisons, and unresolved questions. | Include observations, sources, uncertainty, and recommendations. | Do not present an observation about current code as an approved product requirement. |
+| [Testing](testing/README.md) | Maintainers choose verification layers and interpret results. | Include test procedures, environment prerequisites, artifact policies, and dated verification reports. | Do not duplicate acceptance scenario definitions or record per-run output here. |
 
-## Subagent design documents
+## Subagent documents
 
-- The [subagent research report](research/subagent-system-comparison.md) records the source comparison and its verification limits.
-- The [subagent requirements](user-stories/subagents.md) define the confirmed constraints and observable acceptance criteria.
-- The [subagent interaction design](ux/subagents.md) defines FleetView, inspection, messaging, cancellation, and recovery from the user's perspective.
-- The [subagent technical design](arch/subagents.md) defines the tool contracts, runtime, persistence, worktrees, and goal integration.
-- The [subagent BDD acceptance specifications](../doc/acceptance/README.md) describe observable behavior in Gherkin and trace scenarios to the requirements. They distinguish confirmed constraints from proposed policies.
-- The [subagent implementation plan](../.plans/2026-09-17-subagent-support.md) sequences delivery, cites the owning design sections, and assigns acceptance coverage and release gates.
-- These documents describe a draft feature. They do not claim that subagent support is implemented.
+| Document | Current role |
+| --- | --- |
+| [Requirements](user-stories/subagents.md) | They define the required outcomes and confirmed constraints for the implemented subsystem. |
+| [Interaction design](ux/subagents.md) | It defines FleetView, inspection, messaging, cancellation, and recovery from the user's perspective. |
+| [Architecture](arch/subagents.md) | It is the maintained contract for tools, runtime, persistence, workspaces, and goal integration. |
+| [BDD acceptance specifications](../doc/acceptance/README.md) | They describe observable behavior in Gherkin with stable scenario identities and executable bindings. |
+| [Testing guide](testing/README.md) | It selects test commands, prerequisites, and result interpretation. |
+| [E2E procedures](testing/subagent-e2e.md) | They describe the real-provider headless and interactive test environments. |
+| [Verification report](testing/subagent-verification.md) | It records dated executed checks and remaining verification limits. |
+| [Delivery record](../.plans/2026-09-17-subagent-support.md) | It is the historical implementation record. It is not evidence of release approval. |
+| [Upstream research](research/subagent-system-comparison.md) | It records the dated source comparison that informed the design. It does not describe current Secretary behavior. |
 
 ## Generated test artifacts
 

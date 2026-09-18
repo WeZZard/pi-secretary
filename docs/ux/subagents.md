@@ -2,7 +2,7 @@
 
 **Document type:** UX and interaction specification.
 
-**Status:** Interaction specification. Automated execution evidence is recorded in the [implementation report](../research/subagent-implementation-evidence.md); human visual approval remains separate.
+**Status:** Interaction specification for the implemented subagent interface. Automated execution evidence is recorded in the [verification report](../testing/subagent-verification.md); human visual approval remains separate.
 
 **Related documents:** [Requirements](../user-stories/subagents.md), [technical design](../arch/subagents.md), and [research](../research/subagent-system-comparison.md).
 
@@ -16,7 +16,7 @@
 - A completed execution is different from a completed user objective.
 - The UI and tool responses report the same underlying state.
 
-The single-widget default and the command names below are proposed Secretary choices. They do not claim to reproduce every upstream control or external terminal integration.
+The single-widget default and the command names below are deliberate Secretary choices. They do not claim to reproduce every upstream control or external terminal integration.
 
 ## 2. Information Architecture
 
@@ -26,7 +26,7 @@ The single-widget default and the command names below are proposed Secretary cho
 - A foreground call streams bounded recent activity until it settles.
 - Interrupting a foreground `Agent` call requests cancellation of that child. The child's output remains inspectable if the foreground response is interrupted. Cancelling a `TaskOutput` wait stops only the wait.
 - A background call reports the launch identifier and directs the user to FleetView for current activity.
-- A completed background execution creates a separate completion entry. It does not rewrite the historical launch result.
+- A completed background execution creates a separate completion entry. It does not rewrite the historical launch result. A failed or interrupted completion produces a visible notice in the owning session.
 - The configured pi tool-expansion key reveals task details, result text, and artifact paths.
 - A truncated result identifies where the full output can be read.
 
@@ -170,7 +170,6 @@ sequenceDiagram
 ## 6. Notifications and Non-TUI Behavior
 
 - Successful completion updates inline history and FleetView without an extra success toast.
-- Failure and interrupted execution produce visible notices in the owning session.
 - Completion never steals keyboard focus from the editor or an open composer.
 - A state-only display refresh does not start a model turn.
 - The parent model can receive a completion message independently of whether a toast is shown.

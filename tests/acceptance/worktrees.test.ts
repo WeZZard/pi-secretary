@@ -175,5 +175,5 @@ const bindings: ScenarioBindings = {
 };
 
 runFeatures(["worktree-isolation"], bindings, {
-  "worktree-isolation": "0b88d1aa180d13d08b7e6b59efca903cd4cc0cba38e589bb275be466aa1ff101",
+  "worktree-isolation": "cdbc6f2b33e393533d949f913536e83685f2b902da77e7482ef369371f5a88b6",
 });

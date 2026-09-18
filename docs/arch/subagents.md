@@ -1,10 +1,10 @@
-# Subagent Support: Software Design
+# Subagent Architecture and Runtime Contracts
 
 **Document type:** Software design specification.
 
-**Status:** Design specification. This document defines intended behavior; observed implementation and remaining verification gaps are recorded separately in the [implementation evidence](../research/subagent-implementation-evidence.md).
+**Status:** Maintained architectural contract for the implemented subagent subsystem. Verification results and known gaps are recorded separately in the [verification report](../testing/subagent-verification.md). Normative requirements in this document are not evidence that every host integration has been verified.
 
-**Design baseline:** Claude Code 2.1.272 provides the input-schema reference. The research report pins both pi-subagents repositories. The Secretary checkout inspected for this design is `dfd4580`.
+**Implementation baseline:** `01f851a`, tested with Pi 0.85.1. Claude Code 2.1.272 supplies the tool-contract reference; the [historical research](../research/subagent-system-comparison.md) records the original source revisions.
 
 **Related documents:** [Requirements](../user-stories/subagents.md), [interaction design](../ux/subagents.md), [research](../research/subagent-system-comparison.md), [goal architecture](architecture.md), and [documentation responsibilities](../README.md).
 
@@ -16,11 +16,11 @@
 - Nicobailon's implementation defines the TUI reference.
 - Tintinweb's implementation is a reference for pi SDK integration, not a dependency or API authority.
 - Child execution stops when the parent pi process exits. Conversation persistence supports explicit resumption, not continued execution after exit.
-- `Agent.model` retains the Claude alias enum. Model mappings belong in configuration outside the invocation schema.
+- `Agent.model` uses Claude alias names, but the advertised enum includes only configured mappings. With no mappings, the invocation schema omits `model`. Exact provider identifiers belong in agent definitions or alias configuration.
 - The initial scope includes delegation, foreground/background execution, messaging, cancellation, output retrieval, custom agent definitions, worktrees, and inspection.
 - Conversation forks, nested delegation, agent teams, remote execution, scheduling, and workflow orchestration are excluded.
 
-### 1.2 Proposed defaults requiring design review
+### 1.2 Implemented defaults
 
 - The compatibility baseline is Claude Code 2.1.272 with fork mode, agent teams, and cross-session messaging disabled.
 - Four tools are registered: `Agent`, `SendMessage`, `TaskStop`, and `TaskOutput`.
@@ -35,7 +35,7 @@
 
 The implementation follows Claude's canonical names, core field shapes, and the selected feature profile. It does not emulate the entire Claude environment.
 
-- `model` accepts only `sonnet`, `opus`, `haiku`, and `fable`. It does not accept arbitrary provider identifiers in tool input.
+- The possible model aliases are `sonnet`, `opus`, `haiku`, and `fable`. Tool input exposes only the configured subset and never accepts arbitrary provider identifiers.
 - The default is the parent's working directory, independently of foreground or background execution. No Git initialization or commit is required for ordinary spawning.
 - The optional invocation `isolation` accepts `none` or `worktree`. Omission uses the agent definition's setting, then defaults to `none`. An explicit `none` overrides an isolated definition. It is an explicit pi compatibility addition that gives model callers an unambiguous opt-out; it is not advertised as a Claude Code enum value.
 - Unsupported `remote` isolation is not advertised. A legacy or invalid request for it still fails rather than silently changing execution mode.
@@ -56,7 +56,9 @@ flowchart TB
     Service --> Registry[Agent definition registry]
     Service --> Scheduler[Execution queue]
     Scheduler --> Runner[pi session runner]
-    Service --> Worktrees[Worktree manager]
+    Service --> Workspaces[Workspace manager]
+    Workspaces --> Worktrees[Git worktrees]
+    Workspaces --> Snapshots[Directory snapshots]
     Service --> Store[(SQLite agent records)]
     Runner --> Sessions[pi session JSONL files]
     Runner --> Events[Execution and usage events]
@@ -77,7 +79,7 @@ flowchart TB
 | The agent registry | It discovers definitions, resolves precedence, validates configuration, and records provenance. |
 | The execution queue | It admits work under concurrency and shutdown constraints. |
 | The pi session runner | It creates sessions, executes prompts, collects events, applies cancellation, and disposes resources. |
-| The worktree manager | It creates and verifies owned worktrees and performs conservative cleanup. |
+| The workspace manager | It selects Git worktrees or directory snapshots, verifies ownership, and performs conservative cleanup. |
 | The repository layer | It stores agent, run, message, usage, and delivery records with schema migrations. |
 | The completion delivery component | It reconciles pending results with the correct parent session without treating uncertain delivery as success. |
 | The goal integration component | It attributes usage and validates whether further goal-related work remains authorized. |
@@ -85,7 +87,7 @@ flowchart TB
 
 ### 2.2 Module organization
 
-The following paths are proposed additions, not existing files:
+The implementation is organized as follows. Queue admission and completion delivery are coordinated by `service.ts`; tool registration and goal integration are composed by `installation.ts`.
 
 ```text
 extensions/secretary/agents/
@@ -93,18 +95,19 @@ extensions/secretary/agents/
   records.ts
   registry.ts
   configuration.ts
-  scheduler.ts
+  installation.ts
+  presentation.ts
   runner.ts
   child-context.ts
+  workspaces.ts
   worktrees.ts
-  delivery.ts
-  goal-integration.ts
+  transcript-format.ts
   storage/
     agent-repository.ts
     migrations.ts
+    parent-lock.ts
   tools/
     schemas.ts
-    handlers.ts
     rendering.ts
   ui/
     fleet-view.ts
@@ -138,7 +141,7 @@ The existing extension entry point composes these modules alongside goal managem
 
 ### 4.1 `Agent`
 
-The schema preserves the selected baseline's field names and value domains:
+The following type shows the supported input superset. `createAgentSchema()` narrows the advertised `model` field to configured aliases, or removes that field when none are configured:
 
 ```ts
 interface AgentInput {
@@ -161,7 +164,7 @@ interface AgentInput {
 - Type matching is exact. The implementation does not silently convert an unknown specialist into a general-purpose agent.
 - An explicit isolation field takes precedence over the definition's isolation. If neither specifies isolation, execution uses the parent's working directory. Requested worktree isolation is never silently downgraded.
 - The `manual` permission-mode compatibility spelling is normalized to `default` before validation, but the field remains ignored.
-- The model enum does not have a schema default. Resolution is defined in Section 5.
+- The model enum has no schema default. Only configured aliases are advertised; definition selection and inheritance follow Section 5.
 - The boolean background field does not acquire a schema default. A definition with `background: true` requires background execution even if the caller supplies false, following the researched Claude behavior. Otherwise the explicit invocation value wins, followed by the host-mode default in Section 1.2. A definition with `background: false` does not force foreground execution. Host restrictions are checked after resolution and reject unsupported background execution.
 - Launch validates configuration, ownership, capacity, trust, and model availability before allocating a worktree or contacting a provider.
 
@@ -227,20 +230,7 @@ interface TaskOutputInput {
 
 ### 4.5 Result and error handling
 
-These are internal result fields, not a claim about Claude's exact output schema:
-
-```ts
-interface AgentOperationResult {
-  agentId: string;
-  runId: string;
-  status: RunStatus;
-  outputPath?: string;
-  sessionPath?: string;
-  resolvedModel?: string;
-  partial: boolean;
-  message: string;
-}
-```
+Successful launch and output handlers return bounded text plus the captured `AgentRun` as structured `details`. `presentation.ts` adds model and workspace information from `AgentRecord` to the text. These are Secretary contracts, not Claude output-schema compatibility claims. Errors propagated through Pi may have empty `details`, so callers must not require structured success fields on an error result.
 
 - Input errors and rejected operations throw through pi's supported error path so `isError` is set correctly.
 - Accepted asynchronous work can later fail. Its launch result remains an accepted launch; its final failure is persisted and delivered separately.
@@ -271,7 +261,7 @@ Discovery order, from highest to lowest precedence, is:
 
 ### 5.2 Packaged definitions
 
-- `general-purpose` receives the parent's authorized tool set after removing delegation, workflow, goal mutation, and interactive-only tools that cannot be safely routed.
+- `general-purpose` receives the parent's authorized tool names after the runner removes its prohibited delegation, workflow, and goal-control tools. The runner rechecks permissions at execution boundaries. It does not infer whether an arbitrary third-party tool requires a UI; those tools must honor the headless contract in Section 8.3.
 - `Explore` and `Plan` initially use `read`, `grep`, `find`, and `ls`. They do not receive unrestricted shell access under a read-only label.
 - Packaged `Explore` and `Plan` are one-shot and cannot be resumed, following the current documented Claude behavior. Their retained identifiers support inspection and output retrieval only.
 - A project override is a custom definition with its own recorded capabilities; it is not silently treated as the packaged read-only implementation.
@@ -306,12 +296,12 @@ Resolution order is:
 | --- | --- |
 | `AgentRecord` | It stores `agentId`, parent session identity, optional name, definition snapshot, model, tool policy, session path, resumability, and optional worktree ID. |
 | `AgentRun` | It stores `runId`, `agentId`, status, launch origin, timestamps, output paths, partial-result metadata, and error or cancellation reason. |
-| `AgentMessage` | It stores an accepted guidance ID, target run, order, text, and delivery state. States distinguish pending, transport-accepted, consumed when provable, undelivered, and uncertain. |
-| `AgentUsageEvent` | It stores a unique source event ID, run identity, normalized usage, and optional originating goal identity. |
-| `CompletionDelivery` | It stores run identity, destination parent, delivery ID, and pending/submitted/observed/uncertain state. |
-| `WorktreeRecord` | It stores repository identity, path, branch, base commit, owner, and cleanup state. |
+| `GuidanceRecord` | It stores an accepted guidance ID, target run, order, text, and delivery state. States distinguish pending, transport-accepted, consumed when provable, undelivered, and uncertain. |
+| `UsageRecord` | It stores a unique source event ID, run identity, normalized usage, and optional originating goal identity. |
+| `CompletionRecord` | It stores run identity, destination parent, delivery ID, and pending/submitted/observed/uncertain state. |
+| `WorkspaceRecord` | It distinguishes a Git `WorktreeRecord` from a `DirectorySnapshotRecord`. Both retain source, path, identity, and cleanup state; only Git worktrees have a branch and base commit. |
 
-An agent ID names a conversation. A run ID names one execution. A source tool-call ID deduplicates a launch; it is not reused as either identity.
+An agent ID names a conversation. A run ID names one execution. A source tool-call ID deduplicates a launch; it is not reused as either identity. The historical `AgentRecord.worktree` and `requestedWorktree` keys now hold discriminated workspace records and plans; their names do not imply Git isolation.
 
 ### 6.2 Storage ownership
 
@@ -400,7 +390,7 @@ The status vocabulary is internal. A new run is created for resumption; terminal
 - It cancels queued runs, requests cancellation of active runs, waits for observable settlement, flushes records, runs extension cleanup, and disposes sessions.
 - SDK resources are constructed under an async-context-local child marker so Secretary does not initialize another root controller inside a child.
 - Cleanup is idempotent and applies to partially initialized sessions as well as completed ones.
-- A proposed five-second cleanup deadline prevents an extension cleanup handler from hanging shutdown indefinitely. This is a policy limit, not proof that every tool has stopped.
+- The runner bounds extension shutdown handlers to five seconds after active execution settles. Separately, `shutdownTimeoutMs` controls how long service shutdown waits before reporting that settlement remains incomplete. Neither timeout proves that an external tool has stopped.
 - If a tool remains active, the record remains cancelling or is reported as interrupted when the process exits. Its worktree is retained, and the agent cannot be resumed concurrently.
 - Reload or session replacement must not abandon a live in-process runner and then create a second runner for the same agent. If safe teardown cannot be established, the adapter refuses the replacement when the host permits it and reports that restarting pi is required.
 - Arbitrary extension tools can spawn detached external jobs. Stopping an SDK session cannot guarantee termination of every external side effect. Only child sessions and managed tool processes are within this cancellation guarantee.
@@ -464,7 +454,14 @@ sequenceDiagram
 - The normal extension error listener remains active. Headless operation does not justify swallowing unrelated initialization or execution errors.
 - Real-SDK regression tests cover startup, resumption, concurrent sessions, cancellation, idempotent shutdown, and dialog cancellation defaults. The real-provider interactive E2E test additionally verifies that the parent remains a TUI while the child completes with installed widget extensions. See the [E2E testing instructions](../testing/subagent-e2e.md).
 
-### 8.4 Tool-name collisions
+### 8.4 Parent authentication delegation
+
+- Each child creates a model runtime with an empty in-memory credential store and delegates authentication through the parent's public model registry. It does not load a second copy of the user's credential files.
+- `createAgentSession()` flushes provider registrations queued by loaded extensions. The runner reinstalls its stable parent-authentication adapter after that construction step and refreshes the selected provider without network discovery before invoking startup handlers.
+- The runner checks adapter identity after startup and before subsequent model or tool actions. A later provider replacement fails explicitly rather than silently changing authentication.
+- This ordering is verified against Pi 0.85.1. The regression tests include constructor-time, startup-time, and later provider registration, as well as resumed sessions.
+
+### 8.5 Tool-name collisions
 
 - Secretary does not silently override another extension's `Agent`, `SendMessage`, `TaskStop`, or `TaskOutput` tool.
 - A collision disables Secretary's delegation execution for the session and reports which extension must be disabled or reconfigured.
@@ -502,7 +499,7 @@ Using `HEAD` for committed Git repositories remains a deliberate difference from
 - The command never removes a branch or directory merely because its name has a familiar prefix.
 - No automatic merge, cherry-pick, force-delete, or dirty-worktree recovery is included.
 
-Retaining even clean worktrees until explicit cleanup differs from upstream automatic cleanup policies. It is proposed to make resumption predictable and avoid accidental loss of an agent's working directory.
+Retaining even unchanged isolated workspaces until explicit cleanup differs from upstream automatic cleanup policies. This implemented policy makes resumption predictable and avoids automatic removal of an agent's working directory.
 
 ## 10. Completion Delivery and Model Context
 
@@ -820,10 +817,10 @@ transition(state, event, serviceSnapshot): {
 | SA-03 | Race tests cover ordered messaging, completion during send, concurrent resumption, and policy revalidation. |
 | SA-04 | Startup cancellation, queue cancellation, foreground handler abort, abort-versus-settlement races, repeated stop, stale confirmation, and noncooperative tool tests cover stopping. |
 | SA-05 | Crash recovery, ownership locking, reload, session replacement, missing files, and no-auto-resume tests cover persistence. |
-| SA-06 | Real temporary Git repositories cover base capture, dirty parent exclusion, changed-worktree retention, cleanup-versus-resume races, interrupted cleanup, and conservative removal. |
+| SA-06 | Disposable Git and non-Git projects cover shared-directory defaults, captured-HEAD worktrees, unborn and non-Git snapshots, copy bounds, ownership checks, retained changes, and conservative cleanup. |
 | SA-07 | Registry precedence, project trust, alias mapping, missing mappings, and late tool registration tests cover configuration. |
 | SA-08 | Atomic usage application, event replay, goal replacement, stopped goals, and continuation waiting tests cover goal integration. |
-| SA-09 | Real pi SDK tests with a deterministic provider cover print, JSON, RPC, rejected headless resumption, background definitions in headless mode, and no-UI error paths. |
+| SA-09 | SDK and adapter tests cover host-mode restrictions and child UI lifecycles. Real-provider CLI tests separately exercise print-mode spawning and interactive-parent spawning with widget extensions. These do not establish every RPC client or extension combination. |
 
 Additional release conditions are:
 
@@ -834,18 +831,12 @@ Additional release conditions are:
 - Markdown links, Mermaid diagrams, type checking, unit tests, host integration tests, and TUI interaction tests pass.
 - A recorded UI walkthrough verifies the required interactions. Recording completeness, observed execution, and human review are reported separately.
 
-## 15. Review Items and Implementation Prerequisites
+## 15. Known Limitations and Release Review
 
-The following details are proposed rather than confirmed by the user:
-
-- The first release keeps `TaskOutput` despite upstream deprecation.
-- Claude Code 2.1.272 is selected as the compatibility baseline.
-- Packaged `Explore` and `Plan` remain one-shot, while custom agents and `general-purpose` can resume.
-- Requested isolation uses captured `HEAD` when available and an explicitly reported directory snapshot for absent Git or an unborn branch. Owned workspaces remain until explicit cleanup, and the original project is never auto-committed.
-- Print and JSON mode reject explicit background execution instead of silently accepting work that will stop at exit.
-- Concurrency, queue, and cleanup timeout values are initial policy defaults.
-- Transcript retention is explicit and indefinite until a future retention feature is designed.
-
-Before implementation, a focused SDK feasibility check must verify public model-runtime inheritance, permission preservation, child teardown, delivery observation, and editor composition on supported pi versions. If the existing SDK cannot provide a required guarantee, the implementation plan must identify the limitation and revise the design instead of introducing an undocumented internal dependency.
-
-This design does not require a workflow engine, a detached supervisor, a new permission system, or changes to the three public goal tools. It does require changes to internal goal accounting and continuation integration, with the existing goal-state ordering rules preserved.
+- Human visual approval, real IME composition, screen-reader behavior, and additional terminal emulators remain separate from automated terminal tests.
+- Rediscovered trusted extension hooks are preserved. Arbitrary parent-only inline tools or permission hooks are not generically transferable to a child, so complete custom-host policy parity is not claimed.
+- Native headless UI behavior does not guarantee that every third-party extension supports headless execution or concurrent SDK sessions.
+- Retention is explicit. There is no automatic transcript purge, complete historical-record deletion interface, force cleanup, or automatic merge operation.
+- Noncooperative tools, detached external jobs, uncertain locks, and partial allocation or cleanup can require manual recovery. A timeout does not establish that side effects have stopped.
+- The supported SDK baseline is Pi 0.85.1. The current tests do not establish a broader version matrix or full Claude Code compatibility.
+- The [verification report](../testing/subagent-verification.md) records executed checks and their limits. The [delivery record](../../.plans/2026-09-17-subagent-support.md) separates implemented work from remaining release review; neither is a declaration of human approval or package publication.
