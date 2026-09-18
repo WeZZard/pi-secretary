@@ -4,12 +4,17 @@ import { homedir } from "node:os";
 import type { CleanPiEnvironment } from "./isolation.ts";
 
 /** Read the real provider installation/configuration; never install packages or modify global files. */
-export function useGlobalLiteLLM(environment: CleanPiEnvironment, source = process.env.PI_E2E_GLOBAL_AGENT_DIR ?? process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent")) {
+export function useGlobalLiteLLM(environment: CleanPiEnvironment, source = process.env.PI_E2E_GLOBAL_AGENT_DIR ?? process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), options: { model?: string } = {}) {
   const read = (name: string): Record<string, any> => JSON.parse(readFileSync(join(source, name), "utf8"));
   const settings = read("settings.json");
   const provider = settings.defaultProvider;
-  const model = settings.defaultModel;
-  if (typeof provider !== "string" || typeof model !== "string" || !provider.startsWith("litellm")) throw new Error("The selected global model must belong to the installed LiteLLM provider; refusing to choose a substitute.");
+  if (typeof provider !== "string" || !provider.startsWith("litellm")) throw new Error("The selected global model must belong to the installed LiteLLM provider; refusing to choose a substitute.");
+  const catalog = read("models-store.json");
+  const model = options.model ?? settings.defaultModel;
+  if (typeof model !== "string") throw new Error("The global provider must declare a default model; refusing to choose a substitute.");
+  if (options.model !== undefined && !catalog[provider]?.models?.some((item: any) => item.id === options.model)) {
+    throw new Error(`The requested model ${options.model} is not in the saved provider catalog; refusing to substitute.`);
+  }
   const packageRoot = join(source, "npm", "node_modules", "pi-provider-litellm");
   const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
   const entries = manifest.pi?.extensions;
@@ -19,7 +24,6 @@ export function useGlobalLiteLLM(environment: CleanPiEnvironment, source = proce
   const credentials = read("auth.json");
   const credential = credentials[provider];
   if (!credential) throw new Error(`No saved credential for global provider ${provider}; refusing to substitute test credentials`);
-  const catalog = read("models-store.json");
   const selected = catalog[provider]?.models?.find((item: any) => item.id === model);
   if (!selected) throw new Error("The global default model is not in the saved provider catalog; refresh the global provider before reproducing");
   if (selected.api === "anthropic-messages") throw new Error("This live test does not issue Anthropic requests; use the required Claude Code client for that provider path");
@@ -42,6 +46,7 @@ export function useGlobalLiteLLM(environment: CleanPiEnvironment, source = proce
   for (const key of ["defaultProvider", "defaultModel", "defaultThinkingLevel", "enabledModels", "retry", "compaction", "httpIdleTimeoutMs"]) {
     if (settings[key] !== undefined) isolated[key] = settings[key];
   }
+  if (options.model !== undefined) isolated.defaultModel = options.model;
   isolated.extensions = [environment.extension, entry];
   isolated.packages = [];
   environment.extensions.splice(0, environment.extensions.length, ...isolated.extensions);

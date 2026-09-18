@@ -21,7 +21,7 @@ test(`subagent-spawn: ${repositoryState} project, ${isolated ? "requested isolat
     extensionUnderTest: join(repository, "extensions/secretary/index.ts"),
     projectFixture: join(fixtures, "project"), repositoryState });
   t.after(() => environment.dispose());
-  const profile = useGlobalLiteLLM(environment);
+  const profile = useGlobalLiteLLM(environment, undefined, { model: "kimi-k3-256k" });
   const widgets = useInstalledWidgetExtensions(environment, profile.globalAgentDir);
   const expected = readFileSync(join(fixtures, "project/fixture.txt"), "utf8").trim();
   const prompt = readFileSync(join(fixtures, isolated ? "spawn-isolated-prompt.txt" : "spawn-prompt.txt"), "utf8").trim();

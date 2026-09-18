@@ -18,7 +18,7 @@ test("interactive Pi parent spawns an isolated child with real provider and widg
   const environment = createCleanPiEnvironment({ name: "subagent-spawn-tui", repositoryState: "committed",
     extensionUnderTest: join(repository, "extensions/secretary/index.ts"), projectFixture: join(fixtures, "project") });
   t.after(() => environment.dispose());
-  const profile = useGlobalLiteLLM(environment);
+  const profile = useGlobalLiteLLM(environment, undefined, { model: "kimi-k3-256k" });
   // Observe the child's UI contract before widget startup can fail. Do not change that contract.
   const observerEntry = join(repository, "tests/e2e/environment/ui-observer.ts");
   const settingsPath = join(environment.agentDir, "settings.json");

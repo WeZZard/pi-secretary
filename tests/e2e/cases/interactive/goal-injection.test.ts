@@ -26,7 +26,7 @@ test("goal-free conversation receives no goal injection (interactive)", { timeou
     extensionUnderTest: join(repository, "extensions/secretary/index.ts"),
     projectFixture: fixtures, repositoryState: "none" });
   t.after(() => environment.dispose());
-  const profile = useGlobalLiteLLM(environment);
+  const profile = useGlobalLiteLLM(environment, undefined, { model: "kimi-k3-256k" });
   const settings = JSON.parse(readFileSync(join(environment.agentDir, "settings.json"), "utf8"));
   settings.extensions.push(observerEntry, recorderEntry);
   environment.extensions.push(observerEntry, recorderEntry);
