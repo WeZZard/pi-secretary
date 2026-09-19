@@ -19,9 +19,24 @@ export interface AgentUiOptions {
   keybindings?: InspectorKeybindingsConfig;
 }
 export function registerAgentUI(pi: ExtensionAPI, port: AgentUIPort, resolveOptions: AgentUiOptions | (() => AgentUiOptions) = {}): { bind(ctx: ExtensionContext): void; dispose(): void } {
-  const options = () => typeof resolveOptions === "function" ? resolveOptions() : resolveOptions;
-  let state = initialState();
   let ctx: ExtensionContext | undefined;
+  let optionsFault: string | undefined;
+  // A paint or poll tick is a total operation (§12.6.3, goal architecture §13.6): option
+  // resolution may perform configuration file I/O and strict validation, so a failure
+  // degrades to the documented defaults and notifies once per distinct fault. It must
+  // never throw out of the host's render path; a display refresh never terminates pi.
+  const options = (): AgentUiOptions => {
+    let resolved: AgentUiOptions;
+    try { resolved = typeof resolveOptions === "function" ? resolveOptions() : resolveOptions; }
+    catch (error) {
+      const message = `Agents UI configuration unavailable; using defaults: ${error instanceof Error ? error.message : String(error)}`;
+      if (message !== optionsFault) { optionsFault = message; if (ctx?.hasUI) ctx.ui.notify(message, "error"); }
+      return {};
+    }
+    optionsFault = undefined;
+    return resolved;
+  };
+  let state = initialState();
   let unsubscribe: (() => void) | undefined, terminal: (() => void) | undefined;
   let requestRender: (() => void) | undefined, close: (() => void) | undefined;
   let customOpen = false, promptDepth = 0, transcriptDirty = false;

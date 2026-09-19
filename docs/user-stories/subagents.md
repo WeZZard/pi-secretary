@@ -45,6 +45,7 @@ As a user, I want to see which agents are queued, starting, running, stopping, o
 - A historical launch result does not falsely report that background execution has completed.
 - Failures, partial results, and cancellation remain distinguishable from successful completion.
 - The inspector remains open if the selected agent finishes.
+- A display-surface fault never ends my session. If the agents UI configuration cannot be applied, the surfaces keep rendering with their documented defaults, I am told that the configuration was not applied, and the configured presentation returns when the configuration is readable again.
 
 ### SA-03: Guide and resume an agent
 

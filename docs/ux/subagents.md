@@ -366,6 +366,7 @@ sequenceDiagram
 - Print and JSON mode reject a request to resume an idle agent through `SendMessage`, because that operation starts background execution. The response directs the caller to use a persistent TUI or RPC session; it does not accept work that normal process completion would terminate.
 - Cleanup requiring confirmation is unavailable in headless mode. Model-facing `TaskStop` remains an explicit stop request and does not require a dialog.
 - In print, JSON, and non-persistent modes, `/secretary` returns text that states the user-global configuration file path and summarizes the configured fallback lists. It does not open a terminal component or accept edits.
+- If the agents UI configuration cannot be read or contains fields or values this build does not support — for example a key written into the shared user-global file by a different Secretary version — FleetView and the async widget keep rendering with their documented defaults, and an error notification states that the configuration was not applied. The notification appears once per distinct problem and appears again only after the problem has cleared and recurred. When the configuration becomes valid, the configured placement, widget visibility, and inspector keys take effect on the next display refresh.
 
 ## 7. Review Criteria
 

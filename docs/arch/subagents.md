@@ -858,7 +858,7 @@ Usage labels follow the [interaction design](../ux/subagents.md#22-fleetview):
 
 The async widget maintains a bounded polling timer and a render key. The timer is unreferenced so it cannot keep the process alive, is disposed on deactivation, and a repaint is skipped when the render key is unchanged and no row is running.
 
-View models are served from the in-memory projection defined in §6.2. A paint or poll tick is a non-blocking, total operation: it performs no storage I/O and therefore cannot observe `SQLITE_BUSY` from the shared store, and it must not throw out of the host's render path (goal architecture §13.6). Storage reads belong to commit and recovery boundaries, where a failure is a genuine mutation failure that propagates to the caller rather than reaching the TUI.
+View models are served from the in-memory projection defined in §6.2. A paint or poll tick is a non-blocking, total operation: it performs no shared-store I/O and therefore cannot observe `SQLITE_BUSY`, and it must not throw out of the host's render path (goal architecture §13.6). Resolving the Section 12.6.5 UI options is part of this path, so that resolution is guarded against configuration failure as defined there. Storage reads belong to commit and recovery boundaries, where a failure is a genuine mutation failure that propagates to the caller rather than reaching the TUI.
 
 #### 12.6.4 Inspector presentation components
 
@@ -884,6 +884,8 @@ The `agents` configuration object gains an optional `ui` object with validated k
 | `agents.ui.fleetKeybindings` | Inspector-level action-to-key-list overrides | Upstream defaults |
 
 The inspector-level actions are `close`, `scrollUp`, `scrollDown`, `selectUp`, `selectDown`, `selectFirst`, `selectLast`, `pageUp`, `pageDown`, `refresh`, `steer`, `stop`, and `toggleTools`, matching the upstream action set minus the plugin and prompt-audit actions. Prompt interactions such as composer Enter and Escape keep fixed keys. Configuration follows the existing global and trusted-project precedence of Section 5.3; project configuration overrides global values, and the editor-activation keys are not configurable in this release.
+
+The `agents.ui` values are consumed on the display path: the widgets re-resolve them whenever a paint or poll refresh runs, so resolution failure handling is part of the display contract of Section 12.6.3. A configuration that fails validation — including a key written into the shared user-global file by a different Secretary build — degrades the surfaces to the documented defaults of this section and produces one diagnostic notification per distinct fault; the notification state re-arms after a successful resolution, so a fault that clears and recurs is reported again. Validation failure stays decisive at the file-loading and menu-write boundaries; on the paint and poll path it is never a process-fatal condition (goal architecture §13.6).
 
 The `/secretary` configuration menu edits the user-global `secretary.json`. Each menu mutation validates the resulting `agents` object against the same rules as file loading, including unknown-key rejection, before writing it; a failed validation or write leaves the previous configuration in effect. Project-level overrides are not edited through the menu in this release. Menu navigation and editing keys are fixed and are specified in the [interaction design's navigation table](../ux/subagents.md#4-navigation-and-accessibility).
 
