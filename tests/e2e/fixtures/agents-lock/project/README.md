@@ -1,0 +1,1 @@
+This project exists so the agents-widget storage-lock e2e reproducer has a real working directory and a launchable agent definition. It carries no goal; the reproducer launches `spawn-check` once in the foreground and then holds a write lock on the shared goals database while the async-agents widget re-renders.
