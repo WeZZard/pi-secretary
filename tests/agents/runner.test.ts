@@ -128,6 +128,49 @@ test("runner reports every attempted candidate when the whole chain fails", asyn
   assert.deepEqual(skipped, ["child-test/child", "child-test/secondary"]);
 });
 
+test("runner advances to the next fallback candidate on a first-request 401 credential rejection", async (t) => {
+  const f = await fixture(t, [{ error: 'OpenAI API error (401): {"error":{"message":"Incorrect API key provided","code":"invalid_api_key"}}' }, "recovered"]);
+  f.agent.modelCandidates = ["child-test/secondary"];
+  const child = await f.start();
+  assert.deepEqual(await child.result, { status: "succeeded", output: "recovered" });
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.calls[1]!.modelId, "secondary");
+});
+
+test("runner fallback survives extensions that write session state on session_start", async (t) => {
+  const f = await fixture(t, [{ error: 'OpenAI API error (429): {"code":"model_cooldown","reset_seconds":60} usage_limit_reached' }, "recovered"]);
+  f.agent.modelCandidates = ["child-test/secondary"];
+  // Mirrors pi-recap's session_start persistence: pi.appendEntry asserts on the loader's
+  // shared extension runtime, which a previous attempt's dispose invalidates when the
+  // runner reuses one DefaultResourceLoader across candidates (2026-09-19 incident).
+  await mkdir(join(f.root, ".pi", "extensions"), { recursive: true });
+  await writeFile(join(f.root, ".pi", "extensions", "persist-probe.js"), `
+    export default function(pi) {
+      pi.on("session_start", async () => {
+        pi.appendEntry("persist-probe", {});
+      });
+    }
+  `);
+  const child = await f.start();
+  assert.deepEqual(await child.result, { status: "succeeded", output: "recovered" },
+    "The second candidate must not inherit an invalidated extension runtime");
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.calls[1]!.modelId, "secondary");
+});
+
+test("runner reports the attempted candidates when a later candidate's setup aborts the chain", async (t) => {
+  const f = await fixture(t, [{ error: "429 quota exhausted" }]);
+  // child-test/ghost is not registered, so its setup fails after the first candidate's
+  // availability failure; the run error must keep the first candidate's context.
+  f.agent.modelCandidates = ["child-test/ghost"];
+  const child = await f.start();
+  const outcome = await child.result;
+  assert.equal(outcome.status, "failed");
+  assert.match(outcome.error!, /child-test\/child[\s\S]*429/, "The first candidate's availability failure stays in the report");
+  assert.match(outcome.error!, /child-test\/ghost/, "The candidate whose setup failed is identified");
+  assert.equal(f.calls.length, 1);
+});
+
 async function installUIProbe(f: Awaited<ReturnType<typeof fixture>>) {
   await mkdir(join(f.root, ".pi", "extensions"), { recursive: true });
   const log = join(f.root, "ui-lifecycle.jsonl");

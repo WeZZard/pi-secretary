@@ -129,6 +129,14 @@ export async function resolveAgentModel(
       skipped.push({ id, reason: "outside parent scoped models" });
       continue;
     }
+    // getApiKeyAndHeaders reports ok for a builtin provider that has no credentials at all
+    // (the pi compatibility path returns empty headers), so gate on the credential store
+    // first: a provider that declares auth but has none configured cannot run the candidate.
+    const provider = ctx.modelRegistry.getProvider(model.provider);
+    if (provider?.auth && (provider.auth.apiKey || provider.auth.oauth) && !ctx.modelRegistry.hasConfiguredAuth(model)) {
+      skipped.push({ id, reason: `authentication unavailable: no credentials configured for provider ${model.provider}` });
+      continue;
+    }
     const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
     if (!auth.ok) { skipped.push({ id, reason: `authentication unavailable: ${auth.error}` }); continue; }
     return { model, id, chain, skipped };

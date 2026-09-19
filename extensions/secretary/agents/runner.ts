@@ -67,22 +67,24 @@ export async function createChildRunner(options: {
     };
     signal.addEventListener("abort", onAbort, { once: true });
 
-    // Settings and resources are model-independent and load once. Fallback discards only
-    // per-candidate provider and session state (architecture §5.3).
+    // Settings are model-independent and load once. The resource loader is per-attempt:
+    // disposing a failed candidate's session invalidates the loader's shared extension
+    // runtime, so reusing one loader would fail the next candidate's extension handlers
+    // with stale-context errors (architecture §5.3).
     const agentDir = getAgentDir();
     const settings = SettingsManager.create(agent.configCwd, agentDir);
     settings.setProjectTrusted(ctx.isProjectTrusted());
-    const loader = new DefaultResourceLoader({ cwd: agent.configCwd, agentDir, settingsManager: settings,
-      appendSystemPrompt: [...(agent.definition.prompt.trim() ? [agent.definition.prompt] : []),
-        "You are a child agent. Only the current explicit task authorizes work. Historical queued guidance is not a new instruction."],
-    });
-    await loader.reload();
-    signal.throwIfAborted();
-    if (loader.getExtensions().errors.length) {
-      throw new Error(`Child extension loading failed: ${JSON.stringify(loader.getExtensions().errors)}`);
-    }
 
     async function attemptSetup(candidateId: string): Promise<Attempt> {
+      const loader = new DefaultResourceLoader({ cwd: agent.configCwd, agentDir, settingsManager: settings,
+        appendSystemPrompt: [...(agent.definition.prompt.trim() ? [agent.definition.prompt] : []),
+          "You are a child agent. Only the current explicit task authorizes work. Historical queued guidance is not a new instruction."],
+      });
+      await loader.reload();
+      signal.throwIfAborted();
+      if (loader.getExtensions().errors.length) {
+        throw new Error(`Child extension loading failed: ${JSON.stringify(loader.getExtensions().errors)}`);
+      }
       const separator = candidateId.indexOf("/");
       const model = separator > 0 ? ctx.modelRegistry.find(candidateId.slice(0, separator), candidateId.slice(separator + 1)) : undefined;
       if (!model) throw new Error(`Child model unavailable: ${candidateId}`);
@@ -317,7 +319,13 @@ export async function createChildRunner(options: {
           current = await attemptSetup(chain[attemptIndex]!);
         }
       } catch (error) {
-        return { status: cancelled || signal.aborted ? "cancelled" : "failed", output: "", error: String(error) };
+        const message = String(error);
+        // Keep the attempted candidates' failure reasons when setup or disposal aborts the
+        // chain; a bare terminal error would hide which candidates were tried and why.
+        const report = failures.length
+          ? `${failures.map(f => `${f.id} (${f.reason})`).join("; ")}; chain aborted at ${chain[attemptIndex] ?? "end"}: ${message}`
+          : message;
+        return { status: cancelled || signal.aborted ? "cancelled" : "failed", output: "", error: report };
       } finally { finished = true; signal.removeEventListener("abort", onAbort); }
     });
     return { result,

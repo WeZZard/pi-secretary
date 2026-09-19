@@ -1,11 +1,12 @@
 /**
  * Availability failure classification and the per-parent-session availability cache
  * (subagent architecture §5.3). Only availability failures — rate limiting, quota
- * exhaustion, provider-side cooldown, and unknown-model responses — advance a
- * fallback chain. Content rejections, tool errors, and timeouts never do.
+ * exhaustion, provider-side cooldown, unknown-model responses, and credential
+ * rejections (missing or incorrect API keys) — advance a fallback chain. Content
+ * rejections, tool errors, and timeouts never do.
  */
 
-const AVAILABILITY_PATTERN = /429|rate.?limit|throttl|usage.?limit|quota|cool[a-z]*[\s-]?down|insufficient|unknown model/i;
+const AVAILABILITY_PATTERN = /429|rate.?limit|throttl|usage.?limit|quota|cool[a-z]*[\s-]?down|insufficient|unknown model|\b404\b|not[\s-]?found|does not exist|\b401\b|\b403\b|unauthorized|unauthenticated|invalid api.?key|incorrect api.?key|no api key|authentication (unavailable|failed|rejected)|missing credentials/i;
 const RESET_PATTERN = /reset_seconds["']?\s*[:=]\s*(\d+)/;
 
 /** Classify a provider or launch error. Availability failures may advance a fallback chain. */

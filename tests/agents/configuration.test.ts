@@ -124,6 +124,8 @@ test("model resolution matches available models first, then fallback lists in or
   let authOK = true;
   const ctx = { model: parent, scopedModels: [], modelRegistry: {
     find(provider: string, id: string) { return models.get(`${provider}/${id}`); },
+    getProvider(name: string) { return { name, auth: { apiKey: { name: `${name} API key` } } } as any; },
+    hasConfiguredAuth() { return true; },
     async getApiKeyAndHeaders() { return authOK ? { ok: true } : { ok: false, error: "missing credentials" }; },
   } } as unknown as Pick<ExtensionContext, "model" | "modelRegistry" | "scopedModels">;
   const config = loadAgentConfiguration(cwd, agentDir, false);
@@ -157,6 +159,33 @@ test("model resolution matches available models first, then fallback lists in or
   assert.equal(viaCache.id, "provider/org/parent", "A cooling-down candidate is skipped without a provider request");
   assert.match(viaCache.skipped[0]!.reason, /cooling/i);
   await assert.rejects(resolveAgentModel(definition, undefined, config, { ...ctx, model: undefined } as typeof ctx), /parent model/);
+});
+
+test("model resolution skips a candidate whose provider requires credentials but has none configured", (t) => {
+  const { cwd, agentDir, put } = fixture(t);
+  const definition = discoverAgents(cwd, agentDir, false).get("general-purpose")!;
+  const listed = { provider: "provider", id: "org/listed" } as Model<Api>;
+  const gated = { provider: "locked", id: "gpt-9" } as Model<Api>;
+  const models = new Map<string, Model<Api>>([["locked/gpt-9", gated], ["provider/org/listed", listed]]);
+  const ctx = { model: undefined, scopedModels: [], modelRegistry: {
+    find(provider: string, id: string) { return models.get(`${provider}/${id}`); },
+    // Mirrors the real ModelRegistry facade: both providers declare API-key auth.
+    getProvider(name: string) { return { name, auth: { apiKey: { name: `${name} API key` } } } as any; },
+    // "locked" has no configured credentials; "provider" does.
+    hasConfiguredAuth(model: Model<Api>) { return model.provider !== "locked"; },
+    // Mirrors the vacuous pi 0.64.x behavior: ok for unconfigured builtin providers, so
+    // this check alone cannot gate the candidate.
+    async getApiKeyAndHeaders() { return { ok: true, apiKey: "key", headers: {} }; },
+  } } as unknown as Pick<ExtensionContext, "model" | "modelRegistry" | "scopedModels">;
+  const config = loadAgentConfiguration(cwd, agentDir, false);
+  config.modelFallbackLists.repro = ["locked/gpt-9", "provider/org/listed"];
+  return resolveAgentModel({ ...definition, model: "repro" }, undefined, config, ctx).then((resolution) => {
+    assert.equal(resolution.id, "provider/org/listed");
+    assert.ok(
+      resolution.skipped.some((s) => s.id === "locked/gpt-9" && /credentials|auth/i.test(s.reason)),
+      `expected locked/gpt-9 to be skipped for missing credentials, got ${JSON.stringify(resolution.skipped)}`,
+    );
+  });
 });
 
 test("saveModelFallbackLists validates before writing, preserves other keys, and reloads", (t) => {

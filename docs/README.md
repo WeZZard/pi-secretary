@@ -30,6 +30,7 @@
 | [Agents display-projection plan](../.plans/2026-09-19-agents-display-projection.md) | It is the implementation plan for serving agents display reads from a commit-time in-memory projection. It cites the design decisions it implements. |
 | [Model fallback lists plan](../.plans/2026-09-19-model-fallback-lists.md) | It is the implementation plan for user-managed model fallback lists and the `/secretary` configuration menu. It cites the design decisions it implements. |
 | [Agents UI configuration fault plan](../.plans/2026-09-19-agents-ui-config-fault.md) | It is the implementation plan for making display-path UI option resolution non-fatal. It cites the design decisions it implements. |
+| [Model fallback availability repair plan](../.plans/2026-09-19-model-fallback-availability-repair.md) | It is the implementation plan for the fallback chain's credential gating, per-attempt extension resources, classifier coverage, and abort reporting. It cites the design decisions it implements. |
 | [Upstream research](research/subagent-system-comparison.md) | It records the dated source comparison that informed the design. It does not describe current Secretary behavior. |
 
 ## Generated test artifacts

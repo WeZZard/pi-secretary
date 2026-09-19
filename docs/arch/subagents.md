@@ -302,9 +302,12 @@ The model source is selected in the following order:
 
 Each candidate is checked in order against the model registry, the parent's scoped-model restrictions, and credential availability. The first candidate that passes every check is selected.
 
+- Credential availability is a configured-credential check: a candidate whose provider declares API-key or OAuth authentication but has no configured credentials is skipped. The registry's request-auth probe alone is not sufficient, because it reports success for a builtin provider that has no credentials at all.
 - A named list that is not configured fails the launch with an error naming the missing list. There is no fuzzy matching and no silent provider fallback.
 - If every candidate fails its checks, the launch fails with an actionable error that lists each attempted model and its failure reason.
-- If the selected candidate fails during launch or on the run's first provider request with an availability failure — rate limiting, quota exhaustion, provider-side cooldown, or an unknown-model response — the runner discards the pre-work session state and attempts the next candidate. Errors that are not availability failures, such as content rejections or tool errors, fail the run without advancing the chain.
+- If candidate setup or disposal aborts the chain before it is exhausted, the failure report retains each attempted candidate with its reason alongside the aborting error.
+- If the selected candidate fails during launch or on the run's first provider request with an availability failure — rate limiting, quota exhaustion, provider-side cooldown, an unknown-model response, or a credential rejection such as a missing or provider-rejected API key — the runner discards the pre-work session state and attempts the next candidate. Errors that are not availability failures, such as content rejections or tool errors, fail the run without advancing the chain.
+- Each candidate attempt loads its own extension resources. Disposing a failed attempt's session invalidates that attempt's extension runtime, so a later attempt must not share it.
 - The chain is evaluated only before the run's first successful provider response. Once execution begins, the selected model is fixed for the run, and mid-run provider errors keep the existing fail-fast behavior.
 - A per-parent-session availability cache records candidates observed to be cooling down or quota-limited, including the provider-reported reset time when one is available. Later launches in the same parent session skip those candidates until the reset time passes.
 - The launch result and the run record state the resolved model. When the first candidate was not used, they also state which candidates were skipped and why.

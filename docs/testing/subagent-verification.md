@@ -8,6 +8,18 @@
 
 **Related documents:** [Architecture](../arch/subagents.md), [requirements](../user-stories/subagents.md), [interaction design](../ux/subagents.md), [testing guide](README.md), and [delivery record](../../.plans/2026-09-17-subagent-support.md).
 
+## 2026-09-19: Model fallback availability repair
+
+**Reviewed implementation:** the working tree implementing the [model fallback availability repair plan](../../.plans/2026-09-19-model-fallback-availability-repair.md) phases R1–R3, in response to the AnyDict production failures of 2026-09-19. **Execution date:** 2026-09-19.
+
+| Check | Observed result | Verification limit |
+| --- | --- | --- |
+| `npm run check` | TypeScript checking passed. | Static checking only. |
+| `npm run test:subagents` | All 166 tests passed, including the five new regression tests: production-message classification, the resolution credential gate, first-request 401 advance, the per-attempt extension-runtime isolation, and chain-context abort reporting. | Deterministic providers and fixtures, not real providers. |
+| `npm run test:acceptance` | All 151 scenarios passed, including the new ACC-SA-07-10, ACC-SA-07-11, and ACC-SA-07-12 scenarios. | Scenario bindings are reviewed adapters, not independent specification. |
+| `npm run lint:acceptance` and `npm run lint:mermaid` | 10 Gherkin files with 97 scenario identities validated; 27 Mermaid blocks valid. | Syntax and traceability checks, not behavioral execution. |
+| Live reproduction before the fix | Both incident mechanisms were reproduced against the real `~/.pi/agent` installation with a temporary fallback list: the credential-less `openai` head was selected and failed at launch without advancing, and the 429 advance died with the stale extension-context error. The runner regression test reproduces that error byte-for-byte. | The live reproduction used a fake provider replaying the recorded 429; the configuration file was restored afterwards. |
+
 ## 2026-09-19: Model fallback lists and the `/secretary` configuration menu
 
 **Reviewed implementation:** the working tree implementing the [model fallback lists plan](../../.plans/2026-09-19-model-fallback-lists.md) phases P1–P3, including the same-day amendments that restyled the menu to pi's native full-screen selector presentation, restructured the Subagents section as a configuration-item navigation list, and added fallback-list renaming. **Execution date:** 2026-09-19.

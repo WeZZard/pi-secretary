@@ -17,8 +17,22 @@ test("the availability classifier matches quota and cooldown failures only", () 
     "Child produced no assistant response",
     "Child tool is not authorized: bash",
     "Model output limit reached",
-    "Authentication unavailable for provider/model: missing credentials",
+    "Child parent-authentication adapter was replaced: provider",
   ]) assert.equal(isAvailabilityError(message), false, message);
+});
+
+test("the availability classifier matches unknown-model and credential failures observed in production", () => {
+  for (const message of [
+    // LiteLLM 404 for a model group that does not exist on the gateway (2026-09-19 discord-session incident).
+    'OpenAI API error (404): {"message":"litellm.NotFoundError: NotFoundError: Hosted_vllmException - {\\"error\\":{\\"message\\":\\"The model `glm-5.3-flash` does not exist.\\",\\"type\\":\\"NotFoundError\\",\\"param\\":\\"model\\",\\"code\\":404}}. Received Model Group=glm-5.3-flash\\nAvailable Model Group Fallbacks=None","type":null,"param":null,"code":"404"}',
+    // pi-ai provider streams throw this when a credential vanished between resolution and launch.
+    "No API key for provider: openai",
+    // A configured but rejected key: OpenAI-style 401 and LiteLLM key-scope 403.
+    'OpenAI API error (401): {"error":{"message":"Incorrect API key provided","code":"invalid_api_key"}}',
+    '403: {"message":"key not allowed to access model. This key can only access models=[\'gpt-6-astra\']. Tried to access kimi-k3"}',
+    // The child auth adapter surfaces a resolution-time auth failure at first request.
+    "Authentication unavailable for provider/model: missing credentials",
+  ]) assert.equal(isAvailabilityError(message), true, message);
 });
 
 test("reset_seconds parsing yields an absolute reset time", () => {

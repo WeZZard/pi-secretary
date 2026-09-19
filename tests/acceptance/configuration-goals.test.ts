@@ -147,6 +147,50 @@ const bindings: ScenarioBindings = {
     assert.equal(h.calls[2]!.model, "test-provider/different-model", "The recorded cooldown skips the failed candidate before any provider request");
     assert.match(later.content[0].text, /Fallback: skipped test-provider\/reviewer-model \(cooling down/);
   },
+  "ACC-SA-07-10": async ({ t }) => {
+    const h = await configurationHarness(t);
+    await h.definition("reviewer");
+    // A provider that declares API-key auth but has no configured credentials.
+    const lockedModel = { ...h.models[1]!, provider: "locked-provider", id: "reviewer-model", name: "reviewer-model" } as typeof h.models[number];
+    h.ctx.modelRegistry.registerProvider("locked-provider", {
+      api: "openai-completions", baseUrl: "http://127.0.0.1:1/never", models: [lockedModel],
+      streamSimple() { throw new Error("locked-provider must never receive a request"); },
+    });
+    await h.put(join(h.userDir, "secretary.json"), JSON.stringify({ agents: { modelFallbackLists: { primary: ["locked-provider/reviewer-model", "test-provider/different-model"] } } }));
+    await h.start();
+    const result = await h.launch({ subagent_type: "reviewer", model: "primary" });
+    const finished = await h.finish(result.details.runId);
+    assert.equal(finished.details.status, "succeeded");
+    assert.deepEqual(h.calls.map(call => call.model), ["test-provider/different-model"], "No provider request is made for the credential-less candidate");
+    assert.match(result.content[0].text, /Fallback: skipped locked-provider\/reviewer-model \(authentication unavailable/);
+  },
+  "ACC-SA-07-11": async ({ t }) => {
+    const h = await configurationHarness(t);
+    await h.definition("reviewer");
+    await h.put(join(h.userDir, "secretary.json"), JSON.stringify({ agents: { modelFallbackLists: { primary: ["test-provider/reviewer-model", "test-provider/different-model"] } } }));
+    await h.start();
+    h.replies.push({ error: 'OpenAI API error (401): {"error":{"message":"Incorrect API key provided","code":"invalid_api_key"}}' }, { text: "Recovered evidence." });
+    const result = await h.launch({ subagent_type: "reviewer", model: "primary" });
+    const finished = await h.finish(result.details.runId);
+    assert.equal(finished.details.status, "succeeded");
+    assert.deepEqual(h.calls.map(call => call.model), ["test-provider/reviewer-model", "test-provider/different-model"]);
+    assert.equal(h.repository.getAgent(result.details.agentId)!.model, "test-provider/different-model");
+    assert.match(h.inspector(result.details.agentId), /test-provider\/different-model/);
+  },
+  "ACC-SA-07-12": async ({ t }) => {
+    const h = await configurationHarness(t);
+    await h.definition("reviewer");
+    // test-provider/ghost-model is not registered, so the second candidate's setup fails.
+    await h.put(join(h.userDir, "secretary.json"), JSON.stringify({ agents: { modelFallbackLists: { primary: ["test-provider/reviewer-model", "test-provider/ghost-model"] } } }));
+    await h.start();
+    h.replies.push({ error: "429 usage_limit_reached" });
+    const result = await h.launch({ subagent_type: "reviewer", model: "primary" });
+    const finished = await h.finish(result.details.runId);
+    assert.equal(finished.details.status, "failed");
+    assert.match(finished.details.error!, /test-provider\/reviewer-model[\s\S]*429 usage_limit_reached/, "The first candidate's availability failure stays in the report");
+    assert.match(finished.details.error!, /test-provider\/ghost-model/, "The candidate whose setup aborted the chain is identified");
+    assert.equal(h.calls.length, 1);
+  },
   "ACC-SA-08-01": async ({ t, scenario, text }) => {
     const h = await configurationHarness(t); await h.start(); const goal = await h.goal();
     const table = scenario.steps.find(s => s.argument?.dataTable)?.argument?.dataTable;
@@ -297,6 +341,6 @@ const bindings: ScenarioBindings = {
 };
 
 runFeatures(["agent-configuration", "goal-integration"], bindings, {
-  "agent-configuration": "33e453d41e8473ed153b54e858230e530f0029108c12b248401add7af145c3ce",
+  "agent-configuration": "cb4f2ca141f3ddf51f43a38a7f2e3cc42913b6acade1d017b303e80126fd9e92",
   "goal-integration": "2a1badb878287c3d944eb8919e710c267461692dc210df7165d9f3e6273b84b3",
 });
