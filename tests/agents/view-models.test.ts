@@ -66,7 +66,7 @@ test("service view models carry row state and derived labels without widget-side
   const repository = new AgentRepository(db);
   const service = new AgentService({ parentId: "p", root, repository,
     ctx: { cwd: root, mode: "tui" } as ExtensionContext,
-    config: { modelFallbackLists: {}, ui: defaultAgentUi(), maxConcurrent: 1, maxQueued: 2, shutdownTimeoutMs: 100 },
+    config: { modelFallbackLists: {}, ui: defaultAgentUi(), maxConcurrent: 1, maxQueued: 2, shutdownTimeoutMs: 100, maxNestingDepth: 3 },
     runner: async options => {
       options.hooks.session(join(root, "session.jsonl"));
       options.hooks.usage("u1", usage(1500, 250, 500));

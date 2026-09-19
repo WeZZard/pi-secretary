@@ -30,10 +30,12 @@ export class AgentRepository {
   putAgent(record: AgentRecord): void {
     const old = this.getAgent(record.agentId);
     if (old && old.parentId !== record.parentId) throw new Error("Agent ownership cannot change");
-    this.db.prepare(`INSERT INTO secretary_agents VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,json=excluded.json`).run(record.agentId, record.parentId, record.name ?? null, JSON.stringify(record));
+    this.db.prepare(`INSERT INTO secretary_agents VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,json=excluded.json`).run(record.agentId, record.parentId, record.name ?? null, JSON.stringify(record), record.parentAgentId ?? null);
   }
   getAgent(id: string): AgentRecord | undefined { return this.one("secretary_agents", "id=?", id); }
   agents(parentId: string): AgentRecord[] { return this.many("secretary_agents", "parent_id=?", parentId); }
+  /** Direct nested children of an agent, regardless of which session owns them (SA-12). */
+  childrenOf(agentId: string): AgentRecord[] { return this.many("secretary_agents", "parent_agent_id=?", agentId); }
   putRun(record: AgentRun): void {
     if (this.getAgent(record.agentId)?.parentId !== record.parentId) throw new Error("Run has no matching owned agent");
     if (!["queued", "starting", "running", "cancelling", ...TERMINAL_STATUSES].includes(record.status)) throw new Error("Unknown agent run status");

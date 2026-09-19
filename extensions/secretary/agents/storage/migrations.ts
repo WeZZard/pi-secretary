@@ -1,13 +1,18 @@
 import type { DatabaseSync } from "node:sqlite";
 
+const CURRENT = 2;
+
 export function migrateAgents(db: DatabaseSync): void {
   db.exec(`CREATE TABLE IF NOT EXISTS secretary_agent_schema (version INTEGER NOT NULL)`);
   const versions = db.prepare("SELECT version FROM secretary_agent_schema").all();
-  if (versions.length > 1 || (versions.length === 1 && versions[0].version !== 1)) throw new Error("Unsupported agent database schema version");
+  if (versions.length > 1) throw new Error("Unsupported agent database schema version");
+  const version = versions.length === 1 ? Number((versions[0] as { version: number }).version) : 0;
+  if (version > CURRENT) throw new Error("Unsupported agent database schema version");
   db.exec(`
     SAVEPOINT secretary_agent_migration;
     CREATE TABLE IF NOT EXISTS secretary_agents (
       id TEXT PRIMARY KEY, parent_id TEXT NOT NULL, name TEXT, json TEXT NOT NULL,
+      parent_agent_id TEXT,
       UNIQUE(parent_id, name), UNIQUE(id, parent_id)
     );
     CREATE TABLE IF NOT EXISTS secretary_agent_runs (
@@ -31,7 +36,19 @@ export function migrateAgents(db: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS secretary_agent_usage (
       id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES secretary_agent_runs(id), json TEXT NOT NULL
     );
-    INSERT INTO secretary_agent_schema SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM secretary_agent_schema);
     RELEASE secretary_agent_migration;
   `);
+  if (version === 1) {
+    // Nested delegation (SA-12) indexes the delegating agent for tree queries.
+    db.exec(`
+      SAVEPOINT secretary_agent_migration_v2;
+      ALTER TABLE secretary_agents ADD COLUMN parent_agent_id TEXT;
+      UPDATE secretary_agent_schema SET version = 2;
+      RELEASE secretary_agent_migration_v2;
+    `);
+  }
+  if (version === 0) {
+    db.exec(`INSERT INTO secretary_agent_schema SELECT ${CURRENT} WHERE NOT EXISTS (SELECT 1 FROM secretary_agent_schema)`);
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS secretary_agents_parent_agent ON secretary_agents(parent_agent_id)");
 }

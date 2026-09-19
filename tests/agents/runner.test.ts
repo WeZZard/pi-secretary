@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, rm, readFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { createAssistantMessageEventStream, InMemoryCredentialStore, type AssistantMessage, type Context, type Model } from "@earendil-works/pi-ai";
 import { ModelRuntime, ModelRegistry, SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createChildRunner } from "../../extensions/secretary/agents/runner.ts";
-import { inChildSession, runInChildSession } from "../../extensions/secretary/agents/child-context.ts";
+import { childSession, inChildSession, runInChildSession } from "../../extensions/secretary/agents/child-context.ts";
+import { AgentRepository } from "../../extensions/secretary/agents/storage/agent-repository.ts";
 import type { AgentRecord, AgentRun, RunnerHooks } from "../../extensions/secretary/agents/records.ts";
 import { goalTokenDeltaForUsage } from "../../extensions/secretary/goal/accounting.ts";
 
@@ -61,13 +63,18 @@ async function fixture(t: TestContext, responses: Array<string | { tool: string;
   let path = "";
   const hooks: RunnerHooks = { session(value) { path = value; }, text() {}, activity() {}, turn() {}, usage(id, value) { usage.push({ id, value }); }, authorize() {} };
   const controller = new AbortController();
-  const start = async () => { const child = await createChildRunner({ agent, run, ctx, signal: controller.signal, hooks, sessionDir: join(root, "sessions") }); t.after(() => child.dispose()); return child; };
+  const start = async (overrides: { allowDelegation?: boolean } = {}) => { const child = await createChildRunner({ agent, run, ctx, signal: controller.signal, hooks, sessionDir: join(root, "sessions"), ...overrides }); t.after(() => child.dispose()); return child; };
   return { root, agent, run, ctx, hooks, controller, calls, usage, start, setGate(fn: () => Promise<void>) { gate = fn; }, get path() { return path; } };
 }
 
 test("child context is async-local and does not mark its parent", async () => {
   assert.equal(inChildSession(), false);
-  await runInChildSession(async () => { await Promise.resolve(); assert.equal(inChildSession(), true); });
+  await runInChildSession({ agentId: "agent_test", depth: 1 }, async () => {
+    await Promise.resolve();
+    assert.equal(inChildSession(), true);
+    assert.equal(childSession()?.agentId, "agent_test");
+    assert.equal(childSession()?.depth, 1);
+  });
   assert.equal(inChildSession(), false);
 });
 
@@ -501,4 +508,59 @@ test("unrecovered provider errors fail, not empty success", async (t) => {
   const f = await fixture(t, ["error"]);
   const child = await f.start();
   assert.equal((await child.result).status, "failed");
+});
+
+/** Wires the real secretary extension into the child session and points its storage at the fixture. */
+async function installChildExtension(f: Awaited<ReturnType<typeof fixture>>, t: TestContext) {
+  const extension = join(import.meta.dirname, "..", "..", "extensions", "secretary", "index.ts");
+  await mkdir(join(f.root, ".pi", "extensions"), { recursive: true });
+  await writeFile(join(f.root, ".pi", "extensions", "secretary.ts"), `export { default } from ${JSON.stringify(extension)};\n`);
+  const dbDir = join(f.root, "secretary");
+  const priorDb = process.env.PI_SECRETARY_DB_DIR;
+  process.env.PI_SECRETARY_DB_DIR = dbDir;
+  t.after(() => { if (priorDb === undefined) delete process.env.PI_SECRETARY_DB_DIR; else process.env.PI_SECRETARY_DB_DIR = priorDb; });
+  const repository = () => {
+    const db = new DatabaseSync(join(dbDir, "pi-secretary-goals.sqlite"));
+    t.after(() => db.close());
+    return new AgentRepository(db);
+  };
+  return { repository };
+}
+
+test("a child session below the maximum depth delegates a nested agent through the same contract", async (t) => {
+  const f = await fixture(t, [
+    { tool: "Agent", args: { description: "Nested task", prompt: "Return nested output", run_in_background: false } },
+    "nested output",
+    "outer done",
+  ]);
+  const nested = await installChildExtension(f, t);
+  f.agent.depth = 1;
+  f.agent.tools = ["read", "Agent", "SendMessage", "TaskStop", "TaskOutput"];
+  const child = await f.start({ allowDelegation: true });
+  const outcome = await child.result;
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(outcome.output, "outer done");
+  assert.ok(f.calls[0]!.tools?.some(tool => tool.name === "Agent"), "the delegating child's session advertises the delegation tools");
+  assert.equal(f.calls.length, 3, "outer turn, nested turn, outer follow-up");
+  const children = nested.repository().childrenOf("a");
+  assert.equal(children.length, 1, "the nested launch is recorded under the delegating agent");
+  assert.equal(children[0]!.depth, 2);
+  const nestedRun = nested.repository().runs(children[0]!.parentId).find(r => r.agentId === children[0]!.agentId);
+  assert.equal(nestedRun?.status, "succeeded");
+  assert.match(nestedRun?.output ?? "", /nested output/);
+});
+
+test("a child session at the maximum depth has no delegation tools and cannot launch", async (t) => {
+  const f = await fixture(t, [
+    { tool: "Agent", args: { description: "Nested task", prompt: "x", run_in_background: false } },
+    "outer done",
+  ]);
+  const nested = await installChildExtension(f, t);
+  f.agent.depth = 3;
+  f.agent.tools = ["read", "Agent", "SendMessage", "TaskStop", "TaskOutput"];
+  const child = await f.start();
+  const outcome = await child.result;
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(f.calls[0]!.tools?.some(tool => tool.name === "Agent"), false, "the session allowlist excludes delegation tools at the maximum depth");
+  assert.equal(nested.repository().childrenOf("a").length, 0, "no nested agent was created");
 });

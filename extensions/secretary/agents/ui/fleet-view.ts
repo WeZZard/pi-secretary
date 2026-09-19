@@ -1,11 +1,13 @@
 import { truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { active, fleetRows } from "./reducer.ts";
-import type { AgentRowView } from "../records.ts";
+import { TERMINAL_STATUSES, type AgentRowView, type RunStatus } from "../records.ts";
+import { fleetRows } from "./reducer.ts";
 import type { UiState } from "./state.ts";
 import { clip } from "./transcript.ts";
-import { statusGlyph } from "./glyphs.ts";
-import { aggregateUsageLabels, formatElapsed, formatUsageLabels } from "./usage-labels.ts";
+import { selectionCircle } from "./glyphs.ts";
+import { formatElapsed, formatUsageLabels } from "./usage-labels.ts";
+
+const MAX_VISIBLE_ROWS = 10;
 
 function rightAlign(left: string, right: string, width: number): string {
   const rightWidth = visibleWidth(right);
@@ -15,7 +17,24 @@ function rightAlign(left: string, right: string, width: number): string {
   return truncateToWidth(`${leftClamped}${" ".repeat(gap)}${right}`, width, "");
 }
 
-/** FleetView renders the reducer's session state; view-model rows come from the service through the port. */
+/**
+ * The indicator lists the main row followed by top-level agents whose run is non-terminal;
+ * a row leaves the list immediately when its run reaches a terminal status (UX §2.2, §12.6.3).
+ */
+export function indicatorRows(rows: readonly AgentRowView[]): AgentRowView[] {
+  return rows.filter(row => !row.parentAgentId && !TERMINAL_STATUSES.has(row.status as RunStatus));
+}
+
+/**
+ * A change in this key requires a repaint; an unchanged key with no running row does not.
+ * The key is derived from the full rendered view-model snapshot (§12.6.3).
+ */
+export function indicatorRenderKey(rows: readonly AgentRowView[], selected: string | null | undefined): string {
+  return JSON.stringify([selected ?? null, indicatorRows(rows).map(row => [row.agentId, row.name, row.status,
+    row.startedAt, row.windowTokens, row.cumulativeTokens])]);
+}
+
+/** FleetView renders the unified fleet indicator: the reducer's session state plus service view-model rows. */
 export class FleetView implements Component {
   private readonly state: () => UiState;
   private readonly theme?: Theme;
@@ -26,31 +45,63 @@ export class FleetView implements Component {
   }
   invalidate(): void {}
   render(width: number): string[] {
-    const s = this.state(), snapshots = fleetRows(s);
-    if (s.navigation.kind === "inactive" || !snapshots.length) return [];
+    const s = this.state();
+    if (s.navigation.kind === "inactive") return [];
     const theme = this.theme;
+    const owned = fleetRows(s);
     const published = this.viewRows?.();
-    const rows: AgentRowView[] = published?.length ? published.filter(row => snapshots.some(a => a.agent.agentId === row.agentId)) : snapshots.map(a => ({
+    const rows: AgentRowView[] = published?.length ? indicatorRows(published).filter(row => owned.some(a => a.agent.agentId === row.agentId)) : owned.map(a => ({
       agentId: a.agent.agentId, name: a.agent.name, status: a.run?.status ?? "idle" as const,
       description: a.run?.description ?? a.agent.definition.description, model: a.agent.model,
       ...(a.run?.startedAt !== undefined ? { startedAt: a.run.startedAt } : {}),
       ...(a.run?.activity !== undefined ? { activity: a.run.activity } : {}),
       background: a.run?.background ?? false,
     }));
-    const usage = formatUsageLabels(aggregateUsageLabels(rows));
-    const counts = `${rows.filter(a => active(snapshots.find(snap => snap.agent.agentId === a.agentId)!) && a.status !== "queued").length} active agents · ${rows.filter(a => a.status === "queued").length} queued`;
-    const summary = clip(`${counts}${usage.length ? ` · ${usage.join(" · ")}` : ""} · ↓/← inspect · /agents`, width);
-    if (s.navigation.kind !== "fleet") return [summary];
-    const selected = s.navigation.selectedAgentId;
-    const index = rows.findIndex(a => a.agentId === selected);
-    const visible = rows.slice(Math.max(0, index - 5), Math.max(10, index + 5));
-    const renderRow = (row: (typeof rows)[number]) => {
-      const marker = row.agentId === selected ? ">" : " ";
-      const name = row.name ?? row.agentId;
+    const focused = s.navigation.kind === "fleet";
+    const selected = s.navigation.kind === "fleet" ? s.navigation.selectedAgentId : undefined;
+    const ids: (string | null)[] = [null, ...rows.map(row => row.agentId)];
+    const index = Math.max(0, ids.indexOf(selected ?? null));
+    const start = Math.max(0, Math.min(index - Math.floor(MAX_VISIBLE_ROWS / 2), Math.max(0, ids.length - MAX_VISIBLE_ROWS)));
+    const renderRow = (id: string | null) => {
+      const circle = selectionCircle(focused && selected === id, theme);
+      if (id === null) return clip(`${circle} main`, width);
+      const row = rows.find(r => r.agentId === id)!;
       const right = [formatElapsed(row.startedAt, this.now()), ...formatUsageLabels(row)].filter(Boolean).join(" · ");
-      const left = `${marker} ${statusGlyph(row.status, theme)} ${name} · ${row.description} · ${row.status}`;
+      const left = `${circle} ${theme ? theme.bold(row.name ?? row.agentId) : row.name ?? row.agentId} · ${row.status}`;
       return right ? rightAlign(left, right, width) : clip(left, width);
     };
-    return [summary, `${selected === null ? ">" : " "} main`, ...visible.map(renderRow)].map(l => width <= 0 ? "" : truncateToWidth(l, width, ""));
+    return ids.slice(start, start + MAX_VISIBLE_ROWS).map(id => width <= 0 ? "" : truncateToWidth(renderRow(id), width, ""));
   }
+}
+
+/**
+ * The bounded polling loop: an unreferenced timer advances elapsed time between service events.
+ * A repaint is requested only when the render key changed or a row is running. Both the timer and
+ * the subscription are disposed on deactivation.
+ */
+export function startFleetPolling(options: {
+  intervalMs?: number;
+  selected?: () => string | null | undefined;
+  rows: () => readonly AgentRowView[];
+  hasRunning?: (rows: readonly AgentRowView[]) => boolean;
+  repaint: () => void;
+  subscribe: (listener: () => void) => () => void;
+}): { dispose(): void; renderKey(): string } {
+  const intervalMs = Math.max(5, options.intervalMs ?? 500);
+  const hasRunning = options.hasRunning ?? (rows => indicatorRows(rows).some(row => row.status === "running" || row.status === "starting"));
+  let key = "";
+  const tick = () => {
+    const rows = options.rows();
+    const next = indicatorRenderKey(rows, options.selected?.());
+    const repaint = next !== key || hasRunning(rows);
+    key = next;
+    if (repaint) options.repaint();
+  };
+  const timer = setInterval(tick, intervalMs);
+  timer.unref?.();
+  const unsubscribe = options.subscribe(tick);
+  return {
+    renderKey: () => key,
+    dispose() { clearInterval(timer); unsubscribe(); },
+  };
 }

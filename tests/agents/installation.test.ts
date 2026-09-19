@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import secretaryExtension from "../../extensions/secretary/index.ts";
 import { runInChildSession } from "../../extensions/secretary/agents/child-context.ts";
+import { AgentRepository } from "../../extensions/secretary/agents/storage/agent-repository.ts";
 import { agentHarness } from "../support/agent-harness.ts";
 
 const names = ["Agent", "SendMessage", "TaskStop", "TaskOutput"];
@@ -98,7 +98,38 @@ test("foreground public tools run a real SDK child, retain output, deduplicate l
   await assert.rejects(h.tool("TaskStop", { task_id: "unrelated-shell" }), /not found in this parent/);
 });
 
-test("default extension registers no root goals or agents inside child async context", async () => {
-  const forbidden = new Proxy({}, { get(_target, name) { throw new Error(`Unexpected child root API access: ${String(name)}`); } });
-  await runInChildSession(async () => { await Promise.resolve(); secretaryExtension(forbidden as any); });
+test("child sessions at the maximum nesting depth register no delegation tools", async (t) => {
+  await runInChildSession({ agentId: "agent_deepest", depth: 3 }, async () => {
+    const h = await agentHarness(t);
+    await h.start();
+    for (const name of names) assert.equal(h.tools.has(name), false, `${name} is not registered at the maximum depth`);
+    assert.equal(h.tools.has("get_goal"), true, "goal support still installs; the session allowlist gates it out");
+  });
+});
+
+test("child sessions below the maximum depth delegate with recorded parentage", async (t) => {
+  await runInChildSession({ agentId: "agent_parent", depth: 1 }, async () => {
+    const h = await agentHarness(t);
+    await h.start();
+    for (const name of names) assert.equal(h.tools.has(name), true, `${name} is available to a nested session`);
+    const outcome = await h.tool("Agent", { ...task, run_in_background: false });
+    assert.equal(outcome.details.status, "succeeded");
+    const record = new AgentRepository(h.engine.db.connection).getAgent(outcome.details.agentId);
+    assert.equal(record?.parentAgentId, "agent_parent", "the nested launch records the delegating agent");
+    assert.equal(record?.depth, 2, "the nested launch records its depth below the main session");
+    assert.ok(record?.tools.includes("Agent"), "a child below the maximum depth keeps the delegation contract for its own children");
+    assert.ok(!record?.tools.includes("create_goal"), "goal tools stay out of delegated sessions");
+  });
+});
+
+test("a child at depth two issues no delegation tools to its own children", async (t) => {
+  await runInChildSession({ agentId: "agent_middle", depth: 2 }, async () => {
+    const h = await agentHarness(t);
+    await h.start();
+    const outcome = await h.tool("Agent", { ...task, run_in_background: false });
+    assert.equal(outcome.details.status, "succeeded");
+    const record = new AgentRepository(h.engine.db.connection).getAgent(outcome.details.agentId);
+    assert.equal(record?.depth, 3);
+    assert.equal(record?.tools.includes("Agent"), false, "a child at the maximum depth cannot delegate further");
+  });
 });

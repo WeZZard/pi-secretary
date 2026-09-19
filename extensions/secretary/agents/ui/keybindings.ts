@@ -6,7 +6,7 @@ import { matchesKey } from "@earendil-works/pi-tui";
  */
 export const INSPECTOR_ACTIONS = [
   "close", "scrollUp", "scrollDown", "selectUp", "selectDown", "selectFirst", "selectLast",
-  "pageUp", "pageDown", "refresh", "steer", "stop", "toggleTools",
+  "pageUp", "pageDown", "refresh", "steer", "stop", "toggleTools", "drillIn", "drillOut", "toggleFinished",
 ] as const;
 export type InspectorAction = (typeof INSPECTOR_ACTIONS)[number];
 export type InspectorKeybindingsConfig = Partial<Record<InspectorAction, string[]>>;
@@ -27,6 +27,9 @@ export const DEFAULT_INSPECTOR_KEYBINDINGS: ResolvedInspectorKeybindings = {
   steer: ["s"],
   stop: ["shift+d"],
   toggleTools: ["x", "shift+x", "ctrl+o"],
+  drillIn: ["return", "right"],
+  drillOut: ["left"],
+  toggleFinished: ["a"],
 };
 
 export function resolveInspectorKeybindings(config?: InspectorKeybindingsConfig): ResolvedInspectorKeybindings {

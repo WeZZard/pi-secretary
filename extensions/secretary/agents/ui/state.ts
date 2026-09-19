@@ -3,7 +3,9 @@ import type { TranscriptEvent } from "./transcript-events.ts";
 
 export interface Correlation { epoch: string; viewId: string }
 export interface TranscriptView { events: readonly TranscriptEvent[]; follow: "following" | "paused"; anchor: number; anchorEntryId?: string; anchorOffset?: number; expanded: boolean }
-export type InspectorState = { kind: "list" } | { kind: "loading"; agentId: string; requestId: string; previous?: TranscriptView } | { kind: "ready"; agentId: string; transcript: TranscriptView } | { kind: "unavailable"; agentId: string; reason: string };
+/** The overlay's drill path and terminal-agent filter; orthogonal to the loading lifecycle (§12.1.6). */
+export interface InspectorLevel { path: readonly string[]; includeFinished: boolean }
+export type InspectorState = { kind: "list"; level: InspectorLevel } | { kind: "loading"; level: InspectorLevel; agentId: string; requestId: string; previous?: TranscriptView } | { kind: "ready"; level: InspectorLevel; agentId: string; transcript: TranscriptView } | { kind: "unavailable"; level: InspectorLevel; agentId: string; reason: string };
 export type NavigationState = { kind: "inactive" } | { kind: "editor" } | { kind: "fleet"; selectedAgentId: string | null } | { kind: "inspector"; detail: InspectorState };
 export type ActionTarget = { parentId: string; agentId: string; revision: number } & ({ action: "stop"; runId: string } | { action: "cleanup"; worktreeId: string });
 export type Operation = Correlation & { id: string; agentId: string; action: "message"; text: string } | Correlation & { id: string; agentId: string; action: "stop" | "cleanup"; target: ActionTarget };
@@ -11,9 +13,9 @@ export type DialogState = { kind: "closed" } | { kind: "composing"; agentId: str
 export interface UiState extends Correlation {
   parentId: string; revision: number; navigation: NavigationState; dialog: DialogState;
   snapshots: readonly AgentSnapshot[]; drafts: Readonly<Record<string, string>>;
-  pending: Readonly<Record<string, Operation>>; hiddenFinished: readonly string[]; feedback?: string;
+  pending: Readonly<Record<string, Operation>>; feedback?: string;
 }
-export const initialState = (): UiState => ({ parentId: "", epoch: "", viewId: "", revision: 0, navigation: { kind: "inactive" }, dialog: { kind: "closed" }, snapshots: [], drafts: {}, pending: {}, hiddenFinished: [] });
+export const initialState = (): UiState => ({ parentId: "", epoch: "", viewId: "", revision: 0, navigation: { kind: "inactive" }, dialog: { kind: "closed" }, snapshots: [], drafts: {}, pending: {} });
 export type UiEvent =
   | { type: "activate"; parentId: string; epoch: string; viewId: string }
   | { type: "deactivate" }
@@ -24,6 +26,9 @@ export type UiEvent =
   | { type: "select"; agentId: string; requestId: string }
   | { type: "select-first"; requestId: string }
   | { type: "select-last"; requestId: string }
+  | { type: "drill-in"; requestId: string }
+  | { type: "drill-out"; requestId: string }
+  | { type: "toggle-finished"; requestId: string }
   | ({ type: "transcript"; agentId: string; requestId: string; events?: readonly TranscriptEvent[]; error?: string } & Correlation)
   | { type: "compose" }
   | { type: "draft"; text: string }

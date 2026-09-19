@@ -66,8 +66,23 @@ test("usage deduplication and receipts survive reopening the shared database", a
 
 test("future schema versions fail safely", () => {
   const db = new DatabaseSync(":memory:");
-  try { db.exec("CREATE TABLE secretary_agent_schema(version INTEGER); INSERT INTO secretary_agent_schema VALUES(2)"); assert.throws(() => new AgentRepository(db), /schema version/); }
+  try { db.exec("CREATE TABLE secretary_agent_schema(version INTEGER); INSERT INTO secretary_agent_schema VALUES(3)"); assert.throws(() => new AgentRepository(db), /schema version/); }
   finally { db.close(); }
+});
+
+test("version 1 databases migrate to the nested-delegation schema", () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    db.exec(`CREATE TABLE secretary_agent_schema (version INTEGER NOT NULL);
+      INSERT INTO secretary_agent_schema VALUES (1);
+      CREATE TABLE secretary_agents (id TEXT PRIMARY KEY, parent_id TEXT NOT NULL, name TEXT, json TEXT NOT NULL,
+        UNIQUE(parent_id, name), UNIQUE(id, parent_id));
+      INSERT INTO secretary_agents VALUES ('a', 'p', NULL, '{"agentId":"a","parentId":"p"}');`);
+    const repo = new AgentRepository(db);
+    assert.equal(db.prepare("SELECT version FROM secretary_agent_schema").get()?.version, 2);
+    assert.equal(repo.getAgent("a")?.agentId, "a", "existing rows survive the migration");
+    assert.deepEqual(repo.childrenOf("a"), []);
+  } finally { db.close(); }
 });
 
 test("parent locks exclude live owners, refuse unknown owners, and permit release", async () => {

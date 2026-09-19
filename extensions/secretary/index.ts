@@ -9,11 +9,11 @@ import { createGoalToolSpec, getGoalToolSpec, updateGoalToolSpec } from "./goal/
 import type { ThreadGoal } from "./goal/goal-record.ts";
 import { GoalSynchronization, threadIdFor, type WorkBasis } from "./goal/synchronization.ts";
 import { formatGoalSnapshot } from "./goal/steering.ts";
-import { inChildSession } from "./agents/child-context.ts";
 import { installAgentSupport } from "./agents/installation.ts";
 
 export default function secretaryExtension(pi: ExtensionAPI): void {
-  if (inChildSession()) return;
+  // Child sessions install too (SA-12): the delegation tools are gated by nesting depth at
+  // session_start, and the session tool allowlist keeps goal tools out of delegated work.
   const dir = process.env.PI_SECRETARY_DB_DIR ?? path.join(process.env.HOME ?? "", ".pi", "secretary");
   mkdirSync(dir, { recursive: true });
   installSecretary(pi, new GoalEngine({ dbPath: path.join(dir, "pi-secretary-goals.sqlite"), enabled: true }), { agentsRoot: dir });

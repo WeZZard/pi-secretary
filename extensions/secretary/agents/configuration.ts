@@ -7,7 +7,6 @@ export const FALLBACK_LIST_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 export interface AgentUiConfiguration {
   inlineToolDisplay: "rich" | "summary";
   fleetViewPlacement: "belowEditor" | "aboveEditor";
-  asyncWidget: boolean;
   fleetKeybindings: InspectorKeybindingsConfig;
 }
 export interface AgentConfiguration {
@@ -15,9 +14,11 @@ export interface AgentConfiguration {
   maxConcurrent: number;
   maxQueued: number;
   shutdownTimeoutMs: number;
+  /** Levels of nested delegation below the main session (SA-12; architecture §7). */
+  maxNestingDepth: number;
   ui: AgentUiConfiguration;
 }
-export const defaultAgentUi = (): AgentUiConfiguration => ({ inlineToolDisplay: "rich", fleetViewPlacement: "belowEditor", asyncWidget: true, fleetKeybindings: {} });
+export const defaultAgentUi = (): AgentUiConfiguration => ({ inlineToolDisplay: "rich", fleetViewPlacement: "belowEditor", fleetKeybindings: {} });
 
 /** Omission inherits the definition; an explicit none keeps the parent directory. */
 export function resolveIsolation(requested: unknown, definition?: "none" | "worktree"): "none" | "worktree" {
@@ -49,8 +50,8 @@ function applyAgentsConfiguration(agents: Record<string, unknown>, path: string,
         }
       } else if (key === "modelAliases") {
         throw new Error(`${path}: agents.modelAliases was removed; use agents.modelFallbackLists (an object mapping list names to ordered provider/modelId arrays)`);
-      } else if (key === "maxConcurrent" || key === "maxQueued" || key === "shutdownTimeoutMs") {
-        const minimum = key === "maxConcurrent" ? 1 : 0;
+      } else if (key === "maxConcurrent" || key === "maxQueued" || key === "shutdownTimeoutMs" || key === "maxNestingDepth") {
+        const minimum = key === "maxConcurrent" || key === "maxNestingDepth" ? 1 : 0;
         if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum) {
           throw new Error(`${path}: agents.${key} must be an integer >= ${minimum}`);
         }
@@ -65,8 +66,8 @@ function applyAgentsConfiguration(agents: Record<string, unknown>, path: string,
             if (uiValue !== "belowEditor" && uiValue !== "aboveEditor") throw new Error(`${path}: agents.ui.fleetViewPlacement must be "belowEditor" or "aboveEditor"`);
             result.ui.fleetViewPlacement = uiValue;
           } else if (uiKey === "asyncWidget") {
-            if (typeof uiValue !== "boolean") throw new Error(`${path}: agents.ui.asyncWidget must be a boolean`);
-            result.ui.asyncWidget = uiValue;
+            // Recognized and ignored (§12.6.5): the async widget is removed, but configurations
+            // written by earlier builds stay valid instead of failing as an unknown key.
           } else if (uiKey === "fleetKeybindings") {
             result.ui.fleetKeybindings = { ...result.ui.fleetKeybindings, ...validateInspectorKeybindings(uiValue, `${path}: agents.ui.fleetKeybindings`) };
           } else throw new Error(`${path}: unsupported agents.ui field ${uiKey}`);
@@ -76,7 +77,7 @@ function applyAgentsConfiguration(agents: Record<string, unknown>, path: string,
 }
 
 export function loadAgentConfiguration(cwd: string, agentDir: string, trusted: boolean): AgentConfiguration {
-  const result: AgentConfiguration = { modelFallbackLists: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, ui: defaultAgentUi() };
+  const result: AgentConfiguration = { modelFallbackLists: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, maxNestingDepth: 3, ui: defaultAgentUi() };
   const paths = [join(agentDir, "secretary.json")];
   if (trusted) paths.push(join(cwd, CONFIG_DIR_NAME, "secretary.json"));
   for (const path of paths) {
@@ -104,7 +105,7 @@ export function saveModelFallbackLists(agentDir: string, lists: Record<string, s
   const agents = Object.hasOwn(root, "agents") ? object(root.agents, `${path}: agents`) : {};
   const candidate: Record<string, unknown> = { ...agents,
     modelFallbackLists: Object.fromEntries(Object.entries(lists).map(([name, entries]) => [name, [...entries]])) };
-  applyAgentsConfiguration(candidate, path, { modelFallbackLists: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, ui: defaultAgentUi() });
+  applyAgentsConfiguration(candidate, path, { modelFallbackLists: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, maxNestingDepth: 3, ui: defaultAgentUi() });
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify({ ...root, agents: candidate }, null, 2) + "\n");
 }

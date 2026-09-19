@@ -1,6 +1,13 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { RunStatus } from "../records.ts";
 
+/** The selection circle encodes selection only: filled when selected, hollow otherwise (UX §2.2). */
+export function selectionCircle(selected: boolean, theme?: Theme): string {
+  const glyph = selected ? "●" : "○";
+  if (!theme) return glyph;
+  return selected ? theme.fg("accent", glyph) : theme.fg("dim", glyph);
+}
+
 /** Themed status glyphs; color is never the only channel because the glyph itself differs per status. */
 export function statusGlyph(status: RunStatus | "idle", theme?: Theme): string {
   const glyph = status === "queued" ? "◦"

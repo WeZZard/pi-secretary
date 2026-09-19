@@ -8,6 +8,20 @@
 
 **Related documents:** [Architecture](../arch/subagents.md), [requirements](../user-stories/subagents.md), [interaction design](../ux/subagents.md), [testing guide](README.md), and [delivery record](../../.plans/2026-09-17-subagent-support.md).
 
+## 2026-09-19: Unified fleet indicator, split fleet view overlay, and nested delegation
+
+**Reviewed implementation:** the working tree implementing the [unified fleet indicator plan](../../.plans/2026-09-19-unified-fleet-indicator.md) phases U1–U3 and N1–N2. **Execution date:** 2026-09-19.
+
+| Check | Observed result | Verification limit |
+| --- | --- | --- |
+| `npm run check` | TypeScript checking passed. | Static checking only. |
+| `npm run test:subagents` | All 175 tests passed, including the rewritten fleet view suite, the new nested-delegation suite (tree aggregation, stop cascade, sibling isolation, tree recovery, depth rejection), and the end-to-end runner tests where a real child session loads the extension and delegates a nested agent through the fixture provider. | Deterministic providers and fixtures, not real providers. |
+| `npm run test:acceptance` | All 158 scenarios passed, including the new ACC-SA-02-02a/b/c indicator scenarios and the ACC-SA-02-11/12/13/14 overlay scenarios. | Scenario bindings are reviewed adapters, not independent specification. |
+| `npm run lint:acceptance` and `npm run lint:mermaid` | 10 Gherkin files with 104 scenario identities validated; 27 Mermaid blocks valid. | Syntax and traceability checks, not behavioral execution. |
+| ACC-SA-07-06 permission broadening | The runner admits delegation tool names to a child session's model and tool execution only while this extension's own registration marker stands for that session, so a foreign extension cannot hijack the names inside an allowlisted session. | The marker distinguishes registration origin, not the intent of a genuine registered tool. |
+
+Human visual approval of the indicator and overlay remains unrecorded and separate. Mouse wheel scrolling depends on a mouse-enabled host and was verified by component-level tests only.
+
 ## 2026-09-19: Model fallback availability repair
 
 **Reviewed implementation:** the working tree implementing the [model fallback availability repair plan](../../.plans/2026-09-19-model-fallback-availability-repair.md) phases R1–R3, in response to the AnyDict production failures of 2026-09-19. **Execution date:** 2026-09-19.

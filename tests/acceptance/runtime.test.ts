@@ -406,5 +406,5 @@ runFeatures(["delegation", "messaging", "cancellation", "session-recovery", "out
   messaging: "92bdf9ed1c321276fdb56c19ffc08e4eb7d591518741015a1689d561aa2f5555",
   cancellation: "19f34013acff66973c725eeb33afbc16248c527ce8b79bef06d3a1deace09709",
   "session-recovery": "c61448a5697766d789537c4d869a16f55c3a4504fd42213a601f19aad4a42773",
-  "output-and-headless": "0e08fffc830e2f331f5136eeea0852525af356103c68a113d04679ed15371006",
+  "output-and-headless": "28b939d53e04305786f49d97daeb5efb2911747bea9d58f7245d77fabfaca244",
 });

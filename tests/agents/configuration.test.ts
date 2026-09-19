@@ -19,7 +19,7 @@ function fixture(t: TestContext) {
 
 test("configuration defaults, trusted overlay, and nonmutation", (t) => {
   const { cwd, agentDir, put } = fixture(t);
-  assert.deepEqual(loadAgentConfiguration(cwd, agentDir, false), { modelFallbackLists: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, ui: { inlineToolDisplay: "rich", fleetViewPlacement: "belowEditor", asyncWidget: true, fleetKeybindings: {} } });
+  assert.deepEqual(loadAgentConfiguration(cwd, agentDir, false), { modelFallbackLists: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, maxNestingDepth: 3, ui: { inlineToolDisplay: "rich", fleetViewPlacement: "belowEditor", fleetKeybindings: {} } });
   const global = join(agentDir, "secretary.json"), project = join(cwd, CONFIG_DIR_NAME, "secretary.json");
   const content = JSON.stringify({ unrelated: true, agents: { modelFallbackLists: { fast: ["p/one", "p/two"], cheap: [] }, maxConcurrent: 2 } });
   put(global, content);
@@ -38,8 +38,8 @@ test("configuration defaults, trusted overlay, and nonmutation", (t) => {
 
 test("configuration rejects unsupported fields and invalid values", (t) => {
   const { cwd, agentDir, put } = fixture(t);
-  for (const agents of [null, [], { extra: 1 }, { maxConcurrent: 0 }, { maxQueued: -1 }, { shutdownTimeoutMs: 1.2 }, { modelAliases: { sonnet: "p/id" } }, { modelFallbackLists: null }, { modelFallbackLists: [] }, { modelFallbackLists: { "bad name": ["p/id"] } }, { modelFallbackLists: { inherit: ["p/id"] } }, { modelFallbackLists: { fast: "p/id" } }, { modelFallbackLists: { fast: ["no-slash"] } }, { modelFallbackLists: { fast: ["p/id", "p/id"] } }, { modelFallbackLists: { fast: [42] } },
-    { ui: null }, { ui: { unknown: true } }, { ui: { inlineToolDisplay: "fancy" } }, { ui: { fleetViewPlacement: "sidebar" } }, { ui: { asyncWidget: "yes" } },
+  for (const agents of [null, [], { extra: 1 }, { maxConcurrent: 0 }, { maxQueued: -1 }, { shutdownTimeoutMs: 1.2 }, { maxNestingDepth: 0 }, { maxNestingDepth: 1.5 }, { maxNestingDepth: "3" }, { modelAliases: { sonnet: "p/id" } }, { modelFallbackLists: null }, { modelFallbackLists: [] }, { modelFallbackLists: { "bad name": ["p/id"] } }, { modelFallbackLists: { inherit: ["p/id"] } }, { modelFallbackLists: { fast: "p/id" } }, { modelFallbackLists: { fast: ["no-slash"] } }, { modelFallbackLists: { fast: ["p/id", "p/id"] } }, { modelFallbackLists: { fast: [42] } },
+    { ui: null }, { ui: { unknown: true } }, { ui: { inlineToolDisplay: "fancy" } }, { ui: { fleetViewPlacement: "sidebar" } },
     { ui: { fleetKeybindings: [] } }, { ui: { fleetKeybindings: { frobnicate: ["f"] } } }, { ui: { fleetKeybindings: { stop: [] } } }, { ui: { fleetKeybindings: { stop: [42] } } }]) {
     put(join(agentDir, "secretary.json"), JSON.stringify({ agents }));
     assert.throws(() => loadAgentConfiguration(cwd, agentDir, false));
@@ -48,6 +48,8 @@ test("configuration rejects unsupported fields and invalid values", (t) => {
   assert.throws(() => loadAgentConfiguration(cwd, agentDir, false), /modelFallbackLists/, "The removed key's error names the replacement");
   put(join(agentDir, "secretary.json"), JSON.stringify({ agents: { modelFallbackLists: { empty: [] } } }));
   assert.deepEqual(loadAgentConfiguration(cwd, agentDir, false).modelFallbackLists, { empty: [] }, "An empty list is valid configuration");
+  put(join(agentDir, "secretary.json"), JSON.stringify({ agents: { maxNestingDepth: 1 } }));
+  assert.equal(loadAgentConfiguration(cwd, agentDir, false).maxNestingDepth, 1, "A depth of one permits top-level agents only");
 });
 
 test("ui configuration accepts documented values and project overrides merge over global", (t) => {
@@ -56,7 +58,7 @@ test("ui configuration accepts documented values and project overrides merge ove
   put(global, JSON.stringify({ agents: { ui: { inlineToolDisplay: "summary", asyncWidget: false, fleetKeybindings: { stop: ["shift+t"], close: ["ctrl+q"] } } } }));
   const base = loadAgentConfiguration(cwd, agentDir, false);
   assert.equal(base.ui.inlineToolDisplay, "summary");
-  assert.equal(base.ui.asyncWidget, false);
+  assert.ok(!Object.hasOwn(base.ui, "asyncWidget"), "the removed asyncWidget key is recognized and ignored (§12.6.5)");
   assert.equal(base.ui.fleetViewPlacement, "belowEditor");
   assert.deepEqual(base.ui.fleetKeybindings, { stop: ["shift+t"], close: ["ctrl+q"] });
   put(project, JSON.stringify({ agents: { ui: { fleetViewPlacement: "aboveEditor", fleetKeybindings: { stop: ["shift+w"] } } } }));

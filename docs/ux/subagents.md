@@ -2,15 +2,15 @@
 
 **Document type:** UX and interaction specification.
 
-**Status:** Interaction specification for the implemented subagent interface. Automated execution evidence is recorded in the [verification report](../testing/subagent-verification.md); human visual approval remains separate.
+**Status:** Interaction specification for the subagent interface. Automated execution evidence is recorded in the [verification report](../testing/subagent-verification.md); human visual approval remains separate. Revised 2026-09-19: the unified fleet indicator ([Section 2.2](#22-fleet-indicator)) and the split fleet view overlay ([Section 2.4](#24-fleet-view-overlay)) are implemented and replace the former FleetView, async widget, and inspector.
 
 **Related documents:** [Requirements](../user-stories/subagents.md), [technical design](../arch/subagents.md), and [research](../research/subagent-system-comparison.md).
 
 ## 1. Design Principles
 
-- The interface ports nicobailon's inline display, FleetView, async widget, and inspector interaction model onto Secretary's Claude Code-compatible runtime.
+- The interface ports nicobailon's inline display, fleet navigation, and inspector interaction model onto Secretary's Claude Code-compatible runtime. A single unified fleet indicator replaces the former FleetView summary and the async widget; background work no longer has a second live list.
 - The user can inspect background work without asking the parent model to poll.
-- FleetView is displayed below the editor by default and can be configured above it. The async widget is displayed below the editor by default and can be disabled.
+- The fleet indicator is displayed below the editor by default and can be configured above it.
 - Status uses text and symbols as well as color.
 - Closing a view is different from stopping execution.
 - A completed execution is different from a completed user objective.
@@ -31,41 +31,65 @@ Foreground detach, live prompt auditing, external job display, and external term
 - The configured pi tool-expansion key reveals task details, result text, and artifact paths in rich mode.
 - A truncated result identifies where the full output can be read.
 
-### 2.2 FleetView
+### 2.2 Fleet indicator
 
-- The collapsed view reports active and queued work belonging to the current parent session. It includes cumulative usage labels when usage is available and identifies the activation keys.
-- The expanded view contains the main session and agent rows ordered by creation time.
-- Each row shows the agent name, an explicit status glyph and label, elapsed execution time when available, and usage labels when available.
-- Rows are themed and display width-aware. The layout truncates by terminal display width and realigns right-side information after resize.
+- The fleet indicator is the single agent list below (or above) the editor. It replaces the former collapsed/expanded FleetView and the separate async widget. There is no summary or info bar; the list itself is the whole surface.
+- The indicator is always visible. When no agents exist, it shows only the main row.
+- The main session is always the first row and cannot be collapsed. Top-level agents are appended in creation order while their execution is non-terminal (queued, starting, running, or cancelling).
+- A row is removed immediately when its execution reaches a terminal status. The completion remains visible through the inline completion entry in the transcript, and terminal agents remain inspectable in the fleet view overlay.
+- Each row shows a selection circle, the agent name, an explicit status text label, and right-aligned elapsed time and usage labels when available.
+- The selection circle is hollow (`○`) on an unselected row and filled (`●`) on the selected row. The circle encodes selection only. Status is conveyed by the text label, never by the circle's shape or color; the filled circle may use the theme's accent color, but color is never the only channel.
 - **Context-window usage** is the latest assistant turn's input plus cache-read tokens. **Cumulative usage** is the accumulated input-plus-output total. These are different quantities and are labeled separately. They are not the goal-budget usage defined by the goal subsystem, and they are not substituted for it.
 - Unknown usage is not displayed as zero. Rows whose source artifacts predate window data keep the token-total label without a window label.
-- Recently finished executions remain visible until FleetView is next collapsed. The inspector retains the full session list.
-- FleetView is hidden when no active, queued, or recently finished work remains. The inspector can still be opened by command.
+- Rows are themed and display width-aware. The layout truncates by terminal display width and realigns right-side information after resize.
+- When more rows exist than fit, the visible window follows the selection.
+- Pressing Down in an empty, focused editor moves focus into the list and selects the first row. Up and Down move the selection. Pressing Up on the first row or pressing Escape returns focus to the editor. Left no longer activates the indicator. Enter opens the fleet view overlay on the selected row.
+
+The following is a layout example with an active selection. Angle-bracket values are placeholders, not measurements:
+
+```text
+○ main
+● <agent name> · <status> · <elapsed> · <window> · <cumulative>
+○ <agent name> · <status>
+```
+
+### 2.3 Async widget (removed)
+
+- The async widget is removed. Active background executions appear as rows in the fleet indicator ([Section 2.2](#22-fleet-indicator)) instead of a second live list.
+- The widget's enable, fold, and expansion configuration no longer exists. Live per-agent activity is visible in the fleet view overlay instead of an activity sub-line in the indicator.
+
+### 2.4 Fleet view overlay
+
+- The fleet view overlay is the inspector, presented as a full fleet view. Pressing Enter on a fleet indicator row opens the overlay focused on that agent. `/agents` opens the overlay, and `/agents <id-or-name>` opens one agent directly.
+- The overlay is a bordered overlay with a title row showing the active agent count, a selection-position indicator, a footer of available keys, and a minimum supported width below which only a diagnostic line is shown.
+- On wide terminals the overlay is a vertical split: a narrow navigation list on the left and the selected agent's transcript on the right. The list column is a fixed narrow width sized to the longest visible row label, capped at 32 columns; the transcript occupies the remaining width.
+- On narrow terminals the overlay displays a full-width selectable list followed by a full-width detail view for the chosen agent.
+- The list contains subagents only. The main session is not a row in the overlay; its transcript is the session behind the overlay.
+- The default filter lists active and queued agents. Pressing `a` toggles the filter to also list terminal agents (succeeded, failed, cancelled, or interrupted). The footer identifies the toggle.
+- Each list row uses the same selection-circle convention as the fleet indicator and shows only the agent name. Status, elapsed time, usage, and current activity are not repeated on list rows; they appear in the status header of the transcript pane for the selected agent.
+- The title row shows a bounded breadcrumb of the current drill path: the root label (`Agents`), the current level, and its nearest ancestor, with intermediate levels elided as `…` (for example `Agents › … › code-search › parser`). The title row also shows the active agent count.
+- The left list always displays exactly one level of the hierarchy. On open it lists the top-level agents of the session. The list contains subagents only; the main session is not a row in the overlay.
+- Pressing Enter or Right on a selected agent drills into that agent: the list replaces itself with the agent's nested children and selects the first child. Pressing Left returns to the parent level and re-selects the agent the user came from. Left at the root level does nothing. This follows the same level-navigation convention as the [Secretary configuration menu](#25-secretary-configuration-menu).
+- Enter or Right on an agent without nested children does not change the level. A session in which no agent has children therefore offers no level beyond the root, and drilling is never available.
+- The default filter lists active and queued agents at the current level. Pressing `a` toggles the filter to also list terminal agents (succeeded, failed, cancelled, or interrupted). The filter applies to every level and is identified in the footer.
+- The transcript pane always shows the selected agent and updates as the selection moves.
+- The transcript pane is split into a fixed status header and the scrolling transcript below it. The header floats at the top of the pane as an inline panel without an enclosing box: its first line shows the agent name, status label, elapsed time, and available usage labels, its second line shows the current activity, and a single horizontal divider separates it from the transcript. The header never scrolls with the transcript. The same header applies to the full-width detail view on narrow terminals.
+- Optionally, in a mouse-enabled full-screen host, wheel scrolling over the transcript pane scrolls the transcript with the same auto-follow pause and resume rules as keyboard scrolling, and wheel scrolling over the navigation list moves the selection. This enhancement is host-dependent and is not a required behavior; keyboard scrolling remains the primary contract.
 
 The following is a layout example. Angle-bracket values are placeholders, not measurements:
 
 ```text
-<active count> active agents · <queued count> queued · <window label> · <cumulative label> · ↓/← to inspect
-
-> main
-  general-purpose  Implement validation        <elapsed> · <window> · <cumulative>
-  reviewer         Review error handling       <elapsed> · <window> · <cumulative>
+┌ Agents › <parent agent> ────────────── <active count> active ─┐
+│ ● <agent name>  │ <name> · <status> · <elapsed> · <window> · <cumulative>
+│ ○ <agent name>  │ activity: <current activity>                |
+│                 │ ────────────────────────────────────────────|
+│                 │ <transcript of the selected agent>          |
+├─────────────────┴─────────────────────────────────────────────┤
+│ ↑/↓ select · Enter/→ open · ← back · a finished · s message   │
+│ D stop · r reload · Esc close                                 │
+└───────────────────────────────────────────────────────────────┘
 ```
 
-### 2.3 Async widget
-
-- The async widget is a separate live summary below the editor. It lists active background executions with status glyphs, per-agent rows, current activity, elapsed time, and available usage.
-- It is enabled by default. Configuration can disable it without disabling FleetView.
-- Its expand key follows the configured pi tool-expansion key. Expanding reveals live detail lines for running children.
-- It does not intercept printable editor keys. Clicking its header in a mouse-enabled full-screen host folds it into a one-line status summary; clicking again restores the layout. Folding does not change run execution or completion notification.
-- The widget is removed when no active background work remains.
-
-### 2.4 Inspector
-
-- `/agents` opens the current-session agent list and selected transcript.
-- `/agents <id-or-name>` opens one agent directly.
-- The inspector is a bordered overlay with a title row, a selection-position indicator, a footer of available keys, and a minimum supported width below which only a diagnostic line is shown.
-- Wide terminals display the agent list beside the transcript. Narrow terminals display a selectable list followed by a full-width detail view.
 - Details include the original task, definition source, model, status, current activity, messages, tool calls, outcome, output path, and worktree information.
 - The transcript renders assistant text as Markdown where appropriate, tool calls with their name, bounded arguments, status, and bounded output, and notices such as queued or undelivered guidance. Control sequences from transcripts are not executed.
 - New content is followed automatically only while the user is at the end of the transcript.
@@ -216,8 +240,8 @@ until they are updated.
 
 - **User intent:** The user wants to understand delegated work and its current outcome.
 - **Entry conditions:** The current session has an agent record, or the user knows its identifier.
-- **User action:** The user presses Down or Left in an empty editor, selects an agent, and presses Enter. The user can instead invoke `/agents`.
-- **Observable outcome:** The inspector shows the selected agent without starting a model turn.
+- **User action:** The user presses Down in an empty editor, selects an agent, and presses Enter. The user can instead invoke `/agents`.
+- **Observable outcome:** The fleet view overlay shows the selected agent without starting a model turn.
 - **Feedback:** The view identifies the agent, execution state, and whether the transcript is live or historical.
 - **Failure and recovery:** Missing artifacts remain visible as a diagnostic. The user can inspect the retained record and output paths; the interface does not manufacture a transcript.
 
@@ -290,10 +314,14 @@ Secretary initially exposes one guidance operation. Nicobailon's `steer`, `follo
 
 | Context | Key | Behavior |
 | --- | --- | --- |
-| The editor is empty and focused. | Down or Left | The key activates FleetView when visible. |
-| FleetView has focus. | Up/Down or `j/k` | The key changes selection. |
-| FleetView has focus. | Enter | The key opens the selected inspector or returns to the main session. |
-| FleetView has focus. | Escape | The key returns focus to the editor. |
+| The editor is empty and focused. | Down | The key moves focus into the fleet indicator and selects the first row. |
+| The fleet indicator has focus. | Up/Down or `j/k` | The key changes selection. Up on the first row returns focus to the editor. |
+| The fleet indicator has focus. | Enter | The key opens the fleet view overlay focused on the selected agent. |
+| The fleet indicator has focus. | Escape | The key returns focus to the editor. |
+| The fleet view overlay is open. | Up/Down or `j/k` | The key changes the selected agent at the current level. |
+| The fleet view overlay is open. | Enter or Right | The key drills into the selected agent's nested level when it has children. Right on a childless agent does nothing. |
+| The fleet view overlay is open. | Left | The key returns to the parent level and re-selects the agent the user came from. At the root level it does nothing. |
+| The fleet view overlay is open. | `a` | The key toggles whether terminal agents are listed. |
 | The inspector is open. | Up/Down or `j/k` | The key changes the selected agent. |
 | The inspector is open. | Home/End | The key selects the first or last agent. |
 | The inspector is open. | Page Up/Page Down | The key scrolls by the available transcript viewport. |
@@ -366,7 +394,7 @@ sequenceDiagram
 - Print and JSON mode reject a request to resume an idle agent through `SendMessage`, because that operation starts background execution. The response directs the caller to use a persistent TUI or RPC session; it does not accept work that normal process completion would terminate.
 - Cleanup requiring confirmation is unavailable in headless mode. Model-facing `TaskStop` remains an explicit stop request and does not require a dialog.
 - In print, JSON, and non-persistent modes, `/secretary` returns text that states the user-global configuration file path and summarizes the configured fallback lists. It does not open a terminal component or accept edits.
-- If the agents UI configuration cannot be read or contains fields or values this build does not support — for example a key written into the shared user-global file by a different Secretary version — FleetView and the async widget keep rendering with their documented defaults, and an error notification states that the configuration was not applied. The notification appears once per distinct problem and appears again only after the problem has cleared and recurred. When the configuration becomes valid, the configured placement, widget visibility, and inspector keys take effect on the next display refresh.
+- If the agents UI configuration cannot be read or contains fields or values this build does not support — for example a key written into the shared user-global file by a different Secretary version — the fleet indicator and the fleet view overlay keep rendering with their documented defaults, and an error notification states that the configuration was not applied. The notification appears once per distinct problem and appears again only after the problem has cleared and recurred. When the configuration becomes valid, the configured placement and overlay keys take effect on the next display refresh.
 
 ## 7. Review Criteria
 

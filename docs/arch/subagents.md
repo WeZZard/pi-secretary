@@ -2,7 +2,7 @@
 
 **Document type:** Software design specification.
 
-**Status:** Maintained architectural contract for the implemented subagent subsystem. Verification results and known gaps are recorded separately in the [verification report](../testing/subagent-verification.md). Normative requirements in this document are not evidence that every host integration has been verified.
+**Status:** Maintained architectural contract for the subagent subsystem. Verification results and known gaps are recorded separately in the [verification report](../testing/subagent-verification.md). Normative requirements in this document are not evidence that every host integration has been verified. Revised 2026-09-19: [Section 12](#12-tui-implementation-boundary) now specifies the unified fleet indicator and the split fleet view overlay in place of the former FleetView and async widget, and nested delegation is added to the runtime contract; both revisions are implemented.
 
 **Implementation baseline:** `01f851a`, tested with Pi 0.85.1. Claude Code 2.1.272 supplies the tool-contract reference; the [historical research](../research/subagent-system-comparison.md) records the original source revisions.
 
@@ -13,12 +13,12 @@
 ### 1.1 Confirmed decisions
 
 - Claude Code defines the reference tool names and input schemas.
-- Nicobailon's implementation defines the TUI reference. Its inline display, FleetView, async widget, and inspector surfaces are ported onto Secretary's runtime. Surfaces that depend on out-of-scope runtime features are excluded; [Section 12.6](#126-ported-surfaces-and-mapping) defines the mapping and the exclusions.
+- Nicobailon's implementation defines the TUI reference. Its inline display, fleet navigation, and inspector surfaces are ported onto Secretary's runtime. The ported FleetView summary and async widget are superseded by a single unified fleet indicator, and the inspector becomes a split fleet view overlay. Surfaces that depend on out-of-scope runtime features are excluded; [Section 12.6](#126-ported-surfaces-and-mapping) defines the mapping and the exclusions.
 - Tintinweb's implementation is a reference for pi SDK integration, not a dependency or API authority.
 - Child execution stops when the parent pi process exits. Conversation persistence supports explicit resumption, not continued execution after exit.
 - `Agent.model` first matches the value against the models available in the session and then against the configured model fallback lists. The advertised enum includes the configured list names. With no lists configured, the field remains exposed without an enum constraint. `inherit` is also valid in agent definitions.
-- The initial scope includes delegation, foreground/background execution, messaging, cancellation, output retrieval, custom agent definitions, worktrees, and inspection.
-- Conversation forks, nested delegation, agent teams, remote execution, scheduling, and workflow orchestration are excluded.
+- The scope includes delegation, foreground/background execution, nested delegation, messaging, cancellation, output retrieval, custom agent definitions, worktrees, and inspection.
+- Conversation forks, agent teams, remote execution, scheduling, and workflow orchestration are excluded.
 
 ### 1.2 Implemented defaults
 
@@ -28,7 +28,7 @@
 - Normal print and JSON invocations use foreground execution when neither the caller nor the definition requires background execution. An explicit background request or a definition that requires background execution is rejected in those modes. `SendMessage` resumption of an idle agent is also rejected there because that operation starts background work and has no foreground parameter. This avoids accepting work that the host will immediately terminate.
 - Reload, new-session, resume-to-another-session, and parent-session fork stop the departing session's children rather than transferring live execution.
 - The initial concurrency limit is four active child executions, and the pending queue limit is sixteen. These are configurable limits, not measured performance claims.
-- The TUI ports nicobailon's surfaces onto the existing runtime: rich inline tool display with a summary alternative, FleetView below the editor, a separate async widget enabled by default, and the bordered inspector overlay with configurable inspector keybindings. No runtime feature beyond the existing scope is added for display purposes.
+- The TUI ports nicobailon's surfaces onto the existing runtime: rich inline tool display with a summary alternative, the unified fleet indicator below the editor, and the split fleet view overlay with configurable overlay keybindings. No runtime feature beyond the existing scope is added for display purposes.
 - A child conversation retains its resolved definition and model across resumption, subject to current permission and trust checks.
 - Agent records and transcripts are retained until explicit removal outside this release. The host does not perform automatic transcript deletion or worktree commits.
 
@@ -53,7 +53,7 @@ The implementation follows Claude's canonical names, core field shapes, and the 
 ```mermaid
 flowchart TB
     Tools[Agent, SendMessage, TaskStop, TaskOutput] --> Service[AgentService]
-    UI[FleetView and inspector] --> Service
+    UI[Fleet indicator and fleet view overlay] --> Service
     Service --> Registry[Agent definition registry]
     Service --> Scheduler[Execution queue]
     Scheduler --> Runner[pi session runner]
@@ -258,7 +258,7 @@ Discovery order, from highest to lowest precedence, is:
 - The registry rejects duplicate names within one scope and invalid frontmatter.
 - The initial frontmatter subset includes `name`, `description`, `tools`, `disallowedTools`, `model`, `maxTurns`, `background`, and `isolation`.
 - Tool lists use actual pi tool names. This is an explicit agent-definition adaptation, not a tool-schema change.
-- Unsupported behavioral fields such as permission overrides, hooks, nested delegation, or remote execution fail validation rather than being ignored.
+- Unsupported behavioral fields such as permission overrides, hooks, or remote execution fail validation rather than being ignored.
 - The definition's `background` field is a boolean with the resolution rules in Section 4.1. The definition's `isolation` field accepts `none` or `worktree`; unsupported values fail registry validation. Explicit invocation isolation wins over the definition default, but an explicit unsupported value is rejected rather than replaced.
 - Project trust is checked before project definitions, extensions, and configuration are honored.
 - A user definition can override a packaged agent; the inspector records the selected source and content hash.
@@ -321,7 +321,7 @@ Each candidate is checked in order against the model registry, the parent's scop
 
 | Entity | Key fields and responsibility |
 | --- | --- |
-| `AgentRecord` | It stores `agentId`, parent session identity, optional name, definition snapshot, model, tool policy, session path, resumability, and optional worktree ID. |
+| `AgentRecord` | It stores `agentId`, parent session identity, parent agent identity for nested delegation, optional name, definition snapshot, model, tool policy, session path, resumability, and optional worktree ID. |
 | `AgentRun` | It stores `runId`, `agentId`, status, launch origin, timestamps, output paths, partial-result metadata, and error or cancellation reason. |
 | `GuidanceRecord` | It stores an accepted guidance ID, target run, order, text, and delivery state. States distinguish pending, transport-accepted, consumed when provable, undelivered, and uncertain. |
 | `UsageRecord` | It stores a unique source event ID, run identity, normalized usage, and optional originating goal identity. |
@@ -407,7 +407,8 @@ The status vocabulary is internal. A new run is created for resumption; terminal
 - A definition's `maxTurns` is a positive integer configuration value; it is not added to the `Agent` schema.
 - Reaching a turn limit stops further ordinary work and records available output as partial.
 - The implementation may request a bounded final summary before a hard stop, but it must not represent a missing summary as complete output.
-- Definition limits, queue bounds, and goal budgets have distinct purposes and are reported separately.
+- Definition limits, queue bounds, nesting depth, and goal budgets have distinct purposes and are reported separately.
+- Nested delegation is bounded by a maximum depth below the main session, configured by `agents.maxNestingDepth` with a default of three levels. A child session below the maximum depth receives the delegation tools; at the maximum depth the delegation tools are not registered, and a direct launch attempt beyond it fails with an actionable error.
 
 ### 7.4 Shutdown and cancellation
 
@@ -415,6 +416,7 @@ The status vocabulary is internal. A new run is created for resumption; terminal
 - The service records the foreground waiter's cancellation independently of the child's outcome. If completion already committed, the final outcome remains completed rather than being overwritten by cancellation.
 - If the foreground waiter disappears before receiving the outcome, the service retains a completion-delivery record. The result is shown in the UI and included in the next parent context without requesting an automatic turn after a user abort. It is not lost because the run originally used foreground execution.
 - Session shutdown first refuses new launches and messages that would resume work.
+- Stopping an agent requests cancellation of its nested children before the parent settles; session shutdown stops the whole tree. A nested child never outlives its parent's session.
 - It cancels queued runs, requests cancellation of active runs, waits for observable settlement, flushes records, runs extension cleanup, and disposes sessions.
 - SDK resources are constructed under an async-context-local child marker so Secretary does not initialize another root controller inside a child.
 - Cleanup is idempotent and applies to partially initialized sessions as well as completed ones.
@@ -594,10 +596,10 @@ goal-budget token usage =
 
 The [interaction design](../ux/subagents.md) owns visible behavior. The following are technical mechanisms:
 
-- FleetView is a session-owned widget under a distinct Secretary key and does not replace the goal widget or the global footer. Its placement is configurable between below and above the editor; the default is below.
-- The async widget is a second session-owned widget under its own key. It is enabled by default and can be disabled by configuration. It lists active background executions independently of FleetView's collapsed summary.
-- The inspector is an in-process custom TUI component rendered as a bordered overlay. It does not depend on Herdr, Ghostty automation, or opening another terminal.
-- View models are immutable snapshots obtained from `AgentService`; progress events invalidate affected components. The async widget additionally polls on a bounded interval so elapsed time and spinner animation advance between service events; rendering is deduplicated by a render key so unchanged state does not repaint. Display reads never touch storage per paint or tick: `AgentService` publishes view models from an in-memory projection of committed state (§6.2), so a contended shared store cannot block or fail a paint (goal architecture §5.1.1, §13.6).
+- The fleet indicator is a session-owned widget under a distinct Secretary key and does not replace the goal widget or the global footer. Its placement is configurable between below and above the editor; the default is below.
+- The fleet indicator is the single below-editor agent list. It always renders the main row, appends non-terminal top-level agents in creation order, and removes a row immediately when its run reaches a terminal status. The async widget is removed; background executions no longer have a second list.
+- The fleet view overlay is an in-process custom TUI component rendered as a bordered overlay. It does not depend on Herdr, Ghostty automation, or opening another terminal.
+- View models are immutable snapshots obtained from `AgentService`; progress events invalidate affected components. The fleet indicator polls on a bounded interval so elapsed time advances between service events; rendering is deduplicated by a render key so unchanged state does not repaint. Display reads never touch storage per paint or tick: `AgentService` publishes view models from an in-memory projection of committed state (§6.2), so a contended shared store cannot block or fail a paint (goal architecture §5.1.1, §13.6).
 - The editor integration composes with an existing editor factory. It captures navigation only when the editor is empty and the agent component can receive focus.
 - If editor composition is unavailable, the `/agents` command remains functional and the adapter reports the missing shortcut integration rather than replacing another editor silently.
 - Transcript rendering uses structured events parsed from the persisted pi session file, bounded windows, and strips untrusted terminal control sequences. Raw artifacts are not interpreted as UI commands.
@@ -617,10 +619,10 @@ The [interaction design](../ux/subagents.md) owns visible behavior. The followin
 stateDiagram-v2
     [*] --> Inactive
     Inactive --> Editor: Activate the parent UI
-    Editor --> Fleet: Activate visible FleetView from an empty editor
-    Fleet --> Editor: Escape or select main
+    Editor --> Fleet: Down in an empty editor
+    Fleet --> Editor: Escape or Up on the first row
     Editor --> Inspector: Open the agents command
-    Fleet --> Inspector: Open the selected agent
+    Fleet --> Inspector: Enter on the selected row
     state Inspector {
         [*] --> List
         List --> Loading: Select an agent
@@ -637,14 +639,15 @@ stateDiagram-v2
 ```
 
 - `Inactive` means no current parent TUI is bound. It does not mean that a particular agent is stopped.
-- `Editor` means the main editor owns keyboard focus. FleetView may still be visible as a collapsed summary.
-- `Fleet` means the expanded agent list owns keyboard focus.
-- `Inspector.List` presents the list without an agent selected. A direct agent command proceeds from this state to `Loading` with the requested selection.
+- `Editor` means the main editor owns keyboard focus. The fleet indicator remains visible with at least the main row.
+- `Fleet` means the fleet indicator list owns keyboard focus.
+- `Inspector.List` presents the overlay's navigation list at the current drill level. A direct agent command proceeds from this state to `Loading` with the requested selection.
+- The drill path and the terminal-agent filter are presentation state orthogonal to the inspector's inner states. Drilling in or out and toggling the filter do not change the `List`/`Loading`/`Ready`/`Unavailable` state kind.
 - `Inspector.Loading` shows which transcript is loading and allows the user to close the view or select another agent.
 - `Inspector.Ready` displays the selected agent's available transcript and actions.
 - `Inspector.Unavailable` displays a missing-record or load-failure diagnostic. It does not silently select a different agent.
 - A terminal agent outcome updates the visible status without leaving `Inspector.Ready`. Transcript loading does not infer that an agent is running.
-- Closing the inspector returns to the editor, including when it was opened through FleetView. The main editor draft is preserved.
+- Closing the overlay returns focus to the editor, including when it was opened through the fleet indicator. The main editor draft is preserved.
 
 #### 12.1.2 Dialog state machine
 
@@ -691,6 +694,7 @@ stateDiagram-v2
 
 - `Following` keeps the end of the selected transcript visible as output arrives.
 - `Paused` preserves the user's reading position while output continues.
+- Wheel scrolling in a mouse-enabled host drives the same transitions as keyboard scrolling; it adds no states.
 - These states apply while a selected transcript is ready. Selecting a different transcript initially follows its end; retrying the same transcript preserves the prior reading anchor when it can be recovered.
 - Resize and theme changes do not switch the following state. Agent completion does not reset it.
 
@@ -698,8 +702,8 @@ stateDiagram-v2
 
 | ID | Current state and event | Guard | Next state and observable effect |
 | --- | --- | --- | --- |
-| UI-01 | The editor receives FleetView activation. | The editor is empty, FleetView is visible, and no dialog is open. | FleetView receives focus without starting a model turn. |
-| UI-02 | The user opens an agent. | The agent belongs to the current parent session. | The inspector loads that agent and shows its identity during loading. |
+| UI-01 | The editor receives fleet indicator activation. | The editor is empty and no dialog is open. | The fleet indicator receives focus and selects its first row without starting a model turn. |
+| UI-02 | The user opens an agent. | The agent belongs to the current parent session. | The fleet view overlay loads that agent and shows its identity during loading. |
 | UI-03 | Transcript loading succeeds or fails. | The response still belongs to the visible selection. | The inspector shows the selected transcript or its diagnostic without changing selection. |
 | UI-04 | The user opens the composer. | The selected agent can receive guidance or resume. | The composer receives focus with a stable recipient and draft. |
 | UI-05 | The user submits guidance. | The draft is nonempty and no submission for that composer is pending. | The dialog enters `Submitting` and sends one request. |
@@ -708,8 +712,11 @@ stateDiagram-v2
 | UI-08 | A confirmation target becomes ineligible. | The selected run finished, another run started, or worktree eligibility changed. | Confirmation closes with an explanation and no replacement operation is submitted. |
 | UI-09 | The user dismisses a pending or uncertain submission. | The dialog has focus. | The originating view regains focus while the request remains tracked. No retry or cancellation is inferred. |
 | UI-10 | Progress, resize, or theme updates arrive. | The update belongs to the current session and selected record where applicable. | The view refreshes without discarding the draft, changing focus, or leaving paused transcript following. |
-| UI-11 | The user closes the inspector. | No dialog is open. | The editor and its draft are restored without cancelling work. |
+| UI-11 | The user closes the fleet view overlay. | No dialog is open. | The editor and its draft are restored without cancelling work. |
 | UI-12 | The parent UI is deactivated. | The host is leaving or replacing the session. | Views and drafts are cleared, and late responses cannot reopen them. Child shutdown follows the separate execution contract. |
+| UI-13 | The user drills into the selected agent. | The overlay is open and the selected agent has at least one nested child visible under the current filter. | The drill path gains the agent, the list shows its children, and the first child is selected. The transcript follows the new selection. |
+| UI-14 | The user returns to the parent level. | The drill path is nonempty. | The drill path drops its last entry, and the agent the user came from is re-selected. |
+| UI-15 | The user toggles terminal-agent visibility. | The overlay is open. | The filter flips, and the selection moves to the nearest remaining row only if the selected row left the list. |
 
 #### 12.1.5 Focus and race-condition invariants
 
@@ -728,14 +735,16 @@ stateDiagram-v2
 type NavigationState =
   | { kind: "inactive" }
   | { kind: "editor" }
-  | { kind: "fleet"; selectedAgentId: string | null }
+  | { kind: "fleet"; selectedAgentId: string | null } // null selects the main row
   | { kind: "inspector"; detail: InspectorState };
 
+type InspectorLevel = { path: string[]; includeFinished: boolean };
+
 type InspectorState =
-  | { kind: "list" }
-  | { kind: "loading"; agentId: string; requestId: string }
-  | { kind: "ready"; agentId: string; transcript: TranscriptView }
-  | { kind: "unavailable"; agentId: string; reason: string };
+  | { kind: "list"; level: InspectorLevel }
+  | { kind: "loading"; level: InspectorLevel; agentId: string; requestId: string }
+  | { kind: "ready"; level: InspectorLevel; agentId: string; transcript: TranscriptView }
+  | { kind: "unavailable"; level: InspectorLevel; agentId: string; reason: string };
 
 type DialogState =
   | { kind: "closed" }
@@ -753,7 +762,7 @@ type TranscriptFollowMode = "following" | "paused";
 - An action target retains the parent session, agent ID, and the relevant run ID or worktree ID. It records the revision observed when confirmation opened, but the service evaluates actual identity and eligibility at execution.
 - A pending operation retains an operation ID, action, target, submitted text where applicable, and the view instance that originated it.
 - The enclosing UI state retains the parent session ID, activation epoch, view instance ID, originating focus, and a monotonically increasing state revision.
-- An inspector supports a dialog, but FleetView does not. Opening a direct command's dialog from the editor retains the editor as its return location.
+- An inspector supports a dialog, but the fleet indicator does not. Opening a direct command's dialog from the editor retains the editor as its return location.
 - `inactive` requires a closed dialog and no bound terminal references. `composing` requires an inspector with a selected record. `confirming` supports either editor-originated commands or the inspector.
 - These constraints are checked by the reducer. The Cartesian product of the unions is not a declaration that every combination is legal.
 - Renderer state never writes an `AgentRun` status. A submitted stop request and a cancelling agent remain different records with different state machines.
@@ -810,7 +819,7 @@ transition(state, event, serviceSnapshot): {
 - Tests assert both the resulting state and emitted effects. A correct rendered label does not compensate for an unintended service request.
 - Model-based tests traverse legal event sequences and assert focus uniqueness, target stability, one submission per operation, draft preservation, and absence of service effects after UI deactivation.
 - Adversarial event sequences include selecting B before A finishes loading, repeated Enter during submission, cancelling a modal during a pending response, a target finishing during confirmation, and session replacement before an acknowledgment arrives.
-- Runner settlement and UI navigation are tested independently. Closing the inspector must emit no cancellation effect; stopping a run must not close the inspector automatically.
+- Runner settlement and UI navigation are tested independently. Closing the overlay must emit no cancellation effect; stopping a run must not close the overlay automatically.
 - Adapter integration tests verify that key events are consumed once and that effect outcomes carry correlation metadata. Pure reducer tests alone do not establish correct pi keyboard behavior.
 - The [UI state-machine feature](../../doc/acceptance/ui-state-machine.feature) provides user-visible acceptance coverage. It complements, rather than replaces, transition and effect tests.
 
@@ -823,9 +832,9 @@ This section defines how nicobailon's TUI surfaces map onto Secretary components
 | Upstream surface | Upstream source | Secretary component | Data source |
 | --- | --- | --- | --- |
 | Inline tool display, rich and summary modes | `src/tui/render.ts` (`renderSubagentSummary`, `renderSubagentResult`) | `tools/rendering.ts` | The tool result details and live `AgentSnapshot` |
-| FleetView widget | `src/tui/fleet-status.ts` | `ui/fleet-view.ts` | `AgentService` view-model snapshots |
-| Async widget | `src/tui/render.ts` (`buildWidgetLines`, `renderWidget`) | `ui/async-widget.ts` | `AgentService` view-model snapshots |
-| Fleet inspector overlay | `src/tui/fleet.ts` | `ui/inspector.ts` | `AgentService` view-model snapshots and the structured transcript reader |
+| Fleet indicator widget | `src/tui/fleet-status.ts` | `ui/fleet-view.ts` | `AgentService` view-model snapshots |
+| Async widget | `src/tui/render.ts` (`buildWidgetLines`, `renderWidget`) | Removed; its rows are merged into the fleet indicator | `AgentService` view-model snapshots |
+| Fleet view overlay (inspector) | `src/tui/fleet.ts` | `ui/inspector.ts` | `AgentService` view-model snapshots and the structured transcript reader |
 | Structured transcript rendering | `src/tui/fleet-transcript.ts` | `ui/transcript-events.ts` and `ui/transcript.ts` | The persisted pi session JSONL |
 | Usage labels | `src/tui/fleet-status.ts` (`formatFleetTokens`) and `docs/observability.md` | `ui/usage-labels.ts` | Derived from persisted usage events |
 | Configurable inspector keybindings | `src/tui/fleet.ts` (`FleetKeybindingsConfig`) and `src/extension/config.ts` | `ui/keybindings.ts` and `configuration.ts` | The `agents.ui` configuration object |
@@ -849,28 +858,29 @@ type TranscriptEvent =
 - Parsing is bounded by line count and byte size, with an explicit truncation marker. A partial trailing line from concurrent writing is ignored rather than rendered as content.
 - All event text passes through the existing terminal-control sanitization before rendering. Assistant text renders as Markdown; tool arguments and outputs render as bounded plain or fenced text.
 
-#### 12.6.3 FleetView and async-widget view models
+#### 12.6.3 Fleet indicator and overlay view models
 
-`AgentService` publishes immutable view-model snapshots for the widgets in addition to the existing `AgentSnapshot` list. A row view model carries the agent identifier, name, explicit status, description, resolved model, `startedAt` timestamp, current activity, and optional usage labels. Widgets never compute state; they render the snapshot.
+`AgentService` publishes immutable view-model snapshots for the widgets in addition to the existing `AgentSnapshot` list. A row view model carries the agent identifier, parent agent identifier, name, explicit status, description, resolved model, `startedAt` timestamp, current activity, and optional usage labels. The fleet indicator renders the main row followed by rows whose parent is the main session and whose status is non-terminal; it renders no other rows. The overlay groups rows by parent agent identifier to build its drill-down levels, and its filter drops or retains terminal statuses. Widgets never compute state; they render the snapshot.
 
-Usage labels follow the [interaction design](../ux/subagents.md#22-fleetview):
+Usage labels follow the [interaction design](../ux/subagents.md#22-fleet-indicator):
 
 - **Context-window usage** is the latest assistant turn's input plus cache-read tokens. It requires per-turn reporting; when the host does not report it, the label is omitted rather than shown as zero.
 - **Cumulative usage** is the accumulated input-plus-output total derived from persisted usage events.
 - Neither label is the goal-budget usage formula of Section 11.2. Goal charging continues to use the established formula on the same underlying usage events, and the widget labels must not be reused for it.
 
-The async widget maintains a bounded polling timer and a render key. The timer is unreferenced so it cannot keep the process alive, is disposed on deactivation, and a repaint is skipped when the render key is unchanged and no row is running.
+The fleet indicator maintains a bounded polling timer and a render key. The timer is unreferenced so it cannot keep the process alive, is disposed on deactivation, and a repaint is skipped when the render key is unchanged and no row is running.
 
 View models are served from the in-memory projection defined in §6.2. A paint or poll tick is a non-blocking, total operation: it performs no shared-store I/O and therefore cannot observe `SQLITE_BUSY`, and it must not throw out of the host's render path (goal architecture §13.6). Resolving the Section 12.6.5 UI options is part of this path, so that resolution is guarded against configuration failure as defined there. Storage reads belong to commit and recovery boundaries, where a failure is a genuine mutation failure that propagates to the caller rather than reaching the TUI.
 
-#### 12.6.4 Inspector presentation components
+#### 12.6.4 Fleet view overlay presentation components
 
-The inspector overlay adds presentation-layer components that upstream implements as layout functions:
+The fleet view overlay adds presentation-layer components that upstream implements as layout functions:
 
-- A bordered frame with a title row, the selection-position indicator, and a footer of currently available keys. Below a minimum width of 36 columns the inspector renders a single diagnostic line instead of panes.
-- A roster pane and a detail pane whose widths derive from the terminal width. Narrow terminals fall back to the existing stacked layout.
-- Themed status glyphs per run status so color is never the only status channel.
-- The transcript viewport, scrolling, and follow behavior of Sections 12.1.3 and 12.4 render the structured events of Section 12.6.2. Tool-detail expansion toggles the bounded argument and output blocks.
+- A bordered frame with a title row showing the bounded drill-path breadcrumb and the active agent count, the selection-position indicator, and a footer of currently available keys. Below a minimum width of 36 columns the overlay renders a single diagnostic line instead of panes.
+- A vertical split on wide terminals: a navigation list pane on the left and a transcript pane on the right. The list column is a fixed narrow width sized to the longest visible row label, capped at 32 columns; the transcript pane takes the remaining width. Narrow terminals fall back to the existing stacked layout.
+- Selection circles per row so the filled circle marks the selected row and the hollow circle marks the rest. List rows carry only the circle and the agent name; run status, stats, and activity render in the transcript pane's status header. The former status-glyph alphabet is not used on these rows, and color is never the only channel.
+- The navigation list presents exactly one drill level at a time, derived from the `InspectorLevel` of Section 12.1.6, and renders the bounded breadcrumb for that level.
+- The transcript viewport, scrolling, and follow behavior of Sections 12.1.3 and 12.4 render the structured events of Section 12.6.2. A fixed status header renders above the viewport: name, status label, and stats on the first line, current activity on the second, and a single divider between the header and the viewport. The header is not part of the scroll anchor or the follow state. Tool-detail expansion toggles the bounded argument and output blocks. In a mouse-enabled host, wheel events over the transcript pane scroll the transcript and wheel events over the list move the selection; both reuse the existing state machines and add no states.
 - The footer enumerates only the actions available for the selected record and reflects configured keybindings.
 
 These components consume state from the Section 12.1 state machines. They do not add navigation, dialog, or execution states, and they emit no service effects of their own.
@@ -883,10 +893,11 @@ The `agents` configuration object gains an optional `ui` object with validated k
 | --- | --- | --- |
 | `agents.ui.inlineToolDisplay` | `"rich"` or `"summary"` | `"rich"` |
 | `agents.ui.fleetViewPlacement` | `"belowEditor"` or `"aboveEditor"` | `"belowEditor"` |
-| `agents.ui.asyncWidget` | boolean | `true` |
-| `agents.ui.fleetKeybindings` | Inspector-level action-to-key-list overrides | Upstream defaults |
+| `agents.ui.fleetKeybindings` | Overlay-level action-to-key-list overrides | Upstream defaults |
 
-The inspector-level actions are `close`, `scrollUp`, `scrollDown`, `selectUp`, `selectDown`, `selectFirst`, `selectLast`, `pageUp`, `pageDown`, `refresh`, `steer`, `stop`, and `toggleTools`, matching the upstream action set minus the plugin and prompt-audit actions. Prompt interactions such as composer Enter and Escape keep fixed keys. Configuration follows the existing global and trusted-project precedence of Section 5.3; project configuration overrides global values, and the editor-activation keys are not configurable in this release.
+The removed `agents.ui.asyncWidget` key is recognized and ignored so that configurations written by earlier builds remain valid; it is not treated as an unknown key.
+
+The overlay-level actions are `close`, `scrollUp`, `scrollDown`, `selectUp`, `selectDown`, `selectFirst`, `selectLast`, `pageUp`, `pageDown`, `refresh`, `steer`, `stop`, `toggleTools`, `drillIn`, `drillOut`, and `toggleFinished`, matching the upstream action set minus the plugin and prompt-audit actions plus the drill-down and filter actions. Prompt interactions such as composer Enter and Escape keep fixed keys. Configuration follows the existing global and trusted-project precedence of Section 5.3; project configuration overrides global values, and the editor-activation keys are not configurable in this release.
 
 The `agents.ui` values are consumed on the display path: the widgets re-resolve them whenever a paint or poll refresh runs, so resolution failure handling is part of the display contract of Section 12.6.3. A configuration that fails validation — including a key written into the shared user-global file by a different Secretary build — degrades the surfaces to the documented defaults of this section and produces one diagnostic notification per distinct fault; the notification state re-arms after a successful resolution, so a fault that clears and recurs is reported again. Validation failure stays decisive at the file-loading and menu-write boundaries; on the paint and poll path it is never a process-fatal condition (goal architecture §13.6).
 
@@ -943,7 +954,8 @@ If a future release adds one of these runtime features, its surface is designed 
 | SA-07 | Registry precedence, project trust, fallback-list resolution, missing and empty lists, candidate ordering, availability-cache behavior, and late tool registration tests cover configuration. |
 | SA-08 | Atomic usage application, event replay, goal replacement, stopped goals, and continuation waiting tests cover goal integration. |
 | SA-09 | SDK and adapter tests cover host-mode restrictions and child UI lifecycles. Real-provider CLI tests separately exercise print-mode spawning and interactive-parent spawning with widget extensions. These do not establish every RPC client or extension combination. |
-| SA-10 | Structured-transcript parsing tests cover tool pairing, guidance notices, truncation bounds, and sanitization. View-model tests cover usage-label derivation and the no-zero-for-unknown rule. Widget render-key tests cover deduplication and timer disposal. Keybinding-configuration tests cover validation, precedence, and hint consistency. Border and layout snapshot tests cover minimum width, narrow and wide panes, and resize. The recorded UI walkthrough additionally covers the async widget and both display modes. |
+| SA-10 | Structured-transcript parsing tests cover tool pairing, guidance notices, truncation bounds, and sanitization. View-model tests cover usage-label derivation, the no-zero-for-unknown rule, indicator row filtering, and overlay level grouping. Render-key tests cover deduplication and timer disposal. Keybinding-configuration tests cover validation, precedence, and hint consistency. Border and layout snapshot tests cover minimum width, narrow and wide panes, the split layout's list-column cap, and resize. The recorded UI walkthrough additionally covers the fleet indicator and both display modes. |
+| SA-12 | Launch tests cover delegation-tool registration by depth, the maximum-depth rejection, parent-agent recording, and tree-wide shutdown. Reducer and layout tests cover drill-in, drill-out, selection restoration, and the terminal-agent filter. |
 | SA-11 | Configuration-schema validation, menu interaction and persistence tests, rendered-layout baselines, headless text-behavior tests, and the recorded UI walkthrough cover model fallback list management, including creation, renaming, removal, ordering, and picker filtering. The model-resolution scenarios in `agent-configuration.feature` cover fallback lists. |
 
 Additional release conditions are:

@@ -11,9 +11,10 @@ import { renderAgentResult, renderResult } from "../../extensions/secretary/agen
 import { loadAgentConfiguration } from "../../extensions/secretary/agents/configuration.ts";
 import { transcriptWindow } from "../../extensions/secretary/agents/ui/transcript.ts";
 import type { TranscriptEvent } from "../../extensions/secretary/agents/ui/transcript-events.ts";
-import { AsyncWidget } from "../../extensions/secretary/agents/ui/async-widget.ts";
+import { FleetView } from "../../extensions/secretary/agents/ui/fleet-view.ts";
 import { Inspector } from "../../extensions/secretary/agents/ui/inspector.ts";
-import type { RunStatus } from "../../extensions/secretary/agents/records.ts";
+import { transition } from "../../extensions/secretary/agents/ui/reducer.ts";
+import type { AgentSnapshot, RunStatus } from "../../extensions/secretary/agents/records.ts";
 
 const bindings: ScenarioBindings = {
   "ACC-SA-02-01": async ({ t }) => {
@@ -40,25 +41,56 @@ const bindings: ScenarioBindings = {
     }
   },
   "ACC-SA-02-02": async ({ t }) => {
-    for (const key of ["\x1b[B", "\x1b[D"]) {
-      let loads = 0;
-      const h = adapter(t, port({ transcript: async id => { loads++; return [{ kind: "assistant", entryId: `selected-${id}`, text: `Selected ${id}` }]; } }));
-      assert.match(h.fleet(), /active agents/);
-      h.prompt(true); h.prompt(true);
-      assert.equal(h.input(key), undefined); h.prompt(false); assert.equal(h.input(key), undefined); h.prompt(false);
-      assert.deepEqual(h.input(key), { consume: true }); assert.match(h.fleet(), /> main/);
-      h.input("\x1b[B"); h.input("\r"); await tick();
-      assert.equal(h.opens, 1); assert.equal(loads, 1); assert.match(h.render(), /a · test\/model · running/);
-      assert.equal(h.input("\x1b[B"), undefined, "Open custom UI owns input, not Fleet's terminal hook");
-      assert.equal(h.modelTurns, 0); h.inspector!.handleInput("\x1b"); await tick();
-      assert.equal(h.closes, 1); assert.equal(h.editor, "");
-    }
+    let loads = 0;
+    const h = adapter(t, port({ transcript: async id => { loads++; return [{ kind: "assistant", entryId: `selected-${id}`, text: `Selected ${id}` }]; } }));
+    assert.match(h.fleet(), /○ main/, "the indicator is visible with an unfocused main row");
+    h.prompt(true); h.prompt(true);
+    assert.equal(h.input("\x1b[B"), undefined); h.prompt(false); assert.equal(h.input("\x1b[B"), undefined); h.prompt(false);
+    assert.equal(h.input("\x1b[D"), undefined, "Left no longer activates the indicator");
+    assert.deepEqual(h.input("\x1b[B"), { consume: true });
+    assert.match(h.fleet(), /● main/, "Down enters the indicator and selects the first row");
+    assert.match(h.fleet(), /○ a/, "other rows stay hollow");
+    h.input("\x1b[B"); h.input("\r"); await tick();
+    assert.equal(h.opens, 1); assert.equal(loads, 1); assert.match(h.render(), /a · test\/model · running/);
+    assert.equal(h.input("\x1b[B"), undefined, "Open custom UI owns input, not the indicator's terminal hook");
+    assert.equal(h.modelTurns, 0); h.inspector!.handleInput("\x1b"); await tick();
+    assert.equal(h.closes, 1); assert.equal(h.editor, "");
+  },
+  "ACC-SA-02-02a": async ({ t }) => {
+    const h = adapter(t);
+    h.input("\x1b[B"); assert.match(h.fleet(), /● main/);
+    h.input("\x1b"); await tick();
+    assert.doesNotMatch(h.fleet(), /●/, "Escape returns focus and every circle goes hollow");
+    assert.equal(h.input("j"), undefined, "the editor owns input again");
+    h.input("\x1b[B"); assert.match(h.fleet(), /● main/);
+    h.input("\x1b[A"); await tick();
+    assert.doesNotMatch(h.fleet(), /●/, "Up on the first row returns focus to the editor");
+    assert.equal(h.input("j"), undefined);
+    assert.equal(h.modelTurns, 0);
+  },
+  "ACC-SA-02-02b": ({ t }) => {
+    const h = adapter(t, port({ list: () => [] }));
+    const rendered = h.fleet();
+    assert.equal(rendered.trim(), "○ main", "only the main row renders when no agents exist");
+    assert.doesNotMatch(rendered, /active agents|queued|inspect/, "no summary or info bar is rendered");
+  },
+  "ACC-SA-02-02c": async ({ t }) => {
+    const service = await durableService(t), id = service.service.list()[0]!.agent.agentId;
+    const h = adapter(t, service.port);
+    h.input("\x1b[B"); assert.match(h.fleet(), new RegExp(`○ ${id.slice(0, 20)}`));
+    await service.service.stop(service.service.run(id).runId, "op-stop");
+    for (let i = 0; i < 50 && h.fleet().includes(id.slice(0, 20)); i++) await tick();
+    assert.doesNotMatch(h.fleet(), new RegExp(id.slice(0, 20)), "the terminal row leaves the indicator immediately");
+    h.input("\r"); await tick(); // The main row opens the overlay at the root level.
+    h.inspector!.handleInput("a"); await tick();
+    assert.match(h.render(), new RegExp(`○ ${id.slice(0, 20)}`), "the finished agent stays inspectable in the overlay");
+    h.inspector!.handleInput("\x1b"); await tick();
   },
   "ACC-SA-02-03": ({ t }) => {
     const h = adapter(t); h.editor = "Unsent draft 界";
     for (const key of ["\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D", "j", "k"]) {
       assert.equal(h.input(key), undefined, "Host editor must receive ordinary input");
-      assert.equal(h.editor, "Unsent draft 界"); assert.equal(h.opens, 0); assert.doesNotMatch(h.fleet(), /> main/);
+      assert.equal(h.editor, "Unsent draft 界"); assert.equal(h.opens, 0); assert.doesNotMatch(h.fleet(), /●/);
     }
     assert.equal(h.modelTurns, 0);
   },
@@ -95,12 +127,14 @@ const bindings: ScenarioBindings = {
     const row: [string, RunStatus, RegExp][] = [["an unrecovered provider error", "failed", /failed/], ["a supported execution limit", "partial", /partial/], ["confirmed cancellation", "cancelled", /cancelled/], ["interruption after process death", "interrupted", /interrupted/]];
     const example = row.find(([given]) => text.includes(`ends with ${given}.`)); assert.ok(example, "Examples row must have an explicit status mapping");
     const record = snapshot(); record.run!.status = example[1];
-    const h = new UIHarness([record]).ready();
+    const h = new UIHarness([record]);
+    h.send({ type: "open", viewId: "view" });
+    h.inspector.handleInput("a"); // Terminal agents join the list only under the toggle.
+    const load = h.select("a"); h.send({ ...load, type: "transcript", events: fixtureEvents });
     assert.match(h.render(), example[2]); assert.doesNotMatch(h.render(), /succeeded|successful completion/);
-    h.send({ type: "escape" });
-    // Re-activate so terminal outcomes are not hidden by the intentional inspector dismissal.
-    h.send({ type: "activate", parentId: "p", epoch: "fresh", viewId: "fresh" }, [record]); h.send({ type: "fleet", editorEmpty: true });
-    const fleet = plain(h.fleet.render(120)); assert.match(fleet, example[2]); assert.doesNotMatch(fleet, /succeeded|successful completion/);
+    const indicator = plain(new FleetView(() => h.state).render(120));
+    assert.doesNotMatch(indicator, /failed|partial|cancelled|interrupted/, "terminal rows leave the indicator immediately");
+    assert.equal(indicator.trim(), "○ main");
   },
   "ACC-SA-02-08": () => {
     const h = new UIHarness().ready(); h.inspector.handleInput("\x1b[5~"); const before = structuredClone(h.state.navigation);
@@ -138,6 +172,76 @@ const bindings: ScenarioBindings = {
       assert.doesNotMatch(surface, /(?:context|window).*\b0(?:%|\s*tokens?)|\b0%/i);
       assert.doesNotMatch(surface, /context|window|budget|token usage/i, "The current snapshot API exposes neither context nor goal-budget measurements; omit rather than invent either");
     }
+  },
+  "ACC-SA-02-11": () => {
+    const running = snapshot("a"), running2 = snapshot("b"), queued = snapshot("c"), finished = snapshot("d");
+    queued.run!.status = "queued"; finished.run!.status = "succeeded";
+    const h = new UIHarness([running, running2, queued, finished]);
+    h.send({ type: "open", viewId: "view" });
+    let rendered = h.render(140);
+    for (const id of ["a", "b", "c"]) assert.match(rendered, new RegExp(`○ ${id} `));
+    assert.doesNotMatch(rendered, /○ d\b/, "the finished agent is absent by default");
+    assert.doesNotMatch(rendered, /○ main/, "the main session is not a row in the overlay");
+    h.inspector.handleInput("a");
+    rendered = h.render(140);
+    assert.match(rendered, /○ d\b/, "the toggle lists terminal agents");
+    h.inspector.handleInput("a");
+    assert.doesNotMatch(h.render(140), /○ d\b/, "toggling again hides terminal agents");
+  },
+  "ACC-SA-02-12": async () => {
+    const h = new UIHarness().ready();
+    const lines = plain(h.inspector.render(140)).split("\n");
+    assert.match(lines[1]!, /│ ● a\b/, "the selected row carries the filled circle");
+    assert.match(lines[1]!, /│ [^│]+│ a · running/, "the status header's first line shows name and status at the top of the transcript pane");
+    assert.match(lines[2]!, /activity: /, "the header's second line shows current activity");
+    assert.match(lines[3]!, /│ [^│]*│ ─{4,}/, "a single divider separates the header from the transcript");
+    assert.doesNotMatch(lines.slice(1, 4).join("\n"), /┌|┐|└|┘/, "the header is an inline panel without an enclosing box");
+    assert.match(lines[2]!, /│ ○ b +│/, "a list row shows only the selection circle and the agent name");
+    h.inspector.handleInput("K"); // Scroll up: the header is fixed and does not scroll away.
+    const scrolled = plain(h.inspector.render(140)).split("\n");
+    assert.match(scrolled[1]!, /a · running/, "the status header does not scroll with the transcript");
+    const load = h.select("b"); await h.execute(load, port());
+    assert.match(plain(h.inspector.render(140)).split("\n")[1]!, /b · running/, "the transcript pane follows the selection");
+  },
+  "ACC-SA-02-13": async () => {
+    const a = snapshot("a"), c1 = snapshot("c1"), c2 = snapshot("c2");
+    c1.agent.parentAgentId = "a"; c2.agent.parentAgentId = "a";
+    const h = new UIHarness([a, c1, c2]);
+    await h.execute(h.open("a"), port());
+    let rendered = h.render(140);
+    assert.match(rendered, /● a\b/); assert.doesNotMatch(rendered, /c1|c2/, "the root level lists top-level agents only");
+    assert.match(rendered, /╭─ Agents · 1\/1/, "the root breadcrumb has no parent segment");
+    h.inspector.handleInput("\r");
+    const drill = h.effects.filter(e => e.type === "load").at(-1)!;
+    assert.equal(drill.type === "load" && drill.agentId, "c1", "Enter drills in and selects the first child");
+    await h.execute(drill, port());
+    rendered = h.render(140);
+    assert.match(rendered, /● c1/); assert.match(rendered, /○ c2/); assert.doesNotMatch(rendered, /○ a\b/);
+    assert.match(rendered, /Agents › a/, "the title row shows the drill path");
+    assert.match(rendered, /c1 · test\/model · running/, "the transcript pane shows the selected child");
+    h.inspector.handleInput("\x1b[D");
+    const back = h.effects.filter(e => e.type === "load").at(-1)!;
+    assert.equal(back.type === "load" && back.agentId, "a", "Left returns to the parent level and re-selects the agent the user came from");
+    await h.execute(back, port());
+    rendered = h.render(140);
+    assert.match(rendered, /● a\b/); assert.match(rendered, /╭─ Agents · 1\/1/);
+    h.inspector.handleInput("\x1b[C");
+    const again = h.effects.filter(e => e.type === "load").at(-1)!;
+    assert.equal(again.type === "load" && again.agentId, "c1", "Right enters the level as Enter does");
+    await h.execute(again, port());
+    h.inspector.handleInput("\x1b[D"); await h.execute(h.effects.filter(e => e.type === "load").at(-1)!, port());
+    const atRoot = h.state;
+    h.inspector.handleInput("\x1b[D");
+    assert.equal(h.state, atRoot, "Left at the root level does nothing");
+  },
+  "ACC-SA-02-14": async () => {
+    const h = new UIHarness().ready();
+    const before = h.state;
+    h.inspector.handleInput("\r");
+    assert.equal(h.state, before, "Enter on a childless agent does not change state");
+    h.inspector.handleInput("\x1b[C");
+    assert.equal(h.state, before, "Right on a childless agent does not change state");
+    assert.match(h.render(), /a · test\/model · running/, "the transcript pane still shows the selected agent");
   },
   "ACC-SA-UI-01": async ({ t }) => {
     const service = await durableService(t), id = service.service.list()[0]!.agent.agentId;
@@ -276,16 +380,16 @@ const bindings: ScenarioBindings = {
     const service = await durableService(t);
     const rows = service.service.viewModels();
     assert.equal(rows.filter(r => r.background && r.status === "running").length, 2, "both launched runs are active background executions");
-    const finished = { ...rows[0]!, status: "succeeded" as const };
-    const widget = new AsyncWidget({ rows: () => [...rows.slice(1), finished], now: () => Date.now() });
-    const rendered = plain(widget.render(120));
-    assert.match(rendered, /Async agents/);
-    assert.match(rendered, /●/);
-    assert.doesNotMatch(rendered, /succeeded/, "terminal executions leave the async widget");
-    const fleet = new UIHarness(service.service.list()); fleet.send({ type: "fleet", editorEmpty: true });
-    for (const row of rows) assert.match(plain(fleet.fleet.render(140)), new RegExp(row.agentId));
+    const h = new UIHarness(service.service.list()); h.send({ type: "fleet", editorEmpty: true });
+    const rendered = plain(h.fleet.render(140));
+    assert.match(rendered.split("\n")[0]!, /● main/, "the first row is the main session");
+    for (const row of rows) assert.match(rendered, new RegExp(`○ ${row.agentId} · running`), "each active execution lists a status label");
+    const finished = snapshot("done"); finished.run!.status = "succeeded";
+    const withFinished = transition(h.state, { type: "snapshot", epoch: "e" }, [...h.state.snapshots, finished]).state;
+    const after = plain(new FleetView(() => withFinished, { rows: () => [...rows, { agentId: "done", status: "succeeded", description: "done", model: "test/model", background: true }] }).render(140));
+    assert.doesNotMatch(after, /done/, "the completed execution is absent from the indicator");
     const output = service.service.run(rows[0]!.agentId);
-    assert.equal(rows[0]!.status, output.status, "widget rows and tool responses share the same underlying state");
+    assert.equal(rows[0]!.status, output.status, "indicator rows and tool responses share the same underlying state");
   },
   "ACC-SA-UI-15": async ({ t }) => {
     const root = mkdtempSync(join(tmpdir(), "inline-mode-")); t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -320,7 +424,7 @@ const bindings: ScenarioBindings = {
   "ACC-SA-UI-17": () => {
     const h = new UIHarness().ready();
     const wide = plain(h.inspector.render(140));
-    assert.match(wide, /╭─ Agents · 1\/2 ─+╮/); assert.match(wide, /╰─+╯/); assert.match(wide, /Esc close/);
+    assert.match(wide, /╭─ Agents · 1\/2 · 2 active ─+╮/); assert.match(wide, /╰─+╯/); assert.match(wide, /Esc close/);
     const narrow = h.inspector.render(60);
     assert.match(plain(narrow), /╭─ Agents · 1\/2/);
     assert.doesNotMatch(plain(narrow).split("\n")[1]!, / │ /);
@@ -331,6 +435,6 @@ const bindings: ScenarioBindings = {
   },
 };
 runFeatures(["agent-inspection", "ui-state-machine"], bindings, {
-  "agent-inspection": "4f3964c0a4578ddce199cf317c50c91dd7a27675d3f7d5dd04de11ad68ac6aea",
-  "ui-state-machine": "d7d18ba511f000bcffd07200a556a11f5b9beefd89f1a5bea43694e2083e5e72",
+  "agent-inspection": "d15627da6b44da795f484f7695275548148f9dc165a2df0aaf68444e427c7998",
+  "ui-state-machine": "3b9a317188b30125e993459338f98be087907c57a8885ad9f7409af2fe492b43",
 });

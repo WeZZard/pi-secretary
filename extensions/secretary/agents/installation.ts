@@ -14,14 +14,31 @@ import { createAgentSchema, sendMessageSchema, taskStopSchema, taskOutputSchema,
 import { renderAgentResult } from "./tools/rendering.ts";
 import { registerAgentUI } from "./ui/commands.ts";
 import { TERMINAL_STATUSES, type AgentRun, type GoalOrigin } from "./records.ts";
+import { childSession, authorizeChildDelegation, revokeChildDelegation } from "./child-context.ts";
+import { registerLiveChildService } from "./live-services.ts";
 
 const NAMES = ["Agent", "SendMessage", "TaskStop", "TaskOutput"];
-const BLOCKED_TOOLS = new Set([...NAMES, "SubagentWorkflow", "Workflow", "subagent", "get_subagent_result", "steer_subagent", "create_goal", "update_goal", "get_goal"]);
+const ALWAYS_BLOCKED = new Set(["SubagentWorkflow", "Workflow", "subagent", "get_subagent_result", "steer_subagent", "create_goal", "update_goal", "get_goal"]);
+/**
+ * Tools never delegated to a child session. The delegation names join them only when the
+ * child would sit at or beyond the maximum nesting depth; below the maximum a child session
+ * keeps the same delegation contract (SA-12, architecture §7).
+ */
+function blockedChildTools(childDepth: number, maxNestingDepth: number): (name: string) => boolean {
+  const delegationBlocked = childDepth >= maxNestingDepth;
+  return name => ALWAYS_BLOCKED.has(name) || (delegationBlocked && NAMES.includes(name));
+}
 const SNAPSHOT = "secretary:agents-state";
 const COMPLETION = "secretary:agent-completion";
 
 /** Composition adapter. Registration is delayed until conflicts can be checked. */
 export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: GoalSynchronization, root: string) {
+  // Evaluated inside the child-session marker when this instance serves a delegated agent.
+  const child = childSession();
+  const depth = child?.depth ?? 0;
+  const myAgentId = child?.agentId;
+  let unregisterLive: (() => void) | undefined;
+  let sessionId: string | undefined;
   let service: AgentService | undefined;
   let ctx: ExtensionContext | undefined;
   let release: (() => Promise<void>) | undefined;
@@ -32,8 +49,8 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
   const diagnostic = (error: unknown) => { if (ctx?.hasUI) ctx.ui.notify(String(error), "error"); };
   const listeners = new Set<() => void>();
   const ui = registerAgentUI(pi, {
-    list: () => service?.list() ?? [],
-    viewModels: () => service?.viewModels() ?? [],
+    list: () => service?.tree() ?? [],
+    viewModels: () => service?.treeViewModels() ?? [],
     transcript: id => current().transcript(id),
     message: (id, text, operationId) => current().message(id, text, operationId),
     stop: (id, operationId) => current().stop(id, operationId),
@@ -45,7 +62,7 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
   }, () => {
     if (!ctx) return {};
     const config = loadAgentConfiguration(ctx.cwd, getAgentDir(), ctx.isProjectTrusted());
-    return { fleetViewPlacement: config.ui.fleetViewPlacement, asyncWidget: config.ui.asyncWidget, keybindings: config.ui.fleetKeybindings };
+    return { fleetViewPlacement: config.ui.fleetViewPlacement, keybindings: config.ui.fleetKeybindings };
   });
   function origin(): GoalOrigin | undefined {
     const work = sync.work();
@@ -84,20 +101,26 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
   pi.on("session_start", async (_event, context) => {
     ctx = context;
     if (service) { ui.bind(context); return; }
+    const config = loadAgentConfiguration(context.cwd, getAgentDir(), context.isProjectTrusted());
+    // At the maximum nesting depth the delegation tools are not registered (architecture §7).
+    if (depth >= config.maxNestingDepth) return;
     if (!registered && pi.getAllTools().some(tool => NAMES.includes(tool.name))) {
       diagnostic("Secretary delegation is disabled: another extension provides Agent, SendMessage, TaskStop, or TaskOutput. Disable the conflicting extension before reloading.");
       return;
     }
     try {
       const parentId = context.sessionManager.getSessionId();
+      sessionId = parentId;
       const sessionRoot = join(root, "agents", createHash("sha256").update(parentId).digest("hex"));
       release = await acquireParentLock(sessionRoot, parentId);
-      const config = loadAgentConfiguration(context.cwd, getAgentDir(), context.isProjectTrusted());
       const availability = new ModelAvailability();
-      service = new AgentService({ parentId, root: sessionRoot, ctx: context, config,
+      service = new AgentService({ parentId, root: sessionRoot, ctx: context, config, depth,
         repository: new AgentRepository(engine.db.connection), authorize, diagnostic, completion: completed,
         availability: (id, resetAt) => availability.record(id, resetAt),
-        currentTools: () => pi.getActiveTools().filter(name => !BLOCKED_TOOLS.has(name)),
+        currentTools: () => {
+          const blocked = blockedChildTools(depth + 1, config.maxNestingDepth);
+          return pi.getActiveTools().filter(name => !blocked(name));
+        },
         validateResume: async agent => {
           await resolveAgentModel({ ...agent.definition, model: agent.model }, undefined,
             loadAgentConfiguration(context.cwd, getAgentDir(), context.isProjectTrusted()), context);
@@ -116,6 +139,8 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
         },
       });
       await service.recover();
+      // Ancestor services aggregate this session's rows and route nested operations through it.
+      if (myAgentId) unregisterLive = registerLiveChildService(myAgentId, service);
       service.subscribe(() => { for (const listener of listeners) { try { listener(); } catch (e) { diagnostic(e); } } });
       for (const entry of context.sessionManager.getEntries()) {
         if (entry.type === "custom_message" && entry.customType === COMPLETION) {
@@ -131,7 +156,7 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
         waitSignature = signature; return true;
       };
       if (!registered) {
-        pi.registerTool(defineTool<ReturnType<typeof createAgentSchema>, AgentRun>({ name: "Agent", label: "Agent", description: "Delegate one task to a child session. Background execution is the default in TUI/RPC. Use SendMessage to guide or resume, TaskStop to stop, and TaskOutput or read on the output path for results. Use the model configured by the agent definition, or inherit the parent model. Do not invent a model override. Forks, teams, nesting and remote execution are unsupported.", parameters: createAgentSchema(config.modelFallbackLists),
+        pi.registerTool(defineTool<ReturnType<typeof createAgentSchema>, AgentRun>({ name: "Agent", label: "Agent", description: "Delegate one task to a child session. Background execution is the default in TUI/RPC. Use SendMessage to guide or resume, TaskStop to stop, and TaskOutput or read on the output path for results. A running agent may delegate further while its nesting depth is below the configured maximum. Use the model configured by the agent definition, or inherit the parent model. Do not invent a model override. Forks, teams, and remote execution are unsupported.", parameters: createAgentSchema(config.modelFallbackLists),
           prepareArguments: args => (args && typeof args === "object" && "mode" in args && args.mode === "manual" ? { ...args, mode: "default" } : args) as AgentInput,
           async execute(id, params, signal, onUpdate, toolCtx) {
             const config = loadAgentConfiguration(toolCtx.cwd, getAgentDir(), toolCtx.isProjectTrusted());
@@ -143,11 +168,13 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
             const headless = toolCtx.mode === "print" || toolCtx.mode === "json";
             const background = definition.background === true || (params.run_in_background ?? !headless);
             if (headless && background) throw new Error("Background agents require persistent TUI/RPC. Use run_in_background: false and a definition that does not require background execution.");
-            const parentTools = pi.getActiveTools().filter(name => !BLOCKED_TOOLS.has(name));
+            const blocked = blockedChildTools(depth + 1, config.maxNestingDepth);
+            const parentTools = pi.getActiveTools().filter(name => !blocked(name));
             const tools = parentTools.filter(name => (!definition.tools || definition.tools.includes(name)) && !definition.disallowedTools?.includes(name));
             if (!tools.length) throw new Error("Agent definition has no tools allowed by the parent.");
             const controller = current();
             const launched = await controller.launch({ launchKey: id, definition, model: resolution.id,
+              ...(myAgentId !== undefined ? { parentAgentId: myAgentId } : {}),
               ...(resolution.chain.length > 1 ? { modelCandidates: resolution.chain.slice(resolution.chain.indexOf(resolution.id) + 1) } : {}),
               thinkingLevel: toolCtx.thinkingLevel, tools, prompt: params.prompt, description: params.description,
               name: params.name, background, isolation: resolveIsolation(params.isolation, definition.isolation), goal: origin() });
@@ -185,6 +212,8 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
             return response;
           } }));
         registered = true;
+        // The runner admits delegation tool names in this session only while this marker stands.
+        if (depth > 0) authorizeChildDelegation(parentId);
       }
       ui.bind(context);
     } catch (error) {
@@ -215,6 +244,8 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
   return {
     async shutdown(): Promise<boolean> {
       closing = true; ui.dispose(); sync.canContinueWithChildren = undefined;
+      unregisterLive?.(); unregisterLive = undefined;
+      if (sessionId) { revokeChildDelegation(sessionId); sessionId = undefined; }
       if (service && !await service.shutdown()) { diagnostic("Some child tools have not settled. Ownership and storage are retained; restart pi before resuming these agents."); return false; }
       await release?.(); release = undefined; listeners.clear(); return true;
     },

@@ -18,7 +18,6 @@ import type { TranscriptEvent } from "../../extensions/secretary/agents/ui/trans
 import { Inspector } from "../../extensions/secretary/agents/ui/inspector.ts";
 import { FleetView } from "../../extensions/secretary/agents/ui/fleet-view.ts";
 import { registerAgentUI, FLEET_WIDGET_KEY } from "../../extensions/secretary/agents/ui/commands.ts";
-import { ASYNC_WIDGET_KEY, type AsyncWidget } from "../../extensions/secretary/agents/ui/async-widget.ts";
 import { deferred, tick } from "./support.ts";
 
 export function snapshot(id = "a", parentId = "p"): AgentSnapshot {
@@ -70,16 +69,15 @@ export function port(overrides: Partial<AgentUIPort> = {}): AgentUIPort {
 // Production components and key routing run unchanged; only host callbacks are captured.
 export function adapter(t: TestContext, servicePort = port()) {
   let input: ((data: string) => unknown) | undefined;
-  let editor = "", parentId = "p", inspector: Inspector | undefined, fleet: FleetView | undefined, async: AsyncWidget | undefined;
+  let editor = "", parentId = "p", inspector: Inspector | undefined, fleet: FleetView | undefined;
   let opens = 0, closes = 0, removals = 0, modelTurns = 0;
   const hooks = new Map<string, () => void>();
   const commands = new Map<string, { handler: (args: string, ctx: ExtensionContext) => Promise<void> }>();
   const pi = { on(name: string, callback: () => void) { hooks.set(name, callback); }, registerCommand(name: string, command: any) { commands.set(name, command); }, sendMessage() { modelTurns++; } } as unknown as ExtensionAPI;
   const ctx = { mode: "tui", sessionManager: { getSessionId: () => parentId }, ui: {
     setWidget(key: string, factory: (() => Component) | undefined, options?: { placement: string }) {
-      assert.ok(key === FLEET_WIDGET_KEY || key === ASYNC_WIDGET_KEY);
-      if (key === FLEET_WIDGET_KEY) { if (factory) { assert.equal(options?.placement, "belowEditor"); fleet = factory() as FleetView; } else fleet = undefined; }
-      else { if (factory) { assert.equal(options?.placement, "belowEditor"); async = factory() as AsyncWidget; } else async = undefined; }
+      assert.equal(key, FLEET_WIDGET_KEY, "the unified indicator is the only registered widget");
+      if (factory) { assert.equal(options?.placement, "belowEditor"); fleet = factory() as FleetView; } else fleet = undefined;
     },
     getEditorText: () => editor,
     onTerminalInput(callback: (data: string) => unknown) { input = callback; return () => { removals++; input = undefined; }; },
@@ -91,7 +89,7 @@ export function adapter(t: TestContext, servicePort = port()) {
     get editor() { return editor; }, set editor(value: string) { editor = value; },
     get inspector() { return inspector; }, get opens() { return opens; }, get closes() { return closes; }, get removals() { return removals; }, get modelTurns() { return modelTurns; },
     input: (data: string) => input?.(data), prompt: (open: boolean) => hooks.get(open ? "ui_prompt_start" : "ui_prompt_end")!(),
-    fleet: () => plain(fleet?.render(120) ?? []), asyncWidget: () => plain(async?.render(120) ?? []), render: (width = 120) => plain(inspector?.render(width) ?? []),
+    fleet: () => plain(fleet?.render(120) ?? []), render: (width = 120) => plain(inspector?.render(width) ?? []),
     command: (args: string) => commands.get("agents")!.handler(args, ctx),
     replaceSession(id: string, draft: string) { parentId = id; editor = draft; ui.bind(ctx); },
   };
@@ -104,7 +102,7 @@ export async function durableService(t: TestContext) {
   let starts = 0;
   const delivered: string[] = [];
   const service = new AgentService({ parentId: "p", root, repository, ctx: { cwd: root, mode: "tui" } as ExtensionContext,
-    config: { modelFallbackLists: {}, ui: defaultAgentUi(), maxConcurrent: 2, maxQueued: 2, shutdownTimeoutMs: 1000 },
+    config: { modelFallbackLists: {}, ui: defaultAgentUi(), maxConcurrent: 2, maxQueued: 2, shutdownTimeoutMs: 1000, maxNestingDepth: 3 },
     runner: async options => {
       starts++; const result = deferred<Awaited<RunningChild["result"]>>();
       const path = join(root, `${options.agent.agentId}.jsonl`); writeFileSync(path, '{"type":"session"}\n'); options.hooks.session(path);

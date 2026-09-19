@@ -10,7 +10,6 @@ import { sanitize, transcriptWindow } from "../../extensions/secretary/agents/ui
 import type { TranscriptEvent } from "../../extensions/secretary/agents/ui/transcript-events.ts";
 import { runEffect, type AgentUIPort } from "../../extensions/secretary/agents/ui/effects.ts";
 import { registerAgentUI, FLEET_WIDGET_KEY } from "../../extensions/secretary/agents/ui/commands.ts";
-import { ASYNC_WIDGET_KEY } from "../../extensions/secretary/agents/ui/async-widget.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 function snapshot(id = "a"): AgentSnapshot {
   return { agent: { agentId: id, parentId: "p", definition: { name: "general-purpose", description: "test", prompt: "test", source: "packaged", hash: "hash", resumable: true }, model: "provider/model", tools: [], cwd: "/tmp", configCwd: "/tmp", sessionPath: "/tmp/session", resumable: true, createdAt: 0, worktree: { id: "wt", repo: "/repo", path: "/wt", branch: "agent", baseCommit: "base", state: "allocated" } }, run: { agentId: id, parentId: "p", runId: `${id}-run`, launchKey: id, prompt: "task", description: "task", status: "running", background: true, createdAt: 0, outputPath: "/tmp/output", output: "", toolCount: 0, turnCount: 0, revision: 0 } };
@@ -192,6 +191,6 @@ test("adapter uses one namespaced below-editor widget and does not consume norma
   assert.deepEqual(terminal?.("\x1b[B"), { consume: true });
   assert.deepEqual(terminal?.("\x1b"), { consume: true });
   assert.equal(terminal?.("s"), undefined);
-  ui.dispose(); assert.equal(removed, 1); assert.ok(widgets.every(key => key === FLEET_WIDGET_KEY || key === ASYNC_WIDGET_KEY));
+  ui.dispose(); assert.equal(removed, 1); assert.ok(widgets.every(key => key === FLEET_WIDGET_KEY));
   assert.ok(widgets.includes(FLEET_WIDGET_KEY));
 });

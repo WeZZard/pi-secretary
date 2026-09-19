@@ -10,6 +10,7 @@ import { createChildRunner } from "./runner.ts";
 import { guidanceNotice, parseTranscriptEvents, type TranscriptEvent } from "./ui/transcript-events.ts";
 import { TERMINAL_STATUSES, type AgentDefinition, type AgentRecord, type AgentRowView, type AgentRun, type AgentSnapshot, type GoalOrigin, type RunningChild, type RunnerHooks, type UsageRecord } from "./records.ts";
 import { deriveUsageLabels } from "./ui/usage-labels.ts";
+import { liveChildService } from "./live-services.ts";
 
 export interface LaunchSpec {
   launchKey: string;
@@ -22,6 +23,8 @@ export interface LaunchSpec {
   prompt: string;
   description: string;
   name?: string;
+  /** The delegating agent when a nested child session launches this agent (SA-12). */
+  parentAgentId?: string;
   background: boolean;
   isolation?: "none" | "worktree";
   goal?: GoalOrigin;
@@ -39,6 +42,8 @@ export interface ServiceOptions {
   currentTools?: () => readonly string[];
   resumeOrigin?: (previous: AgentRun) => GoalOrigin;
   validateResume?: (agent: AgentRecord) => Promise<void>;
+  /** Nesting depth of the session this service serves; the main session is 0. */
+  depth?: number;
   /** Records an availability failure for a model candidate in the per-session cache. */
   availability?: (id: string, resetAt?: number) => void;
   diagnostic?: (error: unknown) => void;
@@ -80,6 +85,16 @@ export class AgentService {
       if (!TERMINAL_STATUSES.has(run.status)) {
         run.status = "interrupted"; run.error = "The previous session ended before settlement was recorded.";
         run.endedAt = Date.now(); this.saveRun(run); this.settleGuidance(run.runId);
+      }
+    }
+    // A nested child never outlives its parent's session (SA-12): once this session is
+    // recovering, the sessions that owned descendant runs are gone, so interrupt them here.
+    for (const agent of this.treeAgents()) {
+      if (agent.parentId === this.options.parentId) continue;
+      for (const run of this.repo.runs(agent.parentId).filter(r => r.agentId === agent.agentId && !TERMINAL_STATUSES.has(r.status))) {
+        run.status = "interrupted"; run.error = "The previous session ended before settlement was recorded.";
+        run.endedAt = Date.now(); run.revision++;
+        this.repo.putRun(run); this.settleGuidance(run.runId);
       }
     }
     for (const agent of this.repo.agents(this.options.parentId)) {
@@ -141,28 +156,94 @@ export class AgentService {
   }
   /** Immutable widget rows; consumers render them without deriving state or usage. */
   viewModels(): AgentRowView[] {
-    return this.list().map(({ agent, run }) => {
-      const labels = run ? deriveUsageLabels(this.projectionUsage.get(run.runId) ?? []) : {};
-      return { agentId: agent.agentId, name: agent.name, status: run?.status ?? "idle",
-        description: run?.description ?? agent.definition.description, model: agent.model,
-        ...(run?.startedAt !== undefined ? { startedAt: run.startedAt } : {}),
-        ...(run?.activity !== undefined ? { activity: run.activity } : {}),
-        background: run?.background ?? false, ...labels };
-    });
+    return this.list().map(({ agent, run }) => this.rowFor(agent, run, run ? this.projectionUsage.get(run.runId) ?? [] : []));
+  }
+  private rowFor(agent: AgentRecord, run: AgentRun | undefined, usage: UsageRecord[]): AgentRowView {
+    const labels = run ? deriveUsageLabels(usage) : {};
+    return { agentId: agent.agentId, name: agent.name, status: run?.status ?? "idle",
+      description: run?.description ?? agent.definition.description, model: agent.model,
+      ...(agent.parentAgentId !== undefined ? { parentAgentId: agent.parentAgentId } : {}),
+      ...(run?.startedAt !== undefined ? { startedAt: run.startedAt } : {}),
+      ...(run?.activity !== undefined ? { activity: run.activity } : {}),
+      background: run?.background ?? false, ...labels };
+  }
+  /**
+   * Snapshots for the whole delegation tree (SA-12): own agents first, then descendants
+   * grouped under each delegating agent. Live descendant rows come from the owning child
+   * session's service; rows whose owner session has ended come from storage and are static.
+   */
+  tree(): AgentSnapshot[] {
+    const own = this.list();
+    const result = [...own];
+    const visited = new Set(own.map(s => s.agent.agentId));
+    const visit = (agentId: string) => {
+      for (const child of this.childrenOf(agentId)) {
+        if (visited.has(child.agent.agentId)) continue;
+        visited.add(child.agent.agentId); result.push(child); visit(child.agent.agentId);
+      }
+    };
+    for (const snapshot of own) visit(snapshot.agent.agentId);
+    return result;
+  }
+  /** Tree view of viewModels(); the fleet view overlay drills into these rows. */
+  treeViewModels(): AgentRowView[] {
+    const own = this.viewModels();
+    const result = [...own];
+    const visited = new Set(own.map(r => r.agentId));
+    const visit = (agentId: string) => {
+      const live = liveChildService(agentId);
+      const children = live ? live.viewModels()
+        : this.repo.childrenOf(agentId).map(agent => {
+            const run = this.repo.runs(agent.parentId).filter(r => r.agentId === agent.agentId).at(-1);
+            return this.rowFor(agent, run, run ? this.repo.usage(run.runId) : []);
+          });
+      for (const row of children) {
+        if (visited.has(row.agentId)) continue;
+        visited.add(row.agentId); result.push(row); visit(row.agentId);
+      }
+    };
+    for (const row of own) visit(row.agentId);
+    return result;
+  }
+  private childrenOf(agentId: string): AgentSnapshot[] {
+    const live = liveChildService(agentId);
+    if (live) return live.list();
+    return this.repo.childrenOf(agentId).map(agent => ({ agent,
+      run: this.repo.runs(agent.parentId).filter(r => r.agentId === agent.agentId).at(-1) }));
+  }
+  /** Every agent in the delegation tree from storage; complete because launches commit synchronously. */
+  private treeAgents(): AgentRecord[] {
+    const own = this.repo.agents(this.options.parentId);
+    const result = [...own];
+    const visited = new Set(own.map(a => a.agentId));
+    const visit = (agentId: string) => {
+      for (const child of this.repo.childrenOf(agentId)) {
+        if (visited.has(child.agentId)) continue;
+        visited.add(child.agentId); result.push(child); visit(child.agentId);
+      }
+    };
+    for (const agent of own) visit(agent.agentId);
+    return result;
   }
   resolve(ref: string): AgentRecord {
-    const all = this.repo.agents(this.options.parentId);
-    const agent = all.find(a => a.agentId === ref || a.name === ref);
-    if (!agent) throw rejected(`Agent not found in this parent session: ${ref}`);
-    return agent;
+    const own = this.repo.agents(this.options.parentId).find(a => a.agentId === ref || a.name === ref);
+    if (own) return own;
+    const descendant = this.treeAgents().find(a => a.parentId !== this.options.parentId && (a.agentId === ref || a.name === ref));
+    if (descendant) return descendant;
+    throw rejected(`Agent not found in this parent session: ${ref}`);
   }
   run(ref: string): AgentRun {
     const direct = this.repo.getRun(ref);
-    if (direct?.parentId === this.options.parentId) return direct;
+    if (direct && (direct.parentId === this.options.parentId || this.treeAgents().some(a => a.agentId === direct!.agentId))) return direct;
     const agent = this.resolve(ref);
-    const run = this.repo.runs(this.options.parentId).filter(r => r.agentId === agent.agentId).at(-1);
+    const run = this.repo.runs(agent.parentId).filter(r => r.agentId === agent.agentId).at(-1);
     if (!run) throw new Error("Agent has no execution record.");
     return run;
+  }
+  /** The live service of the delegating agent's session, when a nested agent's owner is running. */
+  private liveOwner(agent: AgentRecord): AgentService | undefined {
+    if (agent.parentId === this.options.parentId || !agent.parentAgentId) return undefined;
+    return liveChildService(agent.parentAgentId);
   }
   private saveRun(run: AgentRun): void { run.revision++; this.repo.putRun(run); this.projectRun(run); this.changed(); }
   private capacity(): void {
@@ -173,6 +254,10 @@ export class AgentService {
   async launch(spec: LaunchSpec): Promise<AgentSnapshot> {
     const existing = this.repo.findLaunch(this.options.parentId, spec.launchKey);
     if (existing) return { agent: this.resolve(existing.agentId), run: existing };
+    const depth = this.options.depth ?? 0;
+    if (depth >= this.options.config.maxNestingDepth) {
+      throw rejected(`Nested delegation is limited to ${this.options.config.maxNestingDepth} level(s) below the main session; this session is at the maximum depth and cannot launch agents.`);
+    }
     this.capacity();
     if (!spec.prompt.trim() || !spec.description.trim()) throw new Error("Agent prompt and description must be nonempty.");
     if (spec.name && (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(spec.name) || /^(main|team-lead)$/i.test(spec.name) || /^(agent|run)_/.test(spec.name))) throw new Error("Invalid or reserved agent name.");
@@ -184,6 +269,8 @@ export class AgentService {
     const agentId = `agent_${randomUUID()}`;
     const agent: AgentRecord = {
       agentId, parentId: this.options.parentId, name: spec.name, definition: spec.definition,
+      ...(spec.parentAgentId !== undefined ? { parentAgentId: spec.parentAgentId } : {}),
+      depth: depth + 1,
       model: spec.model, ...(spec.modelCandidates?.length ? { modelCandidates: spec.modelCandidates } : {}), thinkingLevel: spec.thinkingLevel, tools: spec.tools,
       cwd: this.options.ctx.cwd, configCwd: this.options.ctx.cwd,
       resumable: spec.definition.resumable, requestedWorktree, createdAt: Date.now(),
@@ -276,7 +363,8 @@ export class AgentService {
         },
       };
       entry.child = await (this.options.runner ?? createChildRunner)({ agent, run, ctx: this.options.ctx,
-        signal: entry.controller.signal, hooks, sessionDir: join(this.options.root, "sessions", agent.agentId) });
+        signal: entry.controller.signal, hooks, sessionDir: join(this.options.root, "sessions", agent.agentId),
+        allowDelegation: (agent.depth ?? 1) < this.options.config.maxNestingDepth });
       if (entry.controller.signal.aborted) void entry.child.abort().catch(e => this.options.diagnostic?.(e));
       update(r => { if (r.status !== "cancelling") r.status = "running"; });
       this.flushGuidance(runId);
@@ -320,8 +408,15 @@ export class AgentService {
     }
   }
   message(ref: string, text: string, operationId: string, goal?: GoalOrigin): Promise<AgentRun> {
-    let id: string;
-    try { id = this.resolve(ref).agentId; } catch (error) { return Promise.reject(error); }
+    let agent: AgentRecord;
+    try { agent = this.resolve(ref); } catch (error) { return Promise.reject(error); }
+    const owner = this.liveOwner(agent);
+    // Guidance for a live nested run is delivered by the session that owns it (SA-12).
+    if (owner) return owner.message(agent.agentId, text, operationId, goal);
+    if (agent.parentId !== this.options.parentId && this.repo.activeRun(agent.agentId)) {
+      return Promise.reject(rejected("The owning child session is unavailable; wait for the run to settle or stop its delegating agent."));
+    }
+    const id = agent.agentId;
     const prior = this.messages.get(id) ?? Promise.resolve();
     const operation = prior.catch(() => {}).then(() => this.acceptMessage(id, text, operationId, goal));
     this.messages.set(id, operation);
@@ -373,6 +468,18 @@ export class AgentService {
   async stop(ref: string, operationId: string): Promise<AgentRun> {
     const receipt = this.repo.receipt(this.options.parentId, operationId) as { runId: string } | undefined;
     if (receipt) return this.run(receipt.runId);
+    const direct = this.repo.getRun(ref);
+    const agent = direct ? this.repo.getAgent(direct.agentId) : undefined;
+    const resolved = agent ?? (() => { try { return this.resolve(ref); } catch { return undefined; } })();
+    const owner = resolved ? this.liveOwner(resolved) : undefined;
+    // Stopping a live nested agent is performed by its owning session, which cascades the
+    // stop to that agent's own children before it settles (SA-12).
+    if (resolved && owner) return owner.stop(resolved.agentId, operationId);
+    if (resolved && resolved.parentId !== this.options.parentId) {
+      const settled = this.run(resolved.agentId);
+      if (TERMINAL_STATUSES.has(settled.status)) return settled;
+      throw rejected("The owning child session is unavailable; the execution is interrupted when the parent session recovers.");
+    }
     const run = this.run(ref);
     if (!TERMINAL_STATUSES.has(run.status)) {
       run.status = run.status === "queued" && !this.active.has(run.runId) ? "cancelled" : "cancelling";
@@ -406,7 +513,7 @@ export class AgentService {
   }
   async transcript(ref: string): Promise<readonly TranscriptEvent[]> {
     const a = this.resolve(ref);
-    const guidance = this.repo.runs(this.options.parentId).filter(run => run.agentId === a.agentId)
+    const guidance = this.repo.runs(a.parentId).filter(run => run.agentId === a.agentId)
       .flatMap(run => this.repo.guidance(run.runId)).filter(item => item.state !== "consumed").slice(-20)
       .map(item => guidanceNotice(item));
     if (!a.sessionPath) {
@@ -437,6 +544,10 @@ export class AgentService {
     const receipt = this.repo.receipt(this.options.parentId, operationId);
     if (receipt) return receipt;
     const agent = this.resolve(ref);
+    const owner = this.liveOwner(agent);
+    // A nested agent's workspace belongs to its owning session's storage root (SA-12).
+    if (owner) return owner.cleanup(agent.agentId, operationId);
+    if (agent.parentId !== this.options.parentId) throw rejected("Worktree cleanup for a nested agent requires its owning child session; clean up after the delegating agent settles.");
     if (this.repo.activeRun(agent.agentId) || !agent.worktree || agent.worktree.state !== "allocated") throw rejected("Worktree is active, missing, or already reserved for cleanup.");
     agent.worktree.state = "cleaning"; this.repo.putAgent(agent); this.projectAgent(agent); this.changed();
     try {

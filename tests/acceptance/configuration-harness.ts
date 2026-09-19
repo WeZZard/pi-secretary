@@ -68,7 +68,7 @@ export async function configurationHarness(t: TestContext) {
   const inspector = (agentId: string) => {
     const state = initialState();
     state.snapshots = [{ agent: repository.getAgent(agentId)!, run: repository.runs("parent").filter(r => r.agentId === agentId).at(-1) }];
-    state.navigation = { kind: "inspector", detail: { kind: "loading", agentId, requestId: "inspection" } };
+    state.navigation = { kind: "inspector", detail: { kind: "loading", level: { path: [], includeFinished: false }, agentId, requestId: "inspection" } };
     return new Inspector(() => state, () => {}, () => "inspection", () => 40).render(400).join("\n");
   };
   const usage = () => h.engine.db.connection.prepare("SELECT json FROM secretary_agent_usage ORDER BY rowid").all().map(row => JSON.parse(String(row.json)) as UsageRecord);

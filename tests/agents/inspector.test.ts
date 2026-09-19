@@ -53,9 +53,11 @@ test("the overlay renders a bordered frame with title, position, and footer at w
   const s = inspectorState();
   const inspector = new Inspector(() => s, () => {}, () => "id", () => 22);
   const wide = plain(inspector.render(140));
-  assert.match(wide, /╭─ Agents · 2\/3 ─+╮/);
+  assert.match(wide, /╭─ Agents · 2\/3 · 3 active ─+╮/);
   assert.match(wide, /╰─+╯/);
-  assert.match(wide, /│ > ● b · running\s+│ Task: b task/, "wide terminals show the roster beside the detail pane");
+  assert.match(wide, /│ ○ a\s+│ b · running/, "wide terminals show the list beside the status header");
+  assert.match(wide, /│ ● b\s+│ activity: /);
+  assert.match(wide, /│ ○ c\s+│ ─{4,}/, "the divider separates the fixed header from the transcript");
   assert.match(wide, /Esc close/);
   const narrow = inspector.render(60);
   assert.match(plain(narrow), /╭─ Agents · 2\/3/);
@@ -72,7 +74,7 @@ test("below the minimum width the inspector renders a single diagnostic line", (
   for (const width of [0, 1, 10, 35]) {
     const lines = inspector.render(width);
     assert.ok(lines.length <= 1);
-    if (width >= 35) assert.match(plain(lines), /^Agents inspector requires a wider t/);
+    if (width >= 35) assert.match(plain(lines), /^Agents overlay requires a wider t/);
     else if (width > 0) assert.equal(plain(lines).trim().length <= width, true);
     for (const line of lines) assert.ok(visibleWidth(line) <= width);
   }

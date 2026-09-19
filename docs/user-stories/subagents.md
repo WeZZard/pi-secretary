@@ -2,7 +2,7 @@
 
 **Document type:** Software requirements specification.
 
-**Status:** Maintained requirements for the implemented subagent subsystem. These stories state required outcomes; they do not certify release readiness. Executed checks and remaining limits are recorded in the [verification report](../testing/subagent-verification.md).
+**Status:** Maintained requirements for the subagent subsystem. These stories state required outcomes; they do not certify release readiness. Executed checks and remaining limits are recorded in the [verification report](../testing/subagent-verification.md). Revised 2026-09-19: SA-02 and SA-10 now require a single unified fleet indicator and a split fleet view overlay in place of the former FleetView and async widget, and SA-12 adds nested delegation; both revisions are implemented.
 
 **Related documents:** [Research](../research/subagent-system-comparison.md), [interaction design](../ux/subagents.md), and [technical design](../arch/subagents.md).
 
@@ -13,12 +13,12 @@ Secretary will let a parent agent delegate work to child agents while the user c
 The following constraints were confirmed during design discussion:
 
 - Claude Code provides the reference for tool names and input schemas.
-- nicobailon/pi-subagents provides the reference for the TUI. Its inline display, FleetView, async widget, and inspector surfaces are ported onto Secretary's runtime. Surfaces that depend on out-of-scope runtime features are excluded explicitly in the [interaction design](../ux/subagents.md#8-ported-surface-exclusions).
+- nicobailon/pi-subagents provides the reference for the TUI. Its inline display, fleet navigation, and inspector surfaces are ported onto Secretary's runtime. The ported FleetView summary and async widget are superseded by a single unified fleet indicator; the inspector becomes a split fleet view overlay. Surfaces that depend on out-of-scope runtime features are excluded explicitly in the [interaction design](../ux/subagents.md#8-ported-surface-exclusions).
 - tintinweb/pi-subagents provides an implementation reference for pi integration.
 - Child execution stops when pi exits. Saved conversations may be resumed explicitly later.
 - Model selection uses named model fallback lists maintained in Secretary configuration. A definition or invocation model value first matches an exact model available in the session, then names a fallback list whose models are tried in configured order, and `inherit` selects the parent's model. The tool input exposes only configured list names.
 - The initial scope includes core delegation, custom agent definitions, worktree isolation, output retrieval, and agent inspection.
-- Conversation forks, nested delegation, agent teams, remote execution, scheduling, and workflow orchestration are deferred.
+- Conversation forks, agent teams, remote execution, scheduling, and workflow orchestration are deferred. Nested delegation is in scope under SA-12.
 
 Behavioral details are specified in the linked architecture. A requirement's presence in this document is not evidence that every host integration has been verified; the verification report distinguishes executed checks from remaining gaps.
 
@@ -39,12 +39,12 @@ As a parent agent, I want to delegate a task without changing my own conversatio
 
 As a user, I want to see which agents are queued, starting, running, stopping, or finished while continuing to use the main editor.
 
-- FleetView and the async widget show current-session work without requiring repeated model tool calls.
+- The fleet indicator shows current-session work without requiring repeated model tool calls, and it presents one list: the main session row followed by non-terminal top-level agents.
 - I can open an agent's task, transcript, result, and worktree information.
 - Context-window usage and cumulative usage are labeled as different quantities and are never presented as goal-budget usage.
 - A historical launch result does not falsely report that background execution has completed.
 - Failures, partial results, and cancellation remain distinguishable from successful completion.
-- The inspector remains open if the selected agent finishes.
+- The fleet view overlay remains open if the selected agent finishes.
 - A display-surface fault never ends my session. If the agents UI configuration cannot be applied, the surfaces keep rendering with their documented defaults, I am told that the configuration was not applied, and the configured presentation returns when the configuration is readable again.
 
 ### SA-03: Guide and resume an agent
@@ -123,8 +123,8 @@ As a client using print, JSON, or RPC mode, I want explicit execution and error 
 As a user, I want Secretary's agent surfaces to present live and historical work with the same structure, controls, and labels as the nicobailon reference where the underlying runtime supports it.
 
 - Inline results offer a rich expandable display and a configurable summary display.
-- FleetView and the async widget present the same underlying state as tool responses, with themed rows, elapsed time, and labeled usage.
-- The inspector presents a structured Markdown and tool transcript with scrollable detail, tool-detail expansion, and a footer that reflects the configured keys.
+- The fleet indicator and the fleet view overlay present the same underlying state as tool responses, with themed rows, elapsed time, and labeled usage.
+- The fleet view overlay presents a structured Markdown and tool transcript with scrollable detail, tool-detail expansion, and a footer that reflects the configured keys.
 - Display configuration is validated; unsupported values fail rather than being ignored.
 - Features excluded in the interaction design's ported-surface exclusions do not appear as disabled or placeholder controls.
 
@@ -138,6 +138,17 @@ As a user, I want to manage named model fallback lists from the TUI so that suba
 - When a subagent is launched through a list, its models are tried from first to last. If every model is unavailable, the launch fails with an actionable error that names what was tried.
 - Changes made in the menu are persisted immediately and apply to subsequent launches.
 - In print, JSON, and other non-interactive modes, the configuration command returns text guidance instead of opening a terminal component.
+
+### SA-12: Delegate nested work
+
+As a parent agent, I want a delegated agent to decompose its task further so that complex work does not have to be orchestrated from the top level.
+
+- A running agent can launch its own child agents through the same delegation contract, within the tool and permission restrictions it inherited.
+- A nested agent is recorded with its parent agent, and the fleet view overlay presents each agent's children as a drill-down level. The fleet indicator lists top-level agents only.
+- Nested usage is attributed under the existing goal-budget formula, and finishing a nested agent does not complete or resume a goal automatically.
+- Stopping an agent stops its nested children; exiting the session stops the whole tree.
+- Nesting is bounded by a documented maximum depth, and a launch beyond that depth fails with an actionable error.
+- The fleet indicator and the fleet view overlay present the agent hierarchy correctly in sessions where no agent has children.
 
 ## 3. Compatibility and Scope
 

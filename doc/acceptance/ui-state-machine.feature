@@ -6,11 +6,11 @@ Feature: Keep interaction state consistent during asynchronous agent activity
 
   @ACC-SA-UI-01 @proposed
   Scenario: Escape closes only the focused dialog.
-    Given a running agent's inspector is open.
+    Given a running agent's fleet view overlay is open.
     And the user is composing an unsent message.
     When the user presses Escape once.
     Then the composer closes without sending the message.
-    And the inspector remains open and focused.
+    And the fleet view overlay remains open and focused.
     And the agent is not cancelled.
     When the user presses Escape again.
     Then the main editor and its draft regain focus.
@@ -107,24 +107,25 @@ Feature: Keep interaction state consistent during asynchronous agent activity
     When the user opens cleanup confirmation through an explicit command.
     And the user dismisses confirmation without accepting it.
     Then focus returns to that editor with the draft preserved.
-    And no inspector is opened merely to complete the command.
+    And no fleet view overlay is opened merely to complete the command.
     And no worktree cleanup request is submitted.
 
   @ACC-SA-UI-13 @proposed
   Scenario: Keep a missing transcript associated with the requested agent.
     Given the user selected agent A for inspection.
     When A's transcript fails to load.
-    Then the inspector identifies A and explains why its transcript is unavailable.
+    Then the fleet view overlay identifies A and explains why its transcript is unavailable.
     And the interface does not silently select another agent.
-    And the user can retry loading A, select another agent, or close the inspector.
+    And the user can retry loading A, select another agent, or close the fleet view overlay.
 
   @ACC-SA-UI-14 @proposed @SA-10
-  Scenario: List active background work in the async widget.
+  Scenario: List active background work in the fleet indicator.
     Given two background agents are running and one has completed.
-    When the async widget renders below the editor.
-    Then it lists the running executions with glyphs, activity, elapsed time, and usage labels.
-    And the completed execution is absent from the widget.
-    And FleetView and tool responses show the same underlying state.
+    When the fleet indicator renders below the editor.
+    Then its first row is the main session.
+    And it lists the running executions with a status label, elapsed time, and usage labels.
+    And the completed execution is absent from the indicator.
+    And the fleet indicator and tool responses show the same underlying state.
 
   @ACC-SA-UI-15 @proposed @SA-10
   Scenario: Render the Agent call in the configured inline display mode.
@@ -136,17 +137,17 @@ Feature: Keep interaction state consistent during asynchronous agent activity
     Then the card shows the agent name, status glyph, bounded task line, activity, live status, and an expansion hint.
 
   @ACC-SA-UI-16 @proposed @SA-10
-  Scenario: Reflect configured inspector keybindings in behavior and hints.
+  Scenario: Reflect configured overlay keybindings in behavior and hints.
     Given agents.ui.fleetKeybindings overrides the stop and close actions.
-    When the user presses the configured stop key in the inspector.
+    When the user presses the configured stop key in the fleet view overlay.
     Then stop confirmation opens for the selected run.
     And the footer displays the configured keys, not the defaults.
     When the configuration contains an unsupported key or value.
     Then configuration validation fails with an explicit error.
 
   @ACC-SA-UI-17 @proposed @SA-10
-  Scenario: Present the bordered inspector layout with width fallbacks.
-    Given the inspector is open with an agent selected.
+  Scenario: Present the bordered fleet view overlay layout with width fallbacks.
+    Given the fleet view overlay is open with an agent selected.
     Then the overlay shows a bordered frame, a title row, a selection-position indicator, and a footer.
     When the terminal is narrower than the two-pane threshold.
     Then the roster stacks above a full-width detail view.

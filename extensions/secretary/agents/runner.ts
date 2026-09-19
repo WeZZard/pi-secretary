@@ -7,11 +7,13 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { availabilityResetAt, isAvailabilityError } from "./availability.ts";
 import type { AgentRecord, AgentRun, RunnerHooks, RunningChild } from "./records.ts";
-import { runInChildSession } from "./child-context.ts";
+import { childDelegationAuthorized, runInChildSession } from "./child-context.ts";
+
+/** Delegation tools (SA-12): issued to a child session only when it may delegate further. */
+export const DELEGATION_TOOL_NAMES = ["Agent", "SendMessage", "TaskStop", "TaskOutput"];
 
 const forbidden = new Set([
-  "Agent", "SendMessage", "TaskStop", "TaskOutput", "SubagentWorkflow",
-  "get_subagent_result", "steer_subagent", "get_goal", "create_goal", "update_goal", "clear_goal",
+  "SubagentWorkflow", "get_subagent_result", "steer_subagent", "get_goal", "create_goal", "update_goal", "clear_goal",
 ]);
 
 function usageRecord(usage: Usage) {
@@ -41,9 +43,13 @@ interface Attempt {
 export async function createChildRunner(options: {
   agent: AgentRecord; run: AgentRun; ctx: ExtensionContext; signal: AbortSignal;
   hooks: RunnerHooks; sessionDir: string;
+  /** Whether this child may itself delegate (its depth is below `agents.maxNestingDepth`). */
+  allowDelegation?: boolean;
 }): Promise<RunningChild> {
-  return runInChildSession(async () => {
+  // Records predate the depth field are top-level children of the main session.
+  return runInChildSession({ agentId: options.agent.agentId, depth: options.agent.depth ?? 1 }, async () => {
     const { agent, run, ctx, signal, hooks, sessionDir } = options;
+    const allowDelegation = options.allowDelegation === true;
     signal.throwIfAborted();
     hooks.authorize();
     await access(agent.cwd);
@@ -56,6 +62,7 @@ export async function createChildRunner(options: {
     let outerCleanup: Promise<void> | undefined;
 
     const allowed = () => agent.tools.filter((name) => !forbidden.has(name)
+      && (allowDelegation || !DELEGATION_TOOL_NAMES.includes(name))
       && (!hooks.allowedTools || hooks.allowedTools().includes(name))
       && (!agent.definition.tools || agent.definition.tools.includes(name))
       && !agent.definition.disallowedTools?.includes(name));
@@ -175,29 +182,37 @@ export async function createChildRunner(options: {
       // Startup hooks may register providers too. Never silently accept a replacement.
       attempt.authorize();
       const availableTools = new Set(session.getAllTools().map((tool) => tool.name));
-      const missingTools = allowed().filter((name) => !availableTools.has(name));
+      // Delegation tools are provided by this extension's own child-session installation; when
+      // that installation is absent the child simply cannot delegate, so their absence is not
+      // an authorization failure the way a missing approved work tool is.
+      const missingTools = allowed().filter((name) => !availableTools.has(name) && !DELEGATION_TOOL_NAMES.includes(name));
       if (missingTools.length) throw new Error(`Approved child tools cannot be loaded: ${missingTools.join(", ")}`);
       // Compose rather than replace SDK permission/extension hooks. This outer guard also
-      // covers tools registered or activated after startup.
+      // covers tools registered or activated after startup. Delegation tool names are admitted
+      // only when this extension's own installation registered them for this session, so a
+      // foreign extension cannot hijack the names inside an allowlisted session (SA-07).
+      const delegationAuthorized = () => childDelegationAuthorized(manager.getSessionId());
+      const guardAdmits = (name: string) => allowed().includes(name)
+        && (!DELEGATION_TOOL_NAMES.includes(name) || delegationAuthorized());
       const previousStream = session.agent.streamFunction;
       session.agent.streamFunction = (requestModel, context, request) => {
         attempt.authorize();
         return previousStream(requestModel, { ...context,
-          tools: context.tools?.filter((tool) => allowed().includes(tool.name)),
+          tools: context.tools?.filter((tool) => guardAdmits(tool.name)),
         }, request);
       };
       const previousTool = session.agent.beforeToolCall;
       session.agent.beforeToolCall = async (event, toolSignal) => {
         try { attempt.authorize(); }
         catch (error) { return { block: true, terminate: true, reason: String(error) }; }
-        if (!allowed().includes(event.toolCall.name)) {
+        if (!guardAdmits(event.toolCall.name)) {
           attempt.partial = `Child tool is not authorized: ${event.toolCall.name}`;
           return { block: true, terminate: true, reason: attempt.partial };
         }
         const decision = await previousTool?.(event, toolSignal);
         try { attempt.authorize(); }
         catch (error) { return { block: true, terminate: true, reason: String(error) }; }
-        if (!allowed().includes(event.toolCall.name)) {
+        if (!guardAdmits(event.toolCall.name)) {
           attempt.partial = `Child tool permission changed: ${event.toolCall.name}`;
           return { block: true, terminate: true, reason: attempt.partial };
         }

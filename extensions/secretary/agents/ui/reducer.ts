@@ -1,9 +1,15 @@
 import { TERMINAL_STATUSES, type AgentSnapshot } from "../records.ts";
 import { captureAnchor, restoreTranscript, transcriptLineCount } from "./transcript.ts";
-import { initialState, type ActionTarget, type Operation, type UiEffect, type UiEvent, type UiState } from "./state.ts";
+import { initialState, type ActionTarget, type InspectorLevel, type Operation, type UiEffect, type UiEvent, type UiState } from "./state.ts";
 export const active = (s: AgentSnapshot) => !!s.run && !TERMINAL_STATUSES.has(s.run.status);
 export const messageEligible = (s: AgentSnapshot | undefined): boolean => !!s && s.agent.resumable && (!s.agent.worktree || s.agent.worktree.state === "allocated") && s.run?.status !== "cancelling" && (active(s) || !!s.agent.sessionPath);
-export const fleetRows = (s: UiState) => s.snapshots.filter(a => active(a) || !s.hiddenFinished.includes(a.run?.runId ?? a.agent.agentId));
+/** The fleet indicator lists top-level agents while their run is non-terminal; terminal rows leave immediately (UX §2.2). */
+export const fleetRows = (s: UiState) => s.snapshots.filter(a => !a.agent.parentAgentId && (!a.run || !TERMINAL_STATUSES.has(a.run.status)));
+/** The overlay lists one drill level at a time; the filter retains or drops terminal statuses (§12.1.6). */
+export const overlayRows = (s: UiState, level: InspectorLevel) => {
+  const parent = level.path.at(-1);
+  return s.snapshots.filter(a => (parent ? a.agent.parentAgentId === parent : !a.agent.parentAgentId) && (level.includeFinished || !a.run || !TERMINAL_STATUSES.has(a.run.status)));
+};
 export function eligible(target: ActionTarget, s: AgentSnapshot | undefined): boolean {
   if (!s || s.agent.parentId !== target.parentId) return false;
   return target.action === "stop" ? s.run?.runId === target.runId && active(s) : !active(s) && s.agent.worktree?.id === target.worktreeId && s.agent.worktree.state === "allocated";
@@ -28,38 +34,71 @@ export function transition(previous: UiState, event: UiEvent, snapshots: readonl
         patch({ dialog: { kind: "closed" } }); feedback("The captured target is no longer eligible. No operation was sent."); restore();
       }
       const nav = state.navigation;
-      if (nav.kind === "inspector" && nav.detail.kind !== "list" && !find(nav.detail.agentId)) patch({ navigation: { kind: "inspector", detail: { kind: "unavailable", agentId: nav.detail.agentId, reason: "Agent is no longer available." } } });
+      if (nav.kind === "inspector" && nav.detail.kind !== "list" && !find(nav.detail.agentId)) patch({ navigation: { kind: "inspector", detail: { kind: "unavailable", level: nav.detail.level, agentId: nav.detail.agentId, reason: "Agent is no longer available." } } });
       break;
     }
     case "fleet":
-      if (state.navigation.kind === "editor" && state.dialog.kind === "closed" && event.editorEmpty && fleetRows(state).length) { patch({ navigation: { kind: "fleet", selectedAgentId: null } }); focus("fleet"); } break;
+      if (state.navigation.kind === "editor" && state.dialog.kind === "closed" && event.editorEmpty) { patch({ navigation: { kind: "fleet", selectedAgentId: null } }); focus("fleet"); } break;
     case "fleet-select":
       if (state.navigation.kind === "fleet" && (!event.agentId || find(event.agentId))) patch({ navigation: { kind: "fleet", selectedAgentId: event.agentId } }); break;
     case "open":
       if (state.dialog.kind !== "closed") break;
-      patch({ viewId: event.viewId, navigation: { kind: "inspector", detail: { kind: "list" } }, feedback: undefined }); focus("inspector"); break;
+      patch({ viewId: event.viewId, navigation: { kind: "inspector", detail: { kind: "list", level: { path: [], includeFinished: false } } }, feedback: undefined }); focus("inspector"); break;
     case "select": {
       if (state.navigation.kind !== "inspector" || state.dialog.kind !== "closed") break;
       if (!find(event.agentId)) { feedback("Agent does not belong to this session."); break; }
       const detail = state.navigation.detail;
       const prior = detail.kind === "ready" && detail.agentId === event.agentId ? detail.transcript : undefined;
-      patch({ navigation: { kind: "inspector", detail: { kind: "loading", agentId: event.agentId, requestId: event.requestId, previous: prior } } });
+      patch({ navigation: { kind: "inspector", detail: { kind: "loading", level: detail.level, agentId: event.agentId, requestId: event.requestId, previous: prior } } });
       effects.push({ type: "load", epoch: state.epoch, viewId: state.viewId, agentId: event.agentId, requestId: event.requestId }); break;
     }
     case "select-first": case "select-last": {
       if (state.navigation.kind !== "inspector" || state.dialog.kind !== "closed") break;
-      const target = event.type === "select-first" ? state.snapshots[0] : state.snapshots.at(-1);
-      if (!target) break;
       const detail = state.navigation.detail;
+      const rows = overlayRows(state, detail.level);
+      const target = event.type === "select-first" ? rows[0] : rows.at(-1);
+      if (!target) break;
       if (detail.kind !== "list" && detail.agentId === target.agent.agentId) break;
       const prior = detail.kind === "ready" && detail.agentId === target.agent.agentId ? detail.transcript : undefined;
-      patch({ navigation: { kind: "inspector", detail: { kind: "loading", agentId: target.agent.agentId, requestId: event.requestId, previous: prior } } });
+      patch({ navigation: { kind: "inspector", detail: { kind: "loading", level: detail.level, agentId: target.agent.agentId, requestId: event.requestId, previous: prior } } });
+      effects.push({ type: "load", epoch: state.epoch, viewId: state.viewId, agentId: target.agent.agentId, requestId: event.requestId }); break;
+    }
+    case "drill-in": {
+      const nav = state.navigation;
+      if (nav.kind !== "inspector" || nav.detail.kind === "list" || state.dialog.kind !== "closed") break;
+      const level: InspectorLevel = { path: [...nav.detail.level.path, nav.detail.agentId], includeFinished: nav.detail.level.includeFinished };
+      const first = overlayRows(state, level)[0];
+      if (!first) break; // A childless agent has no level to enter (UI-13's guard).
+      patch({ navigation: { kind: "inspector", detail: { kind: "loading", level, agentId: first.agent.agentId, requestId: event.requestId } } });
+      effects.push({ type: "load", epoch: state.epoch, viewId: state.viewId, agentId: first.agent.agentId, requestId: event.requestId }); break;
+    }
+    case "drill-out": {
+      const nav = state.navigation;
+      if (nav.kind !== "inspector" || state.dialog.kind !== "closed" || !nav.detail.level.path.length) break;
+      const cameFrom = nav.detail.level.path.at(-1)!;
+      const level: InspectorLevel = { path: nav.detail.level.path.slice(0, -1), includeFinished: nav.detail.level.includeFinished };
+      patch({ navigation: { kind: "inspector", detail: { kind: "loading", level, agentId: cameFrom, requestId: event.requestId } } });
+      effects.push({ type: "load", epoch: state.epoch, viewId: state.viewId, agentId: cameFrom, requestId: event.requestId }); break;
+    }
+    case "toggle-finished": {
+      const nav = state.navigation;
+      if (nav.kind !== "inspector" || state.dialog.kind !== "closed") break;
+      const level: InspectorLevel = { path: nav.detail.level.path, includeFinished: !nav.detail.level.includeFinished };
+      const detail = nav.detail;
+      const rows = overlayRows(state, level);
+      if (detail.kind === "list") { patch({ navigation: { kind: "inspector", detail: { kind: "list", level } } }); break; }
+      if (rows.some(a => a.agent.agentId === detail.agentId)) { patch({ navigation: { kind: "inspector", detail: { ...detail, level } } }); break; }
+      // The selected row left the list: move to the nearest remaining row (UI-15).
+      const before = overlayRows(state, detail.level).findIndex(a => a.agent.agentId === detail.agentId);
+      const target = rows[Math.max(0, Math.min(rows.length - 1, before - 1))] ?? rows.at(-1);
+      if (!target) { patch({ navigation: { kind: "inspector", detail: { kind: "list", level } } }); break; }
+      patch({ navigation: { kind: "inspector", detail: { kind: "loading", level, agentId: target.agent.agentId, requestId: event.requestId } } });
       effects.push({ type: "load", epoch: state.epoch, viewId: state.viewId, agentId: target.agent.agentId, requestId: event.requestId }); break;
     }
     case "transcript": {
       const nav = state.navigation;
       if (event.epoch !== state.epoch || event.viewId !== state.viewId || nav.kind !== "inspector" || nav.detail.kind !== "loading" || nav.detail.agentId !== event.agentId || nav.detail.requestId !== event.requestId) break;
-      patch({ navigation: { kind: "inspector", detail: event.error ? { kind: "unavailable", agentId: event.agentId, reason: event.error } : { kind: "ready", agentId: event.agentId, transcript: restoreTranscript(nav.detail.previous, event.events ?? []) } } }); break;
+      patch({ navigation: { kind: "inspector", detail: event.error ? { kind: "unavailable", level: nav.detail.level, agentId: event.agentId, reason: event.error } : { kind: "ready", level: nav.detail.level, agentId: event.agentId, transcript: restoreTranscript(nav.detail.previous, event.events ?? []) } } }); break;
     }
     case "compose": {
       const nav = state.navigation;
@@ -114,7 +153,7 @@ export function transition(previous: UiState, event: UiEvent, snapshots: readonl
     }
     case "escape":
       if (state.dialog.kind !== "closed") { patch({ dialog: { kind: "closed" } }); restore(); }
-      else if (state.navigation.kind === "fleet" || state.navigation.kind === "inspector") { patch({ navigation: { kind: "editor" }, hiddenFinished: state.snapshots.filter(s => !active(s)).map(s => s.run?.runId ?? s.agent.agentId) }); focus("editor"); } break;
+      else if (state.navigation.kind === "fleet" || state.navigation.kind === "inspector") { patch({ navigation: { kind: "editor" } }); focus("editor"); } break;
     case "scroll": {
       const nav = state.navigation;
       if (state.dialog.kind !== "closed" || nav.kind !== "inspector" || nav.detail.kind !== "ready") break;

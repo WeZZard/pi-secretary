@@ -40,7 +40,7 @@ Feature: Retrieve output and control execution without a terminal
     And the selected definition does not require background execution.
     When "Agent" is called without "run_in_background".
     Then the operation waits for the child's outcome.
-    And it does not require FleetView, an inspector, or a confirmation dialog.
+    And it does not require the fleet indicator, the fleet view overlay, or a confirmation dialog.
 
     Examples:
       | mode  |

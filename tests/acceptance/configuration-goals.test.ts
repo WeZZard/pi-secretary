@@ -112,7 +112,7 @@ const bindings: ScenarioBindings = {
     const fresh = await h.launch({ subagent_type: "reviewer", run_in_background: false });
     assert.equal(h.repository.getAgent(fresh.details.agentId)!.model, "test-provider/different-model");
     assert.match(h.calls[2]!.context.systemPrompt!, /Edited definition sentinel/);
-    h.pi.getActiveTools = () => ["write", "Agent", "SendMessage", "TaskOutput", "get_goal", "create_goal", "update_goal"];
+    h.pi.getActiveTools = () => ["write", "get_goal", "create_goal", "update_goal"];
     const denied = await h.tool("SendMessage", { to: saved.agentId, message: "Recheck current permissions." });
     const outcome = await h.finish(denied.details.runId);
     assert.equal(outcome.details.status, "failed");

@@ -9,7 +9,7 @@
  * Regression: production crash of 2026-09-19. A session running newer code
  * wrote `agents.modelFallbackLists` into the user-global secretary.json
  * while the installed extension predated that key. The installed build
- * rejects unknown `agents` fields by design (§12.6.5), so the async-widget
+ * rejects unknown `agents` fields by design (§12.6.5), so the indicator's
  * poll tick's repaint threw `unsupported agents field modelFallbackLists`
  * out of the `setInterval` callback, and pi exited with an
  * uncaughtException. This test replays that sequence in process: bind with
@@ -22,7 +22,6 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerAgentUI, FLEET_WIDGET_KEY } from "../../extensions/secretary/agents/ui/commands.ts";
-import { ASYNC_WIDGET_KEY } from "../../extensions/secretary/agents/ui/async-widget.ts";
 import { loadAgentConfiguration } from "../../extensions/secretary/agents/configuration.ts";
 
 function harness(t: TestContext) {
@@ -41,7 +40,7 @@ function harness(t: TestContext) {
   // The exact production resolver from installation.ts.
   const resolveOptions = () => {
     const config = loadAgentConfiguration(cwd, agentDir, false);
-    return { fleetViewPlacement: config.ui.fleetViewPlacement, asyncWidget: config.ui.asyncWidget, keybindings: config.ui.fleetKeybindings };
+    return { fleetViewPlacement: config.ui.fleetViewPlacement, keybindings: config.ui.fleetKeybindings };
   };
   // One running background row mirrors the incident session: hasRunning makes
   // every poll tick repaint, so each tick re-resolves the UI options.
@@ -77,7 +76,7 @@ function harness(t: TestContext) {
   };
   const ui = registerAgentUI(pi, port, resolveOptions);
   t.after(() => ui.dispose());
-  /** The same closure startAsyncWidgetPolling hands to setInterval (async-widget.ts tick). */
+  /** The same closure startFleetPolling hands to setInterval (fleet-view.ts tick). */
   const tick = () => { for (const listener of [...listeners]) listener(); };
   return { putConfig, tick, bind: () => ui.bind(ctx), notifications, widgets };
 }
@@ -100,9 +99,9 @@ test("agents display refresh survives an unsupported agents configuration field"
   assert.ok(h.notifications.some(entry => entry.level === "error" && /configuration/i.test(entry.message)),
     `a diagnostic notification is expected; got ${JSON.stringify(h.notifications)}`);
   assert.ok(h.widgets.some(entry => entry.key === FLEET_WIDGET_KEY && entry.placement === "belowEditor"),
-    "the fleet widget keeps rendering with the documented default placement");
-  assert.ok(h.widgets.some(entry => entry.key === ASYNC_WIDGET_KEY),
-    "the async widget keeps rendering with the documented default enabled state");
+    "the fleet indicator keeps rendering with the documented default placement");
+  assert.ok(h.widgets.every(entry => entry.key === FLEET_WIDGET_KEY),
+    "the unified indicator is the only registered widget; the async widget is removed");
 });
 
 test("the configuration-fault notification is throttled and re-arms after recovery", (t) => {

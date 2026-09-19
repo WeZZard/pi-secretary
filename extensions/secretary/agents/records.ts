@@ -50,6 +50,14 @@ export type WorkspacePlan =
 export interface AgentRecord {
   agentId: string;
   parentId: string;
+  /** The delegating agent for nested delegation (SA-12); absent for top-level agents. */
+  parentAgentId?: string;
+  /**
+   * Levels below the main session: a top-level agent is 1. Records written before nested
+   * delegation lack the field and are treated as depth 1. Launches beyond
+   * `agents.maxNestingDepth` are rejected (architecture §7).
+   */
+  depth?: number;
   name?: string;
   definition: AgentDefinition;
   model: string;
@@ -114,6 +122,8 @@ export interface AgentSnapshot { agent: AgentRecord; run?: AgentRun }
  */
 export interface AgentRowView {
   agentId: string;
+  /** The delegating agent for nested rows; absent for top-level rows (§12.6.3). */
+  parentAgentId?: string;
   name?: string;
   status: RunStatus | "idle";
   description: string;
