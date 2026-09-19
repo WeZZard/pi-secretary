@@ -219,7 +219,7 @@ flowchart LR
 
 - The goals database is a single file shared by every concurrently running pi session (`pi-secretary-goals.sqlite`); any session can write while others read. The connection must therefore be opened for multi-process access: WAL journal mode, so a writer does not exclude readers, plus a nonzero busy timeout, so the remaining writer-versus-writer waits resolve instead of returning `SQLITE_BUSY`.
 - WAL persists in the database file, so a session opening an existing store inherits the mode without coordination. The store lives on a local filesystem; WAL's unsuitability for network filesystems is not a constraint here.
-- A bounded `SQLITE_BUSY` surface can still occur (for example, a writer stalled past the busy timeout). Every storage read site must therefore tolerate a transient read fault; the UI degradation contract is §13.6, and the context-injection fault policy is §13.3. A storage read fault is never a process-fatal condition.
+- A bounded `SQLITE_BUSY` surface can still occur (for example, a writer stalled past the busy timeout). Render paths must therefore never perform storage I/O per paint or tick: the goal widget and the Secretary agents display surfaces read in-memory projections of committed state (the agents projection is defined in the subagent architecture §6.2), so a contended store cannot block or fail a paint. Read sites that remain storage-authoritative must tolerate a transient read fault; the UI degradation contract is §13.6, and the context-injection fault policy is §13.3. A storage read fault is never a process-fatal condition.
 
 ### 5.2 Mutation ordering
 

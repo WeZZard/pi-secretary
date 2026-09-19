@@ -46,6 +46,15 @@ const rejected = (message: string): Error & { definitive: true } => Object.assig
 export class AgentService {
   private readonly repo: AgentRepository;
   private readonly worktrees: WorkspaceManager;
+  // In-memory display projection (subagent architecture §6.2): the service is
+  // the single writer for its parent's tables, so a projection loaded at
+  // recovery and updated write-through in the same commit as every mutation
+  // cannot go stale from another session. Display reads (list, viewModels)
+  // serve this projection and never touch storage, keeping a paint or poll
+  // tick non-blocking and total (§12.6.3, goal architecture §5.1.1).
+  private projectionAgents: AgentRecord[] = [];
+  private readonly projectionRuns = new Map<string, AgentRun[]>();
+  private readonly projectionUsage = new Map<string, UsageRecord[]>();
   private readonly active = new Map<string, Active>();
   private readonly cleanups = new Set<Promise<unknown>>();
   private readonly messages = new Map<string, Promise<AgentRun>>();
@@ -62,6 +71,7 @@ export class AgentService {
   }
   /** Call only after acquiring exclusive parent ownership. */
   async recover(): Promise<void> {
+    this.loadProjection();
     for (const run of this.repo.runs(this.options.parentId)) {
       if (!TERMINAL_STATUSES.has(run.status)) {
         run.status = "interrupted"; run.error = "The previous session ended before settlement was recorded.";
@@ -77,6 +87,7 @@ export class AgentService {
         catch { agent.worktree.state = "uncertain"; }
       }
       this.repo.putAgent(agent);
+      this.projectAgent(agent);
     }
     for (const delivery of this.repo.completions(this.options.parentId)) {
       if (delivery.state === "submitted") this.repo.putCompletion({ ...delivery, state: "uncertain", trigger: false });
@@ -88,14 +99,46 @@ export class AgentService {
     for (const listener of this.listeners) { try { listener(); } catch (e) { this.options.diagnostic?.(e); } }
   }
   version(): number { return this.revision; }
+  /** Projection load and write-through updates; the only projection paths that touch storage. */
+  private loadProjection(): void {
+    this.projectionAgents = this.repo.agents(this.options.parentId);
+    this.projectionRuns.clear();
+    for (const run of this.repo.runs(this.options.parentId)) {
+      const runs = this.projectionRuns.get(run.agentId) ?? [];
+      runs.push(run);
+      this.projectionRuns.set(run.agentId, runs);
+    }
+    this.projectionUsage.clear();
+    for (const runs of this.projectionRuns.values()) {
+      for (const run of runs) this.projectionUsage.set(run.runId, this.repo.usage(run.runId));
+    }
+  }
+  private projectAgent(record: AgentRecord): void {
+    if (record.parentId !== this.options.parentId) return;
+    const index = this.projectionAgents.findIndex(a => a.agentId === record.agentId);
+    if (index >= 0) this.projectionAgents[index] = record;
+    else this.projectionAgents.push(record);
+  }
+  private projectRun(record: AgentRun): void {
+    if (record.parentId !== this.options.parentId) return;
+    const runs = this.projectionRuns.get(record.agentId) ?? [];
+    const index = runs.findIndex(r => r.runId === record.runId);
+    if (index >= 0) runs[index] = record;
+    else runs.push(record);
+    this.projectionRuns.set(record.agentId, runs);
+  }
+  private projectUsage(record: UsageRecord): void {
+    const events = this.projectionUsage.get(record.runId) ?? [];
+    if (!events.some(e => e.id === record.id)) events.push(record);
+    this.projectionUsage.set(record.runId, events);
+  }
   list(): AgentSnapshot[] {
-    const runs = this.repo.runs(this.options.parentId);
-    return this.repo.agents(this.options.parentId).map(agent => ({ agent, run: runs.filter(r => r.agentId === agent.agentId).at(-1) }));
+    return this.projectionAgents.map(agent => ({ agent, run: (this.projectionRuns.get(agent.agentId) ?? []).at(-1) }));
   }
   /** Immutable widget rows; consumers render them without deriving state or usage. */
   viewModels(): AgentRowView[] {
     return this.list().map(({ agent, run }) => {
-      const labels = run ? deriveUsageLabels(this.repo.usage(run.runId)) : {};
+      const labels = run ? deriveUsageLabels(this.projectionUsage.get(run.runId) ?? []) : {};
       return { agentId: agent.agentId, name: agent.name, status: run?.status ?? "idle",
         description: run?.description ?? agent.definition.description, model: agent.model,
         ...(run?.startedAt !== undefined ? { startedAt: run.startedAt } : {}),
@@ -117,7 +160,7 @@ export class AgentService {
     if (!run) throw new Error("Agent has no execution record.");
     return run;
   }
-  private saveRun(run: AgentRun): void { run.revision++; this.repo.putRun(run); this.changed(); }
+  private saveRun(run: AgentRun): void { run.revision++; this.repo.putRun(run); this.projectRun(run); this.changed(); }
   private capacity(): void {
     if (this.closed) throw rejected("This agent controller is shutting down.");
     const pending = this.repo.runs(this.options.parentId).filter(r => !TERMINAL_STATUSES.has(r.status)).length;
@@ -147,6 +190,7 @@ export class AgentService {
       if (spec.name && this.repo.agents(this.options.parentId).some(a => a.name === spec.name)) throw new Error(`Agent name already exists: ${spec.name}`);
       this.repo.putAgent(agent); this.repo.putRun(run);
     });
+    this.projectAgent(agent); this.projectRun(run);
     this.changed(); this.drain();
     return { agent, run };
   }
@@ -192,7 +236,7 @@ export class AgentService {
       if (agent.requestedWorktree && !agent.worktree) {
         const base = agent.requestedWorktree;
         agent.worktree = await this.worktrees.create(agent.agentId, base, entry.controller.signal);
-        agent.cwd = join(agent.worktree.path, base.relativeCwd ?? ""); this.repo.putAgent(agent);
+        agent.cwd = join(agent.worktree.path, base.relativeCwd ?? ""); this.repo.putAgent(agent); this.projectAgent(agent);
       }
       if (agent.worktree) {
         if (agent.worktree.state !== "allocated") throw new Error("Worktree is unavailable or reserved for cleanup.");
@@ -205,14 +249,15 @@ export class AgentService {
       };
       const hooks: RunnerHooks = {
         allowedTools: this.options.currentTools,
-        session: path => { const a = this.resolve(agent.agentId); a.sessionPath = path; this.repo.putAgent(a); },
+        session: path => { const a = this.resolve(agent.agentId); a.sessionPath = path; this.repo.putAgent(a); this.projectAgent(a); },
         text: text => { output += text; appendFileSync(run.outputPath, text); update(r => { r.output = output.slice(-50000); }); },
         activity: name => update(r => { r.activity = name; r.toolCount++; }),
         turn: () => update(r => { r.turnCount++; }),
         usage: (id, usage) => {
           const record: UsageRecord = { id: `${runId}:${id}`, runId, usage, goal: run.goal };
           // Goal integration commits its own durable idempotency marker atomically.
-          this.options.account?.(record); this.repo.recordUsage(record);
+          this.options.account?.(record);
+          if (this.repo.recordUsage(record)) this.projectUsage(record);
         },
         authorize: () => {
           if (entry.controller.signal.aborted || this.closed) throw new Error("Child execution is stopping.");
@@ -242,6 +287,7 @@ export class AgentService {
         this.repo.putRun({ ...run, revision: run.revision + 1 });
         this.settleGuidance(runId, run.error);
         this.repo.putCompletion({ id: `completion:${runId}`, runId, parentId: run.parentId, state: "pending", trigger: run.background });
+        this.projectRun(run);
       });
       this.changed();
       try { this.options.completion?.(run); } catch (e) { this.options.diagnostic?.(e); }
@@ -309,6 +355,7 @@ export class AgentService {
       else this.repo.putGuidance({ id: operationId, runId: run.runId, text, state: "pending" });
       this.repo.putReceipt(this.options.parentId, operationId, { runId: run.runId });
     });
+    if (!active) this.projectRun(run);
     this.changed(); if (active) this.flushGuidance(run.runId); else this.drain();
     return run;
   }
@@ -380,7 +427,7 @@ export class AgentService {
     if (receipt) return receipt;
     const agent = this.resolve(ref);
     if (this.repo.activeRun(agent.agentId) || !agent.worktree || agent.worktree.state !== "allocated") throw rejected("Worktree is active, missing, or already reserved for cleanup.");
-    agent.worktree.state = "cleaning"; this.repo.putAgent(agent); this.changed();
+    agent.worktree.state = "cleaning"; this.repo.putAgent(agent); this.projectAgent(agent); this.changed();
     try {
       await this.worktrees.cleanup(agent.worktree);
       agent.worktree.state = "removed"; agent.resumable = false;
@@ -389,7 +436,7 @@ export class AgentService {
     } catch (error) {
       try { await this.worktrees.verify(agent.worktree); agent.worktree.state = "allocated"; }
       catch { agent.worktree.state = "uncertain"; }
-      this.repo.putAgent(agent);
+      this.repo.putAgent(agent); this.projectAgent(agent);
       if (agent.worktree.state === "allocated") throw rejected(String(error));
       throw error;
     } finally { this.changed(); }

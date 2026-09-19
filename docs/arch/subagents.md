@@ -311,6 +311,7 @@ An agent ID names a conversation. A run ID names one execution. A source tool-ca
 ### 6.2 Storage ownership
 
 - SQLite agent tables are added through additive migrations in the existing Secretary database. The agent repository does not repurpose `thread_goals` for agent state.
+- `AgentService` is the single writer for its parent's agent tables: it runs only after acquiring the exclusive parent lock, and `recover()` executes before any display read. The service therefore maintains an in-memory projection of its parent's agents, runs, and usage events, loaded once at recovery and updated write-through in the same commit as every mutation. Snapshot and view-model reads (§12.6.3) serve this projection and never re-read storage; explicit lookups (target resolution, receipts, transcript parsing) remain authoritative storage reads and stay fail-fast.
 - pi `SessionManager` remains responsible for session JSONL history. Secretary stores references and its own execution metadata, not a competing conversation format.
 - Each run has a plain-text output artifact for model retrieval. The inspector reads the pi transcript and does not infer current status from output text.
 - State directories use owner-only permissions where supported. Credentials are not copied into records, configuration snapshots, or notifications.
@@ -574,7 +575,7 @@ The [interaction design](../ux/subagents.md) owns visible behavior. The followin
 - FleetView is a session-owned widget under a distinct Secretary key and does not replace the goal widget or the global footer. Its placement is configurable between below and above the editor; the default is below.
 - The async widget is a second session-owned widget under its own key. It is enabled by default and can be disabled by configuration. It lists active background executions independently of FleetView's collapsed summary.
 - The inspector is an in-process custom TUI component rendered as a bordered overlay. It does not depend on Herdr, Ghostty automation, or opening another terminal.
-- View models are immutable snapshots obtained from `AgentService`; progress events invalidate affected components. The async widget additionally polls on a bounded interval so elapsed time and spinner animation advance between service events; rendering is deduplicated by a render key so unchanged state does not repaint.
+- View models are immutable snapshots obtained from `AgentService`; progress events invalidate affected components. The async widget additionally polls on a bounded interval so elapsed time and spinner animation advance between service events; rendering is deduplicated by a render key so unchanged state does not repaint. Display reads never touch storage per paint or tick: `AgentService` publishes view models from an in-memory projection of committed state (§6.2), so a contended shared store cannot block or fail a paint (goal architecture §5.1.1, §13.6).
 - The editor integration composes with an existing editor factory. It captures navigation only when the editor is empty and the agent component can receive focus.
 - If editor composition is unavailable, the `/agents` command remains functional and the adapter reports the missing shortcut integration rather than replacing another editor silently.
 - Transcript rendering uses structured events parsed from the persisted pi session file, bounded windows, and strips untrusted terminal control sequences. Raw artifacts are not interpreted as UI commands.
@@ -837,6 +838,8 @@ Usage labels follow the [interaction design](../ux/subagents.md#22-fleetview):
 - Neither label is the goal-budget usage formula of Section 11.2. Goal charging continues to use the established formula on the same underlying usage events, and the widget labels must not be reused for it.
 
 The async widget maintains a bounded polling timer and a render key. The timer is unreferenced so it cannot keep the process alive, is disposed on deactivation, and a repaint is skipped when the render key is unchanged and no row is running.
+
+View models are served from the in-memory projection defined in §6.2. A paint or poll tick is a non-blocking, total operation: it performs no storage I/O and therefore cannot observe `SQLITE_BUSY` from the shared store, and it must not throw out of the host's render path (goal architecture §13.6). Storage reads belong to commit and recovery boundaries, where a failure is a genuine mutation failure that propagates to the caller rather than reaching the TUI.
 
 #### 12.6.4 Inspector presentation components
 

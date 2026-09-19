@@ -27,6 +27,7 @@
 | [Delivery record](../.plans/2026-09-17-subagent-support.md) | It is the historical implementation record. It is not evidence of release approval. |
 | [TUI port plan](../.plans/2026-09-18-subagent-tui-port.md) | It is the implementation plan for porting the nicobailon TUI surfaces onto the existing runtime. It cites the design decisions it implements. |
 | [Shared-store concurrency plan](../.plans/2026-09-19-shared-store-concurrency.md) | It is the implementation plan for multi-process goal-store access and non-fatal display-refresh faults. It cites the design decisions it implements. |
+| [Agents display-projection plan](../.plans/2026-09-19-agents-display-projection.md) | It is the implementation plan for serving agents display reads from a commit-time in-memory projection. It cites the design decisions it implements. |
 | [Upstream research](research/subagent-system-comparison.md) | It records the dated source comparison that informed the design. It does not describe current Secretary behavior. |
 
 ## Generated test artifacts
