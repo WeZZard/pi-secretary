@@ -10,18 +10,18 @@
 
 ## 2026-09-19: Model fallback lists and the `/secretary` configuration menu
 
-**Reviewed implementation:** the working tree implementing the [model fallback lists plan](../../.plans/2026-09-19-model-fallback-lists.md) phases P1–P3, including the same-day presentation amendment that restyled the menu from a bordered overlay to pi's native full-screen selector presentation. **Execution date:** 2026-09-19.
+**Reviewed implementation:** the working tree implementing the [model fallback lists plan](../../.plans/2026-09-19-model-fallback-lists.md) phases P1–P3, including the same-day amendments that restyled the menu to pi's native full-screen selector presentation, restructured the Subagents section as a configuration-item navigation list, and added fallback-list renaming. **Execution date:** 2026-09-19.
 
 | Check | Observed result | Verification limit |
 | --- | --- | --- |
 | `npm run check` | TypeScript checking passed. | Static checking only. |
 | `npm run test:subagents` | All 161 tests passed, including availability classification, chain resolution, runner fallback, persistence, and the headless `/secretary` wiring test. | Deterministic providers and fixtures, not real providers. |
 | `npm run test:acceptance` | All 148 scenarios passed, including the rewritten ACC-SA-07-01/02/03 and the new ACC-SA-07-09 ordered-fallback scenario. | Scenario bindings are reviewed adapters, not independent specification. |
-| TUI suites | All 75 tests passed, including the menu interaction tests and the eight reviewed rendered-layout baselines in `tests/tui/secretary-menu-snapshots.test.ts`. | Baselines are reviewed captures of the implemented layout; layout changes require updating them with review. |
+| TUI suites | All 79 tests passed, including the menu interaction tests and the ten reviewed rendered-layout baselines in `tests/tui/secretary-menu-snapshots.test.ts`. | Baselines are reviewed captures of the implemented layout; layout changes require updating them with review. |
 | `npm run lint:acceptance` and `npm run lint:mermaid` | 10 Gherkin files with 94 scenario identities validated; 27 Mermaid blocks valid. | Syntax and traceability checks, not behavioral execution. |
-| TUI walkthrough recording | Run `test-results/tui/20260919T061043Z-efb4d51f` completed 19 checkpoints; replay assertions passed for all checkpoints, including the seven menu checkpoints (07b–07h). | The walkthrough runs real Pi with a deterministic provider. A recorded walkthrough is not human visual approval; replay does not run a model. |
+| TUI walkthrough recording | Run `test-results/tui/20260919T072335Z-182e61e6` completed 22 checkpoints; replay assertions passed for all checkpoints, including the ten menu checkpoints (07b–07k). | The walkthrough runs real Pi with a deterministic provider. A recorded walkthrough is not human visual approval; replay does not run a model. |
 
-The recording's screen assertions cover the menu's top level, list manager, name prompt, list creation, list detail, filtered model picker, and model addition. Human visual approval of the menu remains unrecorded and separate.
+The recording's screen assertions cover the menu's top level, the Subagents section's configuration items, the list manager, the name prompt, list creation, the prefilled rename prompt, the rename result, the list detail, the filtered model picker, and model addition. Human visual approval of the menu remains unrecorded and separate.
 
 ## Scope and provenance
 

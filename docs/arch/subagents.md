@@ -939,7 +939,7 @@ If a future release adds one of these runtime features, its surface is designed 
 | SA-08 | Atomic usage application, event replay, goal replacement, stopped goals, and continuation waiting tests cover goal integration. |
 | SA-09 | SDK and adapter tests cover host-mode restrictions and child UI lifecycles. Real-provider CLI tests separately exercise print-mode spawning and interactive-parent spawning with widget extensions. These do not establish every RPC client or extension combination. |
 | SA-10 | Structured-transcript parsing tests cover tool pairing, guidance notices, truncation bounds, and sanitization. View-model tests cover usage-label derivation and the no-zero-for-unknown rule. Widget render-key tests cover deduplication and timer disposal. Keybinding-configuration tests cover validation, precedence, and hint consistency. Border and layout snapshot tests cover minimum width, narrow and wide panes, and resize. The recorded UI walkthrough additionally covers the async widget and both display modes. |
-| SA-11 | Configuration-schema validation, menu interaction and persistence tests, rendered-layout baselines, headless text-behavior tests, and the recorded UI walkthrough cover model fallback list management. The model-resolution scenarios in `agent-configuration.feature` cover fallback lists. |
+| SA-11 | Configuration-schema validation, menu interaction and persistence tests, rendered-layout baselines, headless text-behavior tests, and the recorded UI walkthrough cover model fallback list management, including creation, renaming, removal, ordering, and picker filtering. The model-resolution scenarios in `agent-configuration.feature` cover fallback lists. |
 
 Additional release conditions are:
 

@@ -34,29 +34,39 @@ test("layout baseline: top level", (t) => {
   assert.equal(normalize(menu.render(60)), "────────────────────────────────────────────────────────────\n\nSecretary\nEdits the user-global configuration only.\n\n→ Subagents\n\n  ↑/↓ select · Enter/→ open · Esc dismiss\n────────────────────────────────────────────────────────────");
 });
 
+test("layout baseline: Subagents section items", (t) => {
+  const menu = fixture(t);
+  menu.handleInput("\x1b[C");
+  assert.equal(normalize(menu.render(60)), "────────────────────────────────────────────────────────────\n\nSecretary › Subagents\n\n→ Model Fallback Lists\n\n  ↑/↓ select · Enter/→ open · ← back · Esc dismiss\n────────────────────────────────────────────────────────────");
+});
+
 test("layout baseline: list manager", (t) => {
   const menu = fixture(t);
   menu.handleInput("\x1b[C");
-  assert.equal(normalize(menu.render(60)), "────────────────────────────────────────────────────────────\n\nSecretary › Subagents\nModel Fallback Lists\nEdits the user-global configuration only.\n\n→ primary  2 models\n  empty  0 models\n  ＋ Add List\n\n  a add list · d remove list\n  ↑/↓ select · Enter/→ open · ← back · Esc dismiss\n────────────────────────────────────────────────────────────");
+  menu.handleInput("\x1b[C");
+  assert.equal(normalize(menu.render(60)), "────────────────────────────────────────────────────────────\n\nSecretary › Subagents › Model Fallback Lists\nEdits the user-global configuration only.\n\n→ primary  2 models\n  empty  0 models\n  ＋ Add List\n\n  a add list · r rename list · d remove list\n  ↑/↓ select · Enter/→ open · ← back · Esc dismiss\n────────────────────────────────────────────────────────────");
 });
 
 test("layout baseline: populated list", (t) => {
   const menu = fixture(t);
   menu.handleInput("\x1b[C");
   menu.handleInput("\x1b[C");
-  assert.equal(normalize(menu.render(60)), "────────────────────────────────────────────────────────────\n\nSecretary › Subagents › primary\nModels are tried from first to last.\n\n→ one [p]\n  two [p]\n  ＋ Add Model\n\n  a add · d remove · Shift+K/J move up/down\n  ↑/↓ select · Enter/→ open · ← back · Esc dismiss\n────────────────────────────────────────────────────────────");
+  menu.handleInput("\x1b[C");
+  assert.equal(normalize(menu.render(60)), "────────────────────────────────────────────────────────────\n\nSecretary › Subagents › Model Fallback Lists › primary\nModels are tried from first to last.\n\n→ one [p]\n  two [p]\n  ＋ Add Model\n\n  a add · d remove · Shift+K/J move up/down\n  ↑/↓ select · Enter/→ open · ← back · Esc dismiss\n────────────────────────────────────────────────────────────");
 });
 
 test("layout baseline: empty list", (t) => {
   const menu = fixture(t);
   menu.handleInput("\x1b[C");
+  menu.handleInput("\x1b[C");
   menu.handleInput("\x1b[B");
   menu.handleInput("\x1b[C");
-  assert.equal(normalize(menu.render(60)), "────────────────────────────────────────────────────────────\n\nSecretary › Subagents › empty\nModels are tried from first to last.\n\n→ ＋ Add Model\n\n  Enter/→ add\n  ← back · Esc dismiss\n────────────────────────────────────────────────────────────");
+  assert.equal(normalize(menu.render(60)), "────────────────────────────────────────────────────────────\n\nSecretary › Subagents › Model Fallback Lists › empty\nModels are tried from first to last.\n\n→ ＋ Add Model\n\n  Enter/→ add\n  ← back · Esc dismiss\n────────────────────────────────────────────────────────────");
 });
 
 test("layout baseline: model picker with filter", (t) => {
   const menu = fixture(t);
+  menu.handleInput("\x1b[C");
   menu.handleInput("\x1b[C");
   menu.handleInput("\x1b[B");
   menu.handleInput("\x1b[C");
@@ -68,13 +78,23 @@ test("layout baseline: model picker with filter", (t) => {
 test("layout baseline: list name prompt with draft", (t) => {
   const menu = fixture(t);
   menu.handleInput("\x1b[C");
+  menu.handleInput("\x1b[C");
   menu.handleInput("a");
   for (const ch of "fast") menu.handleInput(ch);
   assert.equal(normalize(menu.render(60)), "────────────────────────────────────────────────────────────\n\nAdd List\nName the fallback list.\n\n> fast                                                      \n\n  Enter confirm · Esc cancel\n────────────────────────────────────────────────────────────");
 });
 
+test("layout baseline: rename prompt prefilled with the current name", (t) => {
+  const menu = fixture(t);
+  menu.handleInput("\x1b[C");
+  menu.handleInput("\x1b[C");
+  menu.handleInput("r");
+  assert.equal(normalize(menu.render(60)), "────────────────────────────────────────────────────────────\n\nRename List\nRenaming preserves the list's models.\nDefinitions that reference the old name fail at launch\nuntil they are updated.\n\n> primary                                                   \n\n  Enter confirm · Esc cancel\n────────────────────────────────────────────────────────────");
+});
+
 test("layout baseline: remove list confirmation", (t) => {
   const menu = fixture(t);
+  menu.handleInput("\x1b[C");
   menu.handleInput("\x1b[C");
   menu.handleInput("d");
   assert.equal(normalize(menu.render(60)), "────────────────────────────────────────────────────────────\n\nRemove List\n\nRemove fallback list \"primary\"?\nDefinitions that reference it will fail at launch\nuntil they are updated.\n\n  Enter confirm · Esc cancel\n────────────────────────────────────────────────────────────");

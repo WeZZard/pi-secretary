@@ -131,7 +131,8 @@ As a user, I want Secretary's agent surfaces to present live and historical work
 
 As a user, I want to manage named model fallback lists from the TUI so that subagent model preferences survive subscription exhaustion without hand-editing configuration files.
 
-- I can create and remove named model fallback lists. The plugin ships with no lists; every list is one I created.
+- I reach the fallback lists through the Subagents section of the configuration menu, which groups subagent configuration items into a navigation list.
+- I can create, rename, and remove named model fallback lists. The plugin ships with no lists; every list is one I created. Renaming keeps the list's models; agent definitions that reference the old name fail at launch until they are updated.
 - I can add models to a list, remove models from a list, and change their order.
 - When a subagent is launched through a list, its models are tried from first to last. If every model is unavailable, the launch fails with an actionable error that names what was tried.
 - Changes made in the menu are persisted immediately and apply to subsequent launches.

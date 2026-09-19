@@ -10,6 +10,7 @@ const MIN_WIDTH = 36;
 const MAX_VISIBLE = 8;
 const ADD_LIST = "＋ Add List";
 const ADD_MODEL = "＋ Add Model";
+const SECTION_ITEM = "Model Fallback Lists";
 
 /** Keep the end of a long path visible when the full text exceeds the width. */
 function clipTail(text: string, width: number): string {
@@ -33,11 +34,13 @@ export interface SecretaryConfigMenuOptions {
 
 type Level =
   | { kind: "top"; selection: number }
+  | { kind: "section"; selection: number }
   | { kind: "manager"; selection: number }
   | { kind: "detail"; list: string; selection: number };
 
 type Modal =
   | { kind: "name"; input: Input; error?: string }
+  | { kind: "rename"; list: string; input: Input; error?: string }
   | { kind: "picker"; list: string; input: Input; selection: number }
   | { kind: "confirmRemove"; list: string };
 
@@ -45,9 +48,9 @@ type Modal =
  * The `/secretary` configuration page (interaction design §2.5, architecture §12.6.5).
  * Presented full-screen in pi's native selector style — a bold heading, muted
  * subtitles, filter inputs, `→` selection markers, and dimmed key-hint footers between
- * horizontal rules — with an internal level stack: top level, Subagents list manager,
- * and per-list model detail, plus name-prompt, model-picker, and removal-confirmation
- * pages. The menu reads and writes only the user-global secretary.json; every confirmed
+ * horizontal rules — with an internal level stack: top level, the Subagents section's
+ * configuration items, the model fallback list manager, and per-list model detail,
+ * plus name-prompt, rename, model-picker, and removal-confirmation pages. The menu reads and writes only the user-global secretary.json; every confirmed
  * change is validated and persisted before it is adopted, and there is no undo.
  */
 export class SecretaryConfigMenu implements Component, Focusable {
@@ -106,13 +109,42 @@ export class SecretaryConfigMenu implements Component, Focusable {
     this.modal = { kind: "picker", list, input: new Input(), selection: 0 };
   }
 
+  /** Shared name validation for the add and rename prompts. */
+  private nameError(name: string): string | undefined {
+    if (!name) return "Enter a list name.";
+    if (!FALLBACK_LIST_NAME.test(name)) return "Use letters, digits, hyphens, and underscores; start with a letter or digit.";
+    if (name === "inherit") return "inherit is reserved; choose another name.";
+    if (Object.hasOwn(this.lists, name)) return `A list named "${name}" already exists.`;
+    return undefined;
+  }
+
   private submitName(modal: { kind: "name"; input: Input; error?: string }): void {
     const name = modal.input.getValue().trim();
-    if (!name) modal.error = "Enter a list name.";
-    else if (!FALLBACK_LIST_NAME.test(name)) modal.error = "Use letters, digits, hyphens, and underscores; start with a letter or digit.";
-    else if (name === "inherit") modal.error = "inherit is reserved; choose another name.";
-    else if (Object.hasOwn(this.lists, name)) modal.error = `A list named "${name}" already exists.`;
-    else if (this.mutate({ ...this.lists, [name]: [] }, `Added list ${name}.`)) {
+    const error = this.nameError(name);
+    if (error) { modal.error = error; return; }
+    if (this.mutate({ ...this.lists, [name]: [] }, `Added list ${name}.`)) {
+      this.modal = undefined;
+      const level = this.level;
+      if (level.kind === "manager") level.selection = this.listNames().indexOf(name);
+    }
+  }
+
+  private openRename(list: string): void {
+    const input = new Input();
+    // Prefill with the current name through the public input API so the caret lands at the end.
+    for (const ch of list) input.handleInput(ch);
+    this.modal = { kind: "rename", list, input };
+  }
+
+  private submitRename(modal: { kind: "rename"; list: string; input: Input; error?: string }): void {
+    const name = modal.input.getValue().trim();
+    if (name === modal.list) { this.modal = undefined; return; }
+    const error = this.nameError(name);
+    if (error) { modal.error = error; return; }
+    // Rebuild so the renamed list keeps its position in the manager.
+    const next: Record<string, string[]> = {};
+    for (const [key, value] of Object.entries(this.lists)) next[key === modal.list ? name : key] = value;
+    if (this.mutate(next, `Renamed ${modal.list} to ${name}.`)) {
       this.modal = undefined;
       const level = this.level;
       if (level.kind === "manager") level.selection = this.listNames().indexOf(name);
@@ -155,7 +187,8 @@ export class SecretaryConfigMenu implements Component, Focusable {
 
   private openSelected(): void {
     const level = this.level;
-    if (level.kind === "top") this.stack.push({ kind: "manager", selection: 0 });
+    if (level.kind === "top") this.stack.push({ kind: "section", selection: 0 });
+    else if (level.kind === "section") this.stack.push({ kind: "manager", selection: 0 });
     else if (level.kind === "manager") {
       const names = this.listNames();
       if (level.selection < names.length) this.stack.push({ kind: "detail", list: names[level.selection]!, selection: 0 });
@@ -176,6 +209,7 @@ export class SecretaryConfigMenu implements Component, Focusable {
     if (matchesKey(data, "right") || matchesKey(data, "enter")) { this.openSelected(); return; }
     if (matchesKey(data, "up") || matchesKey(data, "down")) {
       const rows = level.kind === "top" ? 1
+        : level.kind === "section" ? 1
         : level.kind === "manager" ? this.listNames().length + 1
         : (this.lists[level.list] ?? []).length + 1;
       level.selection = Math.max(0, Math.min(rows - 1, level.selection + (matchesKey(data, "up") ? -1 : 1)));
@@ -184,6 +218,11 @@ export class SecretaryConfigMenu implements Component, Focusable {
     if (data === "a") {
       if (level.kind === "manager") this.modal = { kind: "name", input: new Input() };
       else if (level.kind === "detail") this.openPicker(level.list);
+      return;
+    }
+    if (data === "r" && level.kind === "manager") {
+      const name = this.listNames()[level.selection];
+      if (name !== undefined) this.openRename(name);
       return;
     }
     if (data === "d") {
@@ -204,10 +243,13 @@ export class SecretaryConfigMenu implements Component, Focusable {
       return;
     }
     const modal = this.modal;
-    if (modal?.kind === "name") {
+    if (modal?.kind === "name" || modal?.kind === "rename") {
       modal.input.focused = this.focused;
       if (matchesKey(data, "escape")) this.modal = undefined;
-      else if (matchesKey(data, "enter")) this.submitName(modal);
+      else if (matchesKey(data, "enter")) {
+        if (modal.kind === "name") this.submitName(modal);
+        else this.submitRename(modal);
+      }
       else modal.input.handleInput(data);
       return;
     }
@@ -251,12 +293,14 @@ export class SecretaryConfigMenu implements Component, Focusable {
   private title(): string {
     const modal = this.modal;
     if (modal?.kind === "name") return "Add List";
+    if (modal?.kind === "rename") return "Rename List";
     if (modal?.kind === "picker") return `Add Model › ${modal.list}`;
     if (modal?.kind === "confirmRemove") return "Remove List";
     const level = this.level;
     if (level.kind === "top") return "Secretary";
-    if (level.kind === "manager") return "Secretary › Subagents";
-    return `Secretary › Subagents › ${level.list}`;
+    if (level.kind === "section") return "Secretary › Subagents";
+    if (level.kind === "manager") return `Secretary › Subagents › ${SECTION_ITEM}`;
+    return `Secretary › Subagents › ${SECTION_ITEM} › ${level.list}`;
   }
 
   // Rendering follows pi's native selector style (scoped-models selector): a horizontal
@@ -316,6 +360,14 @@ export class SecretaryConfigMenu implements Component, Focusable {
         footer: ["Enter confirm · Esc cancel"],
       };
     }
+    if (modal?.kind === "rename") {
+      modal.input.focused = this.focused;
+      return {
+        subtitles: ["Renaming preserves the list's models.", "Definitions that reference the old name fail at launch", "until they are updated."],
+        rows: [modal.input.render(width)[0] ?? "", ...(modal.error ? [this.warn(modal.error)] : [])],
+        footer: ["Enter confirm · Esc cancel"],
+      };
+    }
     if (modal?.kind === "picker") {
       modal.input.focused = this.focused;
       const items = this.pickerItems(modal);
@@ -348,15 +400,22 @@ export class SecretaryConfigMenu implements Component, Focusable {
         footer: ["↑/↓ select · Enter/→ open · Esc dismiss"],
       };
     }
+    if (level.kind === "section") {
+      return {
+        subtitles: [],
+        rows: [this.plainRow(SECTION_ITEM, level.selection === 0)],
+        footer: ["↑/↓ select · Enter/→ open · ← back · Esc dismiss"],
+      };
+    }
     if (level.kind === "manager") {
       const names = this.listNames();
       return {
-        subtitles: ["Model Fallback Lists", "Edits the user-global configuration only."],
+        subtitles: ["Edits the user-global configuration only."],
         rows: [
           ...names.map((name, index) => this.managerRow(name, index === level.selection)),
           this.plainRow(ADD_LIST, level.selection === names.length),
         ],
-        footer: ["a add list · d remove list", "↑/↓ select · Enter/→ open · ← back · Esc dismiss"],
+        footer: ["a add list · r rename list · d remove list", "↑/↓ select · Enter/→ open · ← back · Esc dismiss"],
       };
     }
     const models = this.lists[level.list] ?? [];

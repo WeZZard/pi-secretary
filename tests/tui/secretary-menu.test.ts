@@ -45,25 +45,32 @@ test("top level shows the Subagents section and dismisses on Escape", (t) => {
 test("manager lists configured lists with model counts and states the user-global boundary", (t) => {
   const f = fixture(t, { lists: { primary: ["p/one", "p/two"], cheap: [] } });
   f.menu.handleInput(RIGHT);
+  f.menu.handleInput(RIGHT);
   const view = f.view(72);
-  assert.match(view, /Secretary › Subagents/);
-  assert.match(view, /Model Fallback Lists/);
+  assert.match(view, /Secretary › Subagents › Model Fallback Lists/);
   assert.match(view, /user-global/, "The menu states that it edits the user-global configuration only");
   assert.match(view, /→ primary {2}2 models/);
   assert.match(view, / {2}cheap {2}0 models/);
   assert.match(view, /＋ Add List/);
-  assert.match(view, /a add list · d remove list/);
+  assert.match(view, /a add list · r rename list · d remove list/);
   assert.match(view, /↑\/↓ select · Enter\/→ open · ← back · Esc dismiss/);
 });
 
 test("Right enters and Left returns per level; Left at the top level does nothing", (t) => {
   const f = fixture(t, { lists: { primary: ["p/one"] } });
   f.menu.handleInput(RIGHT);
+  assert.match(f.view(), /^Secretary › Subagents$/m);
+  assert.match(f.view(), /→ Model Fallback Lists/);
+  assert.doesNotMatch(f.view(), /a add list/, "The section page is a pure navigation list");
   f.menu.handleInput(RIGHT);
-  assert.match(f.view(), /Secretary › Subagents › primary/);
+  assert.match(f.view(), /^Secretary › Subagents › Model Fallback Lists$/m);
+  f.menu.handleInput(RIGHT);
+  assert.match(f.view(), /Model Fallback Lists › primary/);
   f.menu.handleInput(LEFT);
-  assert.match(f.view(), /Secretary › Subagents/);
+  assert.match(f.view(), /^Secretary › Subagents › Model Fallback Lists$/m);
   assert.doesNotMatch(f.view(), /› primary/);
+  f.menu.handleInput(LEFT);
+  assert.match(f.view(), /^Secretary › Subagents$/m);
   f.menu.handleInput(LEFT);
   f.menu.handleInput(LEFT);
   assert.match(f.view(), /^Secretary$/m);
@@ -75,12 +82,14 @@ test("Escape dismisses the entire menu from a deep level", (t) => {
   const f = fixture(t, { lists: { primary: ["p/one"] } });
   f.menu.handleInput(RIGHT);
   f.menu.handleInput(RIGHT);
+  f.menu.handleInput(RIGHT);
   f.menu.handleInput(ESC);
   assert.equal(f.dismissed(), 1);
 });
 
 test("an empty list shows only the add-model row with its reduced footer", (t) => {
   const f = fixture(t, { lists: { cheap: [] } });
+  f.menu.handleInput(RIGHT);
   f.menu.handleInput(RIGHT);
   f.menu.handleInput(RIGHT);
   const view = f.view();
@@ -92,6 +101,7 @@ test("an empty list shows only the add-model row with its reduced footer", (t) =
 
 test("adding a list persists it and reports the change", (t) => {
   const f = fixture(t);
+  f.menu.handleInput(RIGHT);
   f.menu.handleInput(RIGHT);
   f.menu.handleInput("a");
   assert.match(f.view(), /^Add List$/m);
@@ -105,6 +115,7 @@ test("adding a list persists it and reports the change", (t) => {
 
 test("duplicate, reserved, and invalid names are rejected with the draft retained", (t) => {
   const f = fixture(t, { lists: { fast: [] } });
+  f.menu.handleInput(RIGHT);
   f.menu.handleInput(RIGHT);
   f.menu.handleInput("a");
   f.type("fast");
@@ -123,8 +134,49 @@ test("duplicate, reserved, and invalid names are rejected with the draft retaine
   assert.match(f.view(), /Model Fallback Lists/);
 });
 
+test("renaming a list keeps its models and manager position and follows the selection", (t) => {
+  const f = fixture(t, { lists: { primary: ["p/one"], cheap: [] } });
+  f.menu.handleInput(RIGHT);
+  f.menu.handleInput(RIGHT);
+  f.menu.handleInput("r");
+  const prompt = f.view();
+  assert.match(prompt, /^Rename List$/m);
+  assert.match(prompt, /Renaming preserves the list's models\./);
+  assert.match(prompt, /fail at launch/);
+  assert.match(prompt, /> primary/, "The prompt is prefilled with the current name");
+  for (let index = 0; index < 7; index++) f.menu.handleInput(BACKSPACE);
+  f.type("standard");
+  f.menu.handleInput(ENTER);
+  assert.match(f.view(), /Renamed primary to standard\./);
+  assert.match(f.view(), /→ standard/, "The selection follows the renamed list");
+  assert.deepEqual(Object.keys(f.file().agents.modelFallbackLists), ["standard", "cheap"], "The renamed list keeps its position");
+  assert.deepEqual(f.file().agents.modelFallbackLists.standard, ["p/one"], "The models move with the name");
+});
+
+test("a same-name rename is a no-op and duplicate renames are rejected with the draft retained", (t) => {
+  const f = fixture(t, { lists: { primary: ["p/one"], cheap: [] } });
+  f.menu.handleInput(RIGHT);
+  f.menu.handleInput(RIGHT);
+  f.menu.handleInput("r");
+  f.menu.handleInput(ENTER);
+  assert.match(f.view(), /→ primary/, "A same-name confirm closes the prompt");
+  assert.doesNotMatch(f.view(), /Renamed/, "No change is reported");
+  assert.deepEqual(Object.keys(f.file().agents.modelFallbackLists), ["primary", "cheap"]);
+  f.menu.handleInput("r");
+  for (let index = 0; index < 7; index++) f.menu.handleInput(BACKSPACE);
+  f.type("cheap");
+  f.menu.handleInput(ENTER);
+  assert.match(f.view(), /already exists/);
+  assert.match(f.view(), /> cheap/, "The rejected draft is retained");
+  f.menu.handleInput(ESC);
+  assert.match(f.view(), /→ primary/, "Escape cancels the rename prompt without dismissing the menu");
+  assert.equal(f.dismissed(), 0);
+  assert.deepEqual(Object.keys(f.file().agents.modelFallbackLists), ["primary", "cheap"], "No rename was persisted");
+});
+
 test("removing a list requires confirmation; Escape cancels and Enter confirms", (t) => {
   const f = fixture(t, { lists: { primary: ["p/one"] } });
+  f.menu.handleInput(RIGHT);
   f.menu.handleInput(RIGHT);
   f.menu.handleInput("d");
   assert.match(f.view(), /Remove fallback list "primary"\?/);
@@ -141,6 +193,7 @@ test("removing a list requires confirmation; Escape cancels and Enter confirms",
 
 test("the model picker excludes present models, filters by typing, and appends the selection", (t) => {
   const f = fixture(t, { lists: { primary: ["p/one"] } });
+  f.menu.handleInput(RIGHT);
   f.menu.handleInput(RIGHT);
   f.menu.handleInput(RIGHT);
   f.menu.handleInput("a");
@@ -160,20 +213,22 @@ test("the model picker excludes present models, filters by typing, and appends t
   f.menu.handleInput("a");
   f.menu.handleInput(ESC);
   assert.equal(f.dismissed(), 0, "Escape cancels the picker before dismissing the menu");
-  assert.match(f.view(), /Secretary › Subagents › primary/);
+  assert.match(f.view(), /Model Fallback Lists › primary/);
 });
 
 test("adding a model reports exhaustion when every session model is already present", (t) => {
   const f = fixture(t, { lists: { primary: ["p/one", "p/two", "q/three"] } });
   f.menu.handleInput(RIGHT);
   f.menu.handleInput(RIGHT);
+  f.menu.handleInput(RIGHT);
   f.menu.handleInput("a");
   assert.match(f.view(), /already in this list/);
-  assert.match(f.view(), /Secretary › Subagents › primary/, "The picker does not open");
+  assert.match(f.view(), /Model Fallback Lists › primary/, "The picker does not open");
 });
 
 test("removing a model does not ask for confirmation", (t) => {
   const f = fixture(t, { lists: { primary: ["p/one", "p/two"] } });
+  f.menu.handleInput(RIGHT);
   f.menu.handleInput(RIGHT);
   f.menu.handleInput(RIGHT);
   f.menu.handleInput("d");
@@ -184,6 +239,7 @@ test("removing a model does not ask for confirmation", (t) => {
 
 test("Shift+K and Shift+J reorder models and persist the resolution order", (t) => {
   const f = fixture(t, { lists: { primary: ["p/one", "p/two", "q/three"] } });
+  f.menu.handleInput(RIGHT);
   f.menu.handleInput(RIGHT);
   f.menu.handleInput(RIGHT);
   f.menu.handleInput(DOWN);
@@ -214,6 +270,7 @@ test("a failed write keeps the previous configuration in effect", (t) => {
   rmSync(join(f.agentDir, "secretary.json"));
   mkdirSync(join(f.agentDir, "secretary.json"));
   t.after(() => rmSync(join(f.agentDir, "secretary.json"), { recursive: true, force: true }));
+  f.menu.handleInput(RIGHT);
   f.menu.handleInput(RIGHT);
   f.menu.handleInput(RIGHT);
   f.menu.handleInput("d");
