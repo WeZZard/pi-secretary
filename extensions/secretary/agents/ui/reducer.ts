@@ -34,11 +34,14 @@ export function transition(previous: UiState, event: UiEvent, snapshots: readonl
         patch({ dialog: { kind: "closed" } }); feedback("The captured target is no longer eligible. No operation was sent."); restore();
       }
       const nav = state.navigation;
-      if (nav.kind === "inspector" && nav.detail.kind !== "list" && !find(nav.detail.agentId)) patch({ navigation: { kind: "inspector", detail: { kind: "unavailable", level: nav.detail.level, agentId: nav.detail.agentId, reason: "Agent is no longer available." } } });
+      // When the last non-terminal row leaves, the hidden indicator cannot hold focus (UX §2.2).
+      if (nav.kind === "fleet" && fleetRows(state).length === 0) { patch({ navigation: { kind: "editor" } }); focus("editor"); }
+      else if (nav.kind === "inspector" && nav.detail.kind !== "list" && !find(nav.detail.agentId)) patch({ navigation: { kind: "inspector", detail: { kind: "unavailable", level: nav.detail.level, agentId: nav.detail.agentId, reason: "Agent is no longer available." } } });
       break;
     }
     case "fleet":
-      if (state.navigation.kind === "editor" && state.dialog.kind === "closed" && event.editorEmpty) { patch({ navigation: { kind: "fleet", selectedAgentId: null } }); focus("fleet"); } break;
+      // Entry requires at least one agent row; an idle session has no visible indicator (UX §2.2).
+      if (state.navigation.kind === "editor" && state.dialog.kind === "closed" && event.editorEmpty && fleetRows(state).length > 0) { patch({ navigation: { kind: "fleet", selectedAgentId: null } }); focus("fleet"); } break;
     case "fleet-select":
       if (state.navigation.kind === "fleet" && (!event.agentId || find(event.agentId))) patch({ navigation: { kind: "fleet", selectedAgentId: event.agentId } }); break;
     case "open":

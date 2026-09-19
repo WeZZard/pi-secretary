@@ -66,13 +66,23 @@ const bindings: ScenarioBindings = {
     h.input("\x1b[A"); await tick();
     assert.doesNotMatch(h.fleet(), /●/, "Up on the first row returns focus to the editor");
     assert.equal(h.input("j"), undefined);
+    h.input("\x1b[B"); assert.match(h.fleet(), /● main/);
+    const opensBefore = h.opens;
+    h.input("\r"); await tick();
+    assert.equal(h.opens, opensBefore, "Enter on the main row does not open the fleet view overlay");
+    assert.equal(h.input("j"), undefined, "Enter on the main row returns focus to the prompt input");
     assert.equal(h.modelTurns, 0);
   },
-  "ACC-SA-02-02b": ({ t }) => {
-    const h = adapter(t, port({ list: () => [] }));
-    const rendered = h.fleet();
-    assert.equal(rendered.trim(), "○ main", "only the main row renders when no agents exist");
-    assert.doesNotMatch(rendered, /active agents|queued|inspect/, "no summary or info bar is rendered");
+  "ACC-SA-02-02b": async ({ t }) => {
+    const snapshots: AgentSnapshot[] = [];
+    const listeners: (() => void)[] = [];
+    const h = adapter(t, port({ list: () => snapshots, subscribe: listener => { listeners.push(listener); return () => {}; } }));
+    assert.equal(h.fleet(), "", "nothing renders below the editor while no agent is active");
+    assert.equal(h.input("\x1b[B"), undefined, "Down stays in the editor while the indicator is hidden");
+    snapshots.push(snapshot("a")); for (const listener of listeners) listener(); await tick();
+    const rows = h.fleet().split("\n");
+    assert.equal(rows[0], "○ main", "the appearing indicator shows the main session row first");
+    assert.match(rows[1]!, /○ a · running/);
   },
   "ACC-SA-02-02c": async ({ t }) => {
     const service = await durableService(t), id = service.service.list()[0]!.agent.agentId;
@@ -81,7 +91,7 @@ const bindings: ScenarioBindings = {
     await service.service.stop(service.service.run(id).runId, "op-stop");
     for (let i = 0; i < 50 && h.fleet().includes(id.slice(0, 20)); i++) await tick();
     assert.doesNotMatch(h.fleet(), new RegExp(id.slice(0, 20)), "the terminal row leaves the indicator immediately");
-    h.input("\r"); await tick(); // The main row opens the overlay at the root level.
+    h.input("\x1b[B"); h.input("\x1b[B"); h.input("\r"); await tick(); // Select the surviving agent and open its overlay.
     h.inspector!.handleInput("a"); await tick();
     assert.match(h.render(), new RegExp(`○ ${id.slice(0, 20)}`), "the finished agent stays inspectable in the overlay");
     h.inspector!.handleInput("\x1b"); await tick();
@@ -134,7 +144,7 @@ const bindings: ScenarioBindings = {
     assert.match(h.render(), example[2]); assert.doesNotMatch(h.render(), /succeeded|successful completion/);
     const indicator = plain(new FleetView(() => h.state).render(120));
     assert.doesNotMatch(indicator, /failed|partial|cancelled|interrupted/, "terminal rows leave the indicator immediately");
-    assert.equal(indicator.trim(), "○ main");
+    assert.equal(indicator.trim(), "", "the indicator renders nothing when only terminal agents exist");
   },
   "ACC-SA-02-08": () => {
     const h = new UIHarness().ready(); h.inspector.handleInput("\x1b[5~"); const before = structuredClone(h.state.navigation);
@@ -435,6 +445,6 @@ const bindings: ScenarioBindings = {
   },
 };
 runFeatures(["agent-inspection", "ui-state-machine"], bindings, {
-  "agent-inspection": "d15627da6b44da795f484f7695275548148f9dc165a2df0aaf68444e427c7998",
+  "agent-inspection": "91644cd9021d7eb7a683f965eb53c6945d1e2c29724c27f23d2e51943f37820f",
   "ui-state-machine": "3b9a317188b30125e993459338f98be087907c57a8885ad9f7409af2fe492b43",
 });

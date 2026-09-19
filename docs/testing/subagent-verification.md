@@ -8,6 +8,18 @@
 
 **Related documents:** [Architecture](../arch/subagents.md), [requirements](../user-stories/subagents.md), [interaction design](../ux/subagents.md), [testing guide](README.md), and [delivery record](../../.plans/2026-09-17-subagent-support.md).
 
+## 2026-09-20: Idle-hidden indicator and main-row focus return
+
+**Reviewed implementation:** the working tree amending the unified fleet indicator so it renders nothing while no top-level execution is non-terminal, and so Enter on the main session row returns focus to the prompt input instead of opening the fleet view overlay. **Execution date:** 2026-09-20.
+
+| Check | Observed result | Verification limit |
+| --- | --- | --- |
+| `npm run check` | TypeScript checking passed. | Static checking only. |
+| `npm run test:subagents` | All tests passed, including the rewritten idle-rendering unit test and the new reducer guards (an empty indicator cannot receive focus; losing the last row returns focus to the editor). | Unit-level reducer and component checks, not a real terminal. |
+| `npm run test:acceptance` | All 158 scenarios passed, including the amended ACC-SA-02-02a (Enter on the main row returns focus without opening the overlay), ACC-SA-02-02b (hidden when idle, appears when an agent starts), and ACC-SA-02-02c (overlay entry through a surviving agent row). | Scenario bindings are reviewed adapters, not independent specification. |
+
+The screenshot showing the idle `○ main` row motivated this amendment; human visual approval of the amended indicator remains unrecorded and separate.
+
 ## 2026-09-19: Unified fleet indicator, split fleet view overlay, and nested delegation
 
 **Reviewed implementation:** the working tree implementing the [unified fleet indicator plan](../../.plans/2026-09-19-unified-fleet-indicator.md) phases U1–U3 and N1–N2. **Execution date:** 2026-09-19.

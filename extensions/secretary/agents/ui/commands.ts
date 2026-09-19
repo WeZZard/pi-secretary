@@ -99,8 +99,8 @@ export function registerAgentUI(pi: ExtensionAPI, port: AgentUIPort, resolveOpti
     terminal = next.ui.onTerminalInput(data => {
       if (customOpen || promptDepth > 0 || state.dialog.kind !== "closed") return;
       if (state.navigation.kind === "editor") {
-        // Down in an empty editor enters the indicator; Left no longer activates it (UX §4).
-        if (matchesKey(data, "down") && next.ui.getEditorText() === "") {
+        // Down in an empty editor enters the indicator when it has rows; Left no longer activates it (UX §4).
+        if (matchesKey(data, "down") && next.ui.getEditorText() === "" && fleetRows(state).length > 0) {
           dispatch({ type: "fleet", editorEmpty: true }); return { consume: true };
         }
         return;
@@ -109,10 +109,15 @@ export function registerAgentUI(pi: ExtensionAPI, port: AgentUIPort, resolveOpti
       if (matchesKey(data, "escape")) dispatch({ type: "escape" });
       else if (matchesKey(data, "enter")) {
         const id = state.navigation.selectedAgentId;
-        // Enter opens the overlay on the selected row; the main row opens it at the root level.
-        dispatch({ type: "open", viewId: randomUUID() });
-        if (id) dispatch({ type: "select", agentId: id, requestId: randomUUID() });
-        void show();
+        if (id) {
+          // Enter opens the overlay on the selected agent row.
+          dispatch({ type: "open", viewId: randomUUID() });
+          dispatch({ type: "select", agentId: id, requestId: randomUUID() });
+          void show();
+        } else {
+          // The main row's destination is the session behind the editor: return focus to the prompt input (UX §2.2).
+          dispatch({ type: "escape" });
+        }
       } else if (matchesKey(data, "up") || matchesKey(data, "down") || data === "j" || data === "k") {
         const ids = [null, ...fleetRows(state).map(a => a.agent.agentId)];
         const idx = ids.indexOf(state.navigation.selectedAgentId), delta = matchesKey(data, "up") || data === "k" ? -1 : 1;

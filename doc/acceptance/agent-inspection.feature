@@ -31,13 +31,19 @@ Feature: Inspect delegated work without polling the parent model
     Given the fleet indicator has focus with its first row selected.
     When the user presses Up.
     Then focus returns to the main editor.
+    Given the fleet indicator has focus with the main session row selected.
+    When the user presses Enter.
+    Then focus returns to the main editor's prompt input.
+    And the fleet view overlay does not open.
 
   @ACC-SA-02-02b @proposed
-  Scenario: Show only the main row when no agents exist.
-    Given the session has no agent records.
+  Scenario: Hide the fleet indicator when no agent is active.
+    Given the session has no non-terminal agent executions.
     When the fleet indicator renders.
-    Then it shows exactly one row for the main session.
+    Then nothing is rendered below the editor.
     And no summary or info bar is rendered above the list.
+    When a top-level agent starts.
+    Then the fleet indicator appears with the main session row first.
 
   @ACC-SA-02-02c @proposed
   Scenario: Remove a row immediately when its execution reaches a terminal status.

@@ -6,6 +6,7 @@ npm-debug.log*
 *.swp
 .reviews/
 .plans/
+/.troubleshooting/
 
 # Generated test-run output. Keep specifications and intentional baselines in Git.
 /test-results/

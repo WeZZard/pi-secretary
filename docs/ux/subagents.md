@@ -34,8 +34,8 @@ Foreground detach, live prompt auditing, external job display, and external term
 ### 2.2 Fleet indicator
 
 - The fleet indicator is the single agent list below (or above) the editor. It replaces the former collapsed/expanded FleetView and the separate async widget. There is no summary or info bar; the list itself is the whole surface.
-- The indicator is always visible. When no agents exist, it shows only the main row.
-- The main session is always the first row and cannot be collapsed. Top-level agents are appended in creation order while their execution is non-terminal (queued, starting, running, or cancelling).
+- The indicator is visible only while at least one top-level agent execution is non-terminal. When no agent is active, the surface below (or above) the editor renders nothing; the indicator does not occupy a permanent row.
+- When the indicator is visible, the main session is always the first row and cannot be collapsed. Top-level agents are appended in creation order while their execution is non-terminal (queued, starting, running, or cancelling).
 - A row is removed immediately when its execution reaches a terminal status. The completion remains visible through the inline completion entry in the transcript, and terminal agents remain inspectable in the fleet view overlay.
 - Each row shows a selection circle, the agent name, an explicit status text label, and right-aligned elapsed time and usage labels when available.
 - The selection circle is hollow (`○`) on an unselected row and filled (`●`) on the selected row. The circle encodes selection only. Status is conveyed by the text label, never by the circle's shape or color; the filled circle may use the theme's accent color, but color is never the only channel.
@@ -43,7 +43,7 @@ Foreground detach, live prompt auditing, external job display, and external term
 - Unknown usage is not displayed as zero. Rows whose source artifacts predate window data keep the token-total label without a window label.
 - Rows are themed and display width-aware. The layout truncates by terminal display width and realigns right-side information after resize.
 - When more rows exist than fit, the visible window follows the selection.
-- Pressing Down in an empty, focused editor moves focus into the list and selects the first row. Up and Down move the selection. Pressing Up on the first row or pressing Escape returns focus to the editor. Left no longer activates the indicator. Enter opens the fleet view overlay on the selected row.
+- Pressing Down in an empty, focused editor moves focus into the list and selects the first row. Up and Down move the selection. Pressing Up on the first row or pressing Escape returns focus to the editor. Left no longer activates the indicator. Enter opens the fleet view overlay on the selected agent row. Enter on the main row returns focus to the prompt input instead; the main session's transcript is the session behind the editor, so there is no overlay destination for it.
 
 The following is a layout example with an active selection. Angle-bracket values are placeholders, not measurements:
 

@@ -39,7 +39,7 @@ As a parent agent, I want to delegate a task without changing my own conversatio
 
 As a user, I want to see which agents are queued, starting, running, stopping, or finished while continuing to use the main editor.
 
-- The fleet indicator shows current-session work without requiring repeated model tool calls, and it presents one list: the main session row followed by non-terminal top-level agents.
+- The fleet indicator shows current-session work without requiring repeated model tool calls, and it presents one list while agents are active: the main session row followed by non-terminal top-level agents. When no agent is active, the indicator is hidden. Activating the main session row returns focus to my prompt input.
 - I can open an agent's task, transcript, result, and worktree information.
 - Context-window usage and cumulative usage are labeled as different quantities and are never presented as goal-budget usage.
 - A historical launch result does not falsely report that background execution has completed.

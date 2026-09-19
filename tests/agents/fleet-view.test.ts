@@ -20,9 +20,11 @@ function fleet(snapshots: AgentSnapshot[], rows: AgentRowView[] = [], now = 6500
   return { state: () => state, view: new FleetView(() => state, { rows: () => rows, now: () => now }) };
 }
 
-test("the indicator always shows the main row, even with no agents", () => {
+test("the indicator renders nothing while no agent is active", () => {
   const { view } = fleet([], [], 6500, "editor");
-  assert.deepEqual(view.render(80), ["○ main"]);
+  assert.deepEqual(view.render(80), []);
+  const { view: focused } = fleet([], []);
+  assert.deepEqual(focused.render(80), [], "list focus alone cannot make the hidden indicator appear");
 });
 
 test("agent rows show the selection circle, name, status label, and right-aligned stats", () => {

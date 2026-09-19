@@ -597,7 +597,7 @@ goal-budget token usage =
 The [interaction design](../ux/subagents.md) owns visible behavior. The following are technical mechanisms:
 
 - The fleet indicator is a session-owned widget under a distinct Secretary key and does not replace the goal widget or the global footer. Its placement is configurable between below and above the editor; the default is below.
-- The fleet indicator is the single below-editor agent list. It always renders the main row, appends non-terminal top-level agents in creation order, and removes a row immediately when its run reaches a terminal status. The async widget is removed; background executions no longer have a second list.
+- The fleet indicator is the single below-editor agent list. It renders only while at least one top-level agent execution is non-terminal, shows the main row first, appends non-terminal top-level agents in creation order, and removes a row immediately when its run reaches a terminal status. When the last row leaves, the surface renders nothing and list focus returns to the editor. Enter on the main row returns focus to the prompt input; Enter on an agent row opens the overlay. The async widget is removed; background executions no longer have a second list.
 - The fleet view overlay is an in-process custom TUI component rendered as a bordered overlay. It does not depend on Herdr, Ghostty automation, or opening another terminal.
 - View models are immutable snapshots obtained from `AgentService`; progress events invalidate affected components. The fleet indicator polls on a bounded interval so elapsed time advances between service events; rendering is deduplicated by a render key so unchanged state does not repaint. Display reads never touch storage per paint or tick: `AgentService` publishes view models from an in-memory projection of committed state (§6.2), so a contended shared store cannot block or fail a paint (goal architecture §5.1.1, §13.6).
 - The editor integration composes with an existing editor factory. It captures navigation only when the editor is empty and the agent component can receive focus.
@@ -639,7 +639,7 @@ stateDiagram-v2
 ```
 
 - `Inactive` means no current parent TUI is bound. It does not mean that a particular agent is stopped.
-- `Editor` means the main editor owns keyboard focus. The fleet indicator remains visible with at least the main row.
+- `Editor` means the main editor owns keyboard focus. The fleet indicator is visible only while a non-terminal top-level agent exists.
 - `Fleet` means the fleet indicator list owns keyboard focus.
 - `Inspector.List` presents the overlay's navigation list at the current drill level. A direct agent command proceeds from this state to `Loading` with the requested selection.
 - The drill path and the terminal-agent filter are presentation state orthogonal to the inspector's inner states. Drilling in or out and toggling the filter do not change the `List`/`Loading`/`Ready`/`Unavailable` state kind.
@@ -702,7 +702,7 @@ stateDiagram-v2
 
 | ID | Current state and event | Guard | Next state and observable effect |
 | --- | --- | --- | --- |
-| UI-01 | The editor receives fleet indicator activation. | The editor is empty and no dialog is open. | The fleet indicator receives focus and selects its first row without starting a model turn. |
+| UI-01 | The editor receives fleet indicator activation. | The editor is empty, no dialog is open, and at least one indicator row exists. | The fleet indicator receives focus and selects its first row without starting a model turn. |
 | UI-02 | The user opens an agent. | The agent belongs to the current parent session. | The fleet view overlay loads that agent and shows its identity during loading. |
 | UI-03 | Transcript loading succeeds or fails. | The response still belongs to the visible selection. | The inspector shows the selected transcript or its diagnostic without changing selection. |
 | UI-04 | The user opens the composer. | The selected agent can receive guidance or resume. | The composer receives focus with a stable recipient and draft. |
@@ -860,7 +860,7 @@ type TranscriptEvent =
 
 #### 12.6.3 Fleet indicator and overlay view models
 
-`AgentService` publishes immutable view-model snapshots for the widgets in addition to the existing `AgentSnapshot` list. A row view model carries the agent identifier, parent agent identifier, name, explicit status, description, resolved model, `startedAt` timestamp, current activity, and optional usage labels. The fleet indicator renders the main row followed by rows whose parent is the main session and whose status is non-terminal; it renders no other rows. The overlay groups rows by parent agent identifier to build its drill-down levels, and its filter drops or retains terminal statuses. Widgets never compute state; they render the snapshot.
+`AgentService` publishes immutable view-model snapshots for the widgets in addition to the existing `AgentSnapshot` list. A row view model carries the agent identifier, parent agent identifier, name, explicit status, description, resolved model, `startedAt` timestamp, current activity, and optional usage labels. While at least one top-level execution is non-terminal, the fleet indicator renders the main row followed by rows whose parent is the main session and whose status is non-terminal; it renders no other rows, and it renders nothing when no such execution exists. The overlay groups rows by parent agent identifier to build its drill-down levels, and its filter drops or retains terminal statuses. Widgets never compute state; they render the snapshot.
 
 Usage labels follow the [interaction design](../ux/subagents.md#22-fleet-indicator):
 

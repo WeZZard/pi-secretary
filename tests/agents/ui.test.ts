@@ -29,6 +29,12 @@ test("fleet guards preserve main editor and inactive events cannot mutate servic
   assert.deepEqual(transition(s, { type: "fleet", editorEmpty: false }), { state: s, effects: [] });
   const entered = transition(s, { type: "fleet", editorEmpty: true });
   assert.equal(entered.state.navigation.kind, "fleet"); assert.ok(entered.effects.some(e => e.type === "focus" && e.target === "fleet"));
+  const idle = transition(activate([]), { type: "fleet", editorEmpty: true });
+  assert.equal(idle.state.navigation.kind, "editor", "an empty indicator cannot receive focus");
+  assert.deepEqual(idle.effects, []);
+  const emptied = transition(entered.state, { type: "snapshot", epoch: "e" }, []);
+  assert.equal(emptied.state.navigation.kind, "editor", "losing the last row returns focus to the editor");
+  assert.ok(emptied.effects.some(e => e.type === "focus" && e.target === "editor"));
   const closed = transition(entered.state, { type: "escape" });
   assert.equal(closed.state.navigation.kind, "editor"); assert.ok(!closed.effects.some(e => e.type === "operate"));
   const inactive = step(s, { type: "deactivate" });

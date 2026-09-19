@@ -59,6 +59,8 @@ export class FleetView implements Component {
     }));
     const focused = s.navigation.kind === "fleet";
     const selected = s.navigation.kind === "fleet" ? s.navigation.selectedAgentId : undefined;
+    // The indicator renders nothing while no top-level execution is non-terminal (UX §2.2).
+    if (!rows.length) return [];
     const ids: (string | null)[] = [null, ...rows.map(row => row.agentId)];
     const index = Math.max(0, ids.indexOf(selected ?? null));
     const start = Math.max(0, Math.min(index - Math.floor(MAX_VISIBLE_ROWS / 2), Math.max(0, ids.length - MAX_VISIBLE_ROWS)));
