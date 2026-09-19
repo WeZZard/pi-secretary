@@ -71,6 +71,116 @@ The following is a layout example. Angle-bracket values are placeholders, not me
 - New content is followed automatically only while the user is at the end of the transcript.
 - Scrolling upward pauses automatic following. Returning to the end resumes it.
 
+### 2.5 Secretary configuration menu
+
+- `/secretary` opens the Secretary configuration menu as a full-screen page in pi's native selector style: horizontal rules above and below, a bold heading showing the breadcrumb path, muted subtitle lines, `→` selection markers, and a two-line footer whose operations line shows the functions that operate the lists in the configuration and whose navigation line shows the movement keys. The menu keeps the same minimum-width and theme behavior as the inspector. A view with no list operations leaves the operations line empty.
+- The top level lists the Secretary modules that have a configuration surface. In this release only Subagents is present. Modules without a configuration surface do not appear as disabled or placeholder entries, matching the exclusion policy in [Section 8](#8-ported-surface-exclusions).
+- The Subagents section contains the model fallback list manager. The manager shows every configured list with its model count, followed by an `＋ Add List` row.
+- Entering a list shows its models in resolution order, from first tried to last tried. Model identifiers render as `modelId [provider]`, matching pi's native model selectors. An empty list shows a single selected `＋ Add Model` row and nothing else.
+- The list-name prompt and the model picker are full-screen pages with the same chrome. Their text fields use pi's standard single-line input with its block cursor, and the picker's candidate list excludes models already in the list and is filtered as the user types.
+- Right enters the selected item's level and Left returns to the parent level, following the drill-down convention for multi-level menus. Escape dismisses the entire menu from any level. When a text field is focused, such as the list-name prompt or the model-picker filter, Left and Right move the text caret instead of navigating menu levels.
+- The menu edits the user-global Secretary configuration. Project-level configuration remains a hand-edited file, and the menu states this boundary.
+- Changes are validated and persisted when the user confirms them. The previous configuration remains in effect if validation or persistence fails.
+
+The following layouts are examples. Angle-bracket values are placeholders, not measurements.
+
+Top level after `/secretary`:
+
+```text
+────────────────────────────────────────────────────────────
+
+Secretary
+Edits the user-global configuration only.
+
+→ Subagents
+
+  ↑/↓ select · Enter/→ open · Esc dismiss
+────────────────────────────────────────────────────────────
+```
+
+The model fallback list manager inside the Subagents section:
+
+```text
+────────────────────────────────────────────────────────────
+
+Secretary › Subagents
+Model Fallback Lists
+Edits the user-global configuration only.
+
+→ <list name>  <count> models
+  <list name>  <count> models
+  ＋ Add List
+
+  a add list · d remove list
+  ↑/↓ select · Enter/→ open · ← back · Esc dismiss
+────────────────────────────────────────────────────────────
+```
+
+A fallback list that contains models:
+
+```text
+────────────────────────────────────────────────────────────
+
+Secretary › Subagents › <list name>
+Models are tried from first to last.
+
+→ <modelId> [<provider>]
+  <modelId> [<provider>]
+  <modelId> [<provider>]
+  ＋ Add Model
+
+  a add · d remove · Shift+K/J move up/down
+  ↑/↓ select · Enter/→ open · ← back · Esc dismiss
+────────────────────────────────────────────────────────────
+```
+
+An empty fallback list:
+
+```text
+────────────────────────────────────────────────────────────
+
+Secretary › Subagents › <list name>
+Models are tried from first to last.
+
+→ ＋ Add Model
+
+  Enter/→ add
+  ← back · Esc dismiss
+────────────────────────────────────────────────────────────
+```
+
+The model picker opened from `＋ Add Model`:
+
+```text
+────────────────────────────────────────────────────────────
+
+Add Model › <list name>
+
+> <typed text>▌
+
+→ <modelId> [<provider>]
+  <modelId> [<provider>]
+
+  Enter add
+  ↑/↓ select · Esc cancel
+────────────────────────────────────────────────────────────
+```
+
+The confirmation shown before removing a list:
+
+```text
+────────────────────────────────────────────────────────────
+
+Remove List
+
+Remove fallback list "<list name>"?
+Definitions that reference it will fail at launch
+until they are updated.
+
+  Enter confirm · Esc cancel
+────────────────────────────────────────────────────────────
+```
+
 ## 3. Primary Interactions
 
 ### 3.1 Inspect an agent
@@ -120,6 +230,33 @@ Secretary initially exposes one guidance operation. Nicobailon's `steer`, `follo
 - **Feedback:** Retained worktrees explain that changes require manual review. Cleanup states that future resumption of that agent will be unavailable.
 - **Failure and recovery:** The command refuses dirty, changed, active, foreign, or unverifiable worktrees. Resumption is unavailable while cleanup is in progress. If cleanup is interrupted and the remaining files cannot be verified, the view reports that manual recovery is required and continues to refuse resumption. This release provides no force-delete or automatic merge command.
 
+### 3.6 Open and navigate the Secretary configuration menu
+
+- **User intent:** The user wants to review or change Secretary module settings without editing configuration files by hand.
+- **Entry conditions:** The user is in an interactive TUI session.
+- **User action:** The user types `/secretary` and presses Enter, moves between items with Up/Down, and opens the selected section or list with Enter or Right. Left returns to the parent level, and Escape dismisses the entire menu from any level.
+- **Observable outcome:** The menu opens at the top level, then the Subagents section, then the model fallback list manager, and finally one list's models in resolution order.
+- **Feedback:** Each view shows its breadcrumb path, its available keys, and the current selection. The menu edits the user-global configuration only and says so.
+- **Failure and recovery:** If the stored configuration is invalid, the menu reports the validation error and offers no editing until the file is corrected by hand. The menu does not rewrite an unreadable configuration.
+
+### 3.7 Add or remove a model fallback list
+
+- **User intent:** The user wants a new named list for a class of subagents, or wants to retire a list that is no longer needed.
+- **Entry conditions:** The model fallback list manager is open.
+- **User action:** The user selects the `＋ Add List` row or presses `a`, enters a name, and confirms with Enter. To remove a list, the user selects it, presses `d`, and confirms the dialog that names the list.
+- **Observable outcome:** A new empty list appears in the manager. A removed list disappears.
+- **Feedback:** A duplicate or invalid name is rejected inline and the draft is retained. The removal confirmation warns that definitions referencing the list will fail at launch until they are updated. Each successful change is reported in a status line.
+- **Failure and recovery:** If persisting the change fails, the menu reports the failure and the previous configuration remains in effect. A removed list can be recreated only by adding it again; there is no undo in this release.
+
+### 3.8 Edit the models in a fallback list
+
+- **User intent:** The user wants to control which models a list tries and in which order, so that an exhausted subscription falls back to an affordable alternative.
+- **Entry conditions:** A fallback list is open. To add a model, at least one model known to pi is not already in the list.
+- **User action:** The user selects the `＋ Add Model` row or presses `a`, filters the model picker by typing, and presses Enter to add the selected model at the end of the list. The user selects a model and presses `d` to remove it without confirmation, or presses Shift+K or Shift+J to move it up or down in the list. The list's top-to-bottom order is the resolution order.
+- **Observable outcome:** The list shows the added model last, omits removed models, and reflects the new order.
+- **Feedback:** The picker excludes models already present in the list. Each change is reported in a status line.
+- **Failure and recovery:** If persisting a change fails, the menu reports the failure and the previous list contents remain in effect. An empty list is valid configuration; a launch that references it fails with an actionable error until the list contains at least one model.
+
 ## 4. Navigation and Accessibility
 
 | Context | Key | Behavior |
@@ -138,6 +275,15 @@ Secretary initially exposes one guidance operation. Nicobailon's `steer`, `follo
 | The inspector is open. | `r` or `R` | The key reloads the selected transcript. |
 | The inspector is open. | Escape | The key closes the inspector without stopping work. |
 | The composer is open. | Escape | The key cancels composition without sending a message. |
+| The `/secretary` menu is open. | Up/Down | The key moves the selection between items. |
+| The `/secretary` menu is open. | Enter or Right | The key opens the selected item or confirms the pending action. |
+| The `/secretary` menu is open. | Left | The key returns to the previous level. At the top level it does nothing. |
+| A menu text field is focused. | Left/Right | The keys move the text caret in the list-name prompt and the model-picker filter; they do not navigate menu levels. |
+| The `/secretary` menu is open. | `a` | The key starts the add flow for the current view: a new list in the manager, or a new model in a list. |
+| The `/secretary` menu is open. | `d` | The key removes the selected item. List removal requires confirmation; model removal does not. |
+| A fallback list detail is open. | Shift+K/Shift+J | The key moves the selected model up or down in the list, changing its resolution order. |
+| The model picker is open. | Printable characters | The characters filter the candidate models. |
+| The `/secretary` menu is open. | Escape | The key dismisses the entire menu from any level. A focused picker or confirmation dialog cancels itself first. |
 
 - Inspector-level keys are configurable when a terminal intercepts them. Displayed hints always reflect the configured keys. Prompt interactions keep fixed keys such as Enter and Escape.
 - Printable navigation keys are captured only after focus enters FleetView or the inspector.
@@ -189,6 +335,7 @@ sequenceDiagram
 - In headless modes, commands return text rather than opening a terminal component.
 - Print and JSON mode reject a request to resume an idle agent through `SendMessage`, because that operation starts background execution. The response directs the caller to use a persistent TUI or RPC session; it does not accept work that normal process completion would terminate.
 - Cleanup requiring confirmation is unavailable in headless mode. Model-facing `TaskStop` remains an explicit stop request and does not require a dialog.
+- In print, JSON, and non-persistent modes, `/secretary` returns text that states the user-global configuration file path and summarizes the configured fallback lists. It does not open a terminal component or accept edits.
 
 ## 7. Review Criteria
 

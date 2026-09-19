@@ -16,7 +16,7 @@ The following constraints were confirmed during design discussion:
 - nicobailon/pi-subagents provides the reference for the TUI. Its inline display, FleetView, async widget, and inspector surfaces are ported onto Secretary's runtime. Surfaces that depend on out-of-scope runtime features are excluded explicitly in the [interaction design](../ux/subagents.md#8-ported-surface-exclusions).
 - tintinweb/pi-subagents provides an implementation reference for pi integration.
 - Child execution stops when pi exits. Saved conversations may be resumed explicitly later.
-- The `Agent.model` field uses Claude Code's alias names. Configuration outside the tool schema maps aliases to pi models, and the tool input exposes only configured aliases.
+- Model selection uses named model fallback lists maintained in Secretary configuration. A definition or invocation model value first matches an exact model available in the session, then names a fallback list whose models are tried in configured order, and `inherit` selects the parent's model. The tool input exposes only configured list names.
 - The initial scope includes core delegation, custom agent definitions, worktree isolation, output retrieval, and agent inspection.
 - Conversation forks, nested delegation, agent teams, remote execution, scheduling, and workflow orchestration are deferred.
 
@@ -94,7 +94,7 @@ As a user, I want reusable agent definitions with predictable tool and model sel
 
 - Trusted project definitions can override user definitions and packaged definitions.
 - The selected definition's source is visible in inspection.
-- Explicit model aliases resolve through configuration; missing mappings fail instead of selecting a different model silently.
+- Model references resolve through configured model fallback lists; a missing or empty list fails the launch with an actionable error instead of selecting a different model silently.
 - Omitting a model override supports inheritance from the parent when the definition supplies no model.
 - Agent definitions cannot bypass the parent's tool or permission restrictions.
 
@@ -126,6 +126,16 @@ As a user, I want Secretary's agent surfaces to present live and historical work
 - The inspector presents a structured Markdown and tool transcript with scrollable detail, tool-detail expansion, and a footer that reflects the configured keys.
 - Display configuration is validated; unsupported values fail rather than being ignored.
 - Features excluded in the interaction design's ported-surface exclusions do not appear as disabled or placeholder controls.
+
+### SA-11: Manage model fallback lists
+
+As a user, I want to manage named model fallback lists from the TUI so that subagent model preferences survive subscription exhaustion without hand-editing configuration files.
+
+- I can create and remove named model fallback lists. The plugin ships with no lists; every list is one I created.
+- I can add models to a list, remove models from a list, and change their order.
+- When a subagent is launched through a list, its models are tried from first to last. If every model is unavailable, the launch fails with an actionable error that names what was tried.
+- Changes made in the menu are persisted immediately and apply to subsequent launches.
+- In print, JSON, and other non-interactive modes, the configuration command returns text guidance instead of opening a terminal component.
 
 ## 3. Compatibility and Scope
 

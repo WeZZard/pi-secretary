@@ -5,6 +5,7 @@ import type { GoalEngine } from "../goal-engine.ts";
 import type { GoalSynchronization } from "../goal/synchronization.ts";
 import { goalTokenDeltaForUsage } from "../goal/accounting.ts";
 import { AgentService } from "./service.ts";
+import { ModelAvailability } from "./availability.ts";
 import { formatAgentOutcome } from "./presentation.ts";
 import { AgentRepository, acquireParentLock } from "./storage/agent-repository.ts";
 import { discoverAgents, resolveAgentModel } from "./registry.ts";
@@ -92,8 +93,10 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
       const sessionRoot = join(root, "agents", createHash("sha256").update(parentId).digest("hex"));
       release = await acquireParentLock(sessionRoot, parentId);
       const config = loadAgentConfiguration(context.cwd, getAgentDir(), context.isProjectTrusted());
+      const availability = new ModelAvailability();
       service = new AgentService({ parentId, root: sessionRoot, ctx: context, config,
         repository: new AgentRepository(engine.db.connection), authorize, diagnostic, completion: completed,
+        availability: (id, resetAt) => availability.record(id, resetAt),
         currentTools: () => pi.getActiveTools().filter(name => !BLOCKED_TOOLS.has(name)),
         validateResume: async agent => {
           await resolveAgentModel({ ...agent.definition, model: agent.model }, undefined,
@@ -128,7 +131,7 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
         waitSignature = signature; return true;
       };
       if (!registered) {
-        pi.registerTool(defineTool<ReturnType<typeof createAgentSchema>, AgentRun>({ name: "Agent", label: "Agent", description: "Delegate one task to a child session. Background execution is the default in TUI/RPC. Use SendMessage to guide or resume, TaskStop to stop, and TaskOutput or read on the output path for results. Use the model configured by the agent definition, or inherit the parent model. Do not invent a model override. Forks, teams, nesting and remote execution are unsupported.", parameters: createAgentSchema(config.modelAliases),
+        pi.registerTool(defineTool<ReturnType<typeof createAgentSchema>, AgentRun>({ name: "Agent", label: "Agent", description: "Delegate one task to a child session. Background execution is the default in TUI/RPC. Use SendMessage to guide or resume, TaskStop to stop, and TaskOutput or read on the output path for results. Use the model configured by the agent definition, or inherit the parent model. Do not invent a model override. Forks, teams, nesting and remote execution are unsupported.", parameters: createAgentSchema(config.modelFallbackLists),
           prepareArguments: args => (args && typeof args === "object" && "mode" in args && args.mode === "manual" ? { ...args, mode: "default" } : args) as AgentInput,
           async execute(id, params, signal, onUpdate, toolCtx) {
             const config = loadAgentConfiguration(toolCtx.cwd, getAgentDir(), toolCtx.isProjectTrusted());
@@ -136,7 +139,7 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
             const definition = definitions.get(params.subagent_type ?? "general-purpose");
             if (!definition) throw new Error(`Unknown or unsupported agent type: ${params.subagent_type}`);
             if (params.isolation === "remote") throw new Error("Remote execution is not supported.");
-            const model = await resolveAgentModel(definition, params.model, config, toolCtx);
+            const resolution = await resolveAgentModel(definition, params.model, config, toolCtx, availability);
             const headless = toolCtx.mode === "print" || toolCtx.mode === "json";
             const background = definition.background === true || (params.run_in_background ?? !headless);
             if (headless && background) throw new Error("Background agents require persistent TUI/RPC. Use run_in_background: false and a definition that does not require background execution.");
@@ -144,11 +147,13 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
             const tools = parentTools.filter(name => (!definition.tools || definition.tools.includes(name)) && !definition.disallowedTools?.includes(name));
             if (!tools.length) throw new Error("Agent definition has no tools allowed by the parent.");
             const controller = current();
-            const launched = await controller.launch({ launchKey: id, definition, model: `${model.provider}/${model.id}`,
+            const launched = await controller.launch({ launchKey: id, definition, model: resolution.id,
+              ...(resolution.chain.length > 1 ? { modelCandidates: resolution.chain.slice(resolution.chain.indexOf(resolution.id) + 1) } : {}),
               thinkingLevel: toolCtx.thinkingLevel, tools, prompt: params.prompt, description: params.description,
               name: params.name, background, isolation: resolveIsolation(params.isolation, definition.isolation), goal: origin() });
             const run = launched.run!;
-            if (background) return { ...result(run), content: [{ type: "text" as const, text: `${runText(run)}\nModel: ${launched.agent.model}\nLaunch accepted; execution is not yet complete. You will be notified on completion.` }] };
+            const skipped = resolution.skipped.length ? `\nFallback: skipped ${resolution.skipped.map(s => `${s.id} (${s.reason})`).join("; ")}` : "";
+            if (background) return { ...result(run), content: [{ type: "text" as const, text: `${runText(run)}\nModel: ${launched.agent.model}${skipped}\nLaunch accepted; execution is not yet complete. You will be notified on completion.` }] };
             const abort = () => { void controller.stop(run.runId, `foreground-abort:${id}`); };
             signal?.addEventListener("abort", abort, { once: true });
             if (signal?.aborted) abort();

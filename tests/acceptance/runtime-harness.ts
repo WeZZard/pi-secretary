@@ -47,7 +47,7 @@ export function serviceHarness(t: TestContext, options: { mode?: string; concurr
   const optionsForRunner = options;
   const makeService = (parentId = "parent") => {
     const service = new AgentService({ parentId, root, repository, ctx: { cwd: root, mode: options.mode ?? "tui" } as any,
-      config: { modelAliases: {}, ui: defaultAgentUi(), maxConcurrent: options.concurrent ?? 1, maxQueued: options.queued ?? 3, shutdownTimeoutMs: options.shutdownTimeoutMs ?? 1000 }, runner });
+      config: { modelFallbackLists: {}, ui: defaultAgentUi(), maxConcurrent: options.concurrent ?? 1, maxQueued: options.queued ?? 3, shutdownTimeoutMs: options.shutdownTimeoutMs ?? 1000 }, runner });
     services.push(service); return service;
   };
   const service = makeService();

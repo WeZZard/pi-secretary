@@ -5,33 +5,29 @@ Feature: Resolve agent definitions and models predictably
   so that delegation does not silently change capabilities or providers.
 
   @ACC-SA-07-01 @confirmed @compatibility
-  Scenario: Preserve Claude Code's model alias schema.
+  Scenario: Advertise configured model fallback lists in the tool schema.
     Given Secretary advertises the "Agent" tool.
     When the model input schema is inspected.
-    Then the optional "model" field permits exactly these values:
-      | value  |
-      | sonnet |
-      | opus   |
-      | haiku  |
-      | fable  |
-    And arbitrary provider-qualified model identifiers are not accepted in that field.
-    And alias-to-pi-model mappings are configured outside the tool invocation schema.
+    Then the optional "model" field permits exactly the configured fallback list names.
+    And exact provider-qualified model identifiers and unconfigured names are rejected by the advertised schema.
+    And fallback list mappings are configured outside the tool invocation schema.
 
-  @ACC-SA-07-02 @proposed
-  Scenario: Resolve an explicit alias through configuration.
-    Given the alias "sonnet" maps to the available pi model "test-provider/reviewer-model".
+  @ACC-SA-07-02 @confirmed
+  Scenario: Resolve an explicit fallback list through configuration.
+    Given the fallback list "primary" maps to the available pi model "test-provider/reviewer-model".
     And the selected definition specifies a different available model.
-    When the parent launches the agent with "model" set to "sonnet".
+    When the parent launches the agent with "model" set to "primary".
     Then the child uses "test-provider/reviewer-model".
     And the tool result and inspector identify that resolved model.
 
-  @ACC-SA-07-03 @proposed
-  Scenario: Refuse an explicit alias with no mapping.
-    Given the alias "fable" has no configured mapping.
-    When the parent requests an agent with "model" set to "fable".
-    Then the tool identifies the missing alias mapping.
-    And no different model is selected as a fallback.
+  @ACC-SA-07-03 @confirmed
+  Scenario: Refuse a model value that names no session model or configured list.
+    Given no fallback list named "unconfigured" exists.
+    When the parent requests an agent with "model" set to "unconfigured".
+    Then the tool identifies the unknown fallback list name.
+    And no model is selected as a fallback.
     And no child provider request occurs.
+    And an empty configured list is refused the same way.
 
   @ACC-SA-07-04 @proposed
   Scenario: Inherit the parent model when no override is supplied.
@@ -77,3 +73,12 @@ Feature: Resolve agent definitions and models predictably
     When the definition is validated for launch.
     Then validation reports the unsupported field.
     And the field is not silently ignored or used to grant additional authority.
+
+  @ACC-SA-07-09 @confirmed
+  Scenario: Try fallback candidates in order when a model is unavailable.
+    Given the fallback list "primary" maps to "test-provider/reviewer-model" and "test-provider/different-model" in that order.
+    And the first model reports an availability failure before producing any output.
+    When the parent launches the agent with "model" set to "primary".
+    Then the run completes with "test-provider/different-model".
+    And the agent record and inspector identify the model that actually executed.
+    And a later launch skips the recorded unavailable candidate and reports the skip.

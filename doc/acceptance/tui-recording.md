@@ -56,6 +56,8 @@ npm run render:tui -- /tmp/secretary-tui-unique-run
 - The user composes guidance, dismisses the composer, reopens the retained draft, and submits it.
 - The terminal resizes from a wide layout to a narrow layout while the inspector remains open.
 - The user confirms cancellation and observes the cancelled outcome without losing the inspector.
+- The user opens the `/secretary` configuration menu, drills into the Subagents fallback-list manager, and creates a list through the name prompt.
+- The user opens the empty list, adds the fixture model through the model picker, and dismisses the menu with Escape.
 - The user returns to the main editor and types a new draft.
 
 ## 5. Existing Local Evidence

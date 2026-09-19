@@ -17,6 +17,8 @@ export interface Reply {
   cached?: number;
   output?: number;
   tool?: { name: string; arguments: Record<string, unknown> };
+  /** First-request provider failure; the message carries this as its errorMessage. */
+  error?: string;
   gate?: ReturnType<typeof deferred<void>>;
 }
 
@@ -39,14 +41,16 @@ export async function configurationHarness(t: TestContext) {
         try {
           if (options?.signal?.aborted) release();
           await reply.gate?.promise;
-          const content: AssistantMessage["content"] = [{ type: "text", text: reply.text ?? "Historical child evidence." }];
+          const content: AssistantMessage["content"] = reply.error ? [] : [{ type: "text", text: reply.text ?? "Historical child evidence." }];
           if (reply.tool) content.push({ type: "toolCall", id: `call-${calls.length}`, ...reply.tool });
           const input = reply.input ?? 100, cached = reply.cached ?? 40, output = reply.output ?? 20;
           const message: AssistantMessage = { role: "assistant", api: model.api, provider: model.provider, model: model.id,
-            timestamp: Date.now(), content, stopReason: reply.tool ? "toolUse" : "stop",
+            timestamp: Date.now(), content, stopReason: reply.error ? "error" : reply.tool ? "toolUse" : "stop",
             usage: { input, cacheRead: cached, cacheWrite: 0, output, totalTokens: input + output,
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
-          stream.push({ type: "done", reason: reply.tool ? "toolUse" : "stop", message });
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+            ...(reply.error ? { errorMessage: reply.error } : {}) };
+          if (reply.error) stream.push({ type: "error", reason: "error", error: message });
+          else stream.push({ type: "done", reason: reply.tool ? "toolUse" : "stop", message });
           stream.end();
         } finally { options?.signal?.removeEventListener("abort", release); }
       })();

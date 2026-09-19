@@ -16,7 +16,7 @@
 - Nicobailon's implementation defines the TUI reference. Its inline display, FleetView, async widget, and inspector surfaces are ported onto Secretary's runtime. Surfaces that depend on out-of-scope runtime features are excluded; [Section 12.6](#126-ported-surfaces-and-mapping) defines the mapping and the exclusions.
 - Tintinweb's implementation is a reference for pi SDK integration, not a dependency or API authority.
 - Child execution stops when the parent pi process exits. Conversation persistence supports explicit resumption, not continued execution after exit.
-- `Agent.model` uses Claude alias names, but the advertised enum includes only configured mappings. With no mappings, the invocation schema omits `model`. Exact provider identifiers belong in agent definitions or alias configuration.
+- `Agent.model` first matches the value against the models available in the session and then against the configured model fallback lists. The advertised enum includes the configured list names. With no lists configured, the field remains exposed without an enum constraint. `inherit` is also valid in agent definitions.
 - The initial scope includes delegation, foreground/background execution, messaging, cancellation, output retrieval, custom agent definitions, worktrees, and inspection.
 - Conversation forks, nested delegation, agent teams, remote execution, scheduling, and workflow orchestration are excluded.
 
@@ -36,7 +36,7 @@
 
 The implementation follows Claude's canonical names, core field shapes, and the selected feature profile. It does not emulate the entire Claude environment.
 
-- The possible model aliases are `sonnet`, `opus`, `haiku`, and `fable`. Tool input exposes only the configured subset and never accepts arbitrary provider identifiers.
+- Tool input for the model field accepts an exact identifier of a model available in the session or the name of a configured model fallback list. The available-model match takes precedence over a fallback list with the same name. Values that match neither are rejected rather than silently resolved to a different model.
 - The default is the parent's working directory, independently of foreground or background execution. No Git initialization or commit is required for ordinary spawning.
 - The optional invocation `isolation` accepts `none` or `worktree`. Omission uses the agent definition's setting, then defaults to `none`. An explicit `none` overrides an isolated definition. It is an explicit pi compatibility addition that gives model callers an unambiguous opt-out; it is not advertised as a Claude Code enum value.
 - Unsupported `remote` isolation is not advertised. A legacy or invalid request for it still fails rather than silently changing execution mode.
@@ -146,14 +146,14 @@ The existing extension entry point composes these modules alongside goal managem
 
 ### 4.1 `Agent`
 
-The following type shows the supported input superset. `createAgentSchema()` narrows the advertised `model` field to configured aliases, or removes that field when none are configured:
+The following type shows the supported input superset. `createAgentSchema()` narrows the advertised `model` field to configured model fallback-list names, or removes that field when none are configured:
 
 ```ts
 interface AgentInput {
   description: string;
   prompt: string;
   subagent_type?: string;
-  model?: "sonnet" | "opus" | "haiku" | "fable";
+  model?: string; // advertised enum: configured model fallback-list names
   run_in_background?: boolean;
   name?: string;
   isolation?: "none" | "worktree";
@@ -169,7 +169,7 @@ interface AgentInput {
 - Type matching is exact. The implementation does not silently convert an unknown specialist into a general-purpose agent.
 - An explicit isolation field takes precedence over the definition's isolation. If neither specifies isolation, execution uses the parent's working directory. Requested worktree isolation is never silently downgraded.
 - The `manual` permission-mode compatibility spelling is normalized to `default` before validation, but the field remains ignored.
-- The model enum has no schema default. Only configured aliases are advertised; definition selection and inheritance follow Section 5.
+- The model enum has no schema default. Only configured fallback-list names are advertised; runtime validation matches the value against the models available in the session before consulting fallback lists. Definition selection and inheritance follow Section 5.
 - The boolean background field does not acquire a schema default. A definition with `background: true` requires background execution even if the caller supplies false, following the researched Claude behavior. Otherwise the explicit invocation value wins, followed by the host-mode default in Section 1.2. A definition with `background: false` does not force foreground execution. Host restrictions are checked after resolution and reject unsupported background execution.
 - Launch validates configuration, ownership, capacity, trust, and model availability before allocating a worktree or contacting a provider.
 
@@ -272,25 +272,44 @@ Discovery order, from highest to lowest precedence, is:
 - A project override is a custom definition with its own recorded capabilities; it is not silently treated as the packaged read-only implementation.
 - System prompts retain applicable project instructions and child-specific role instructions. Conversation history is not copied.
 
-### 5.3 Model aliases
+### 5.3 Model fallback lists
 
-Secretary configuration supplies an `agents.modelAliases` object whose keys are the four Claude aliases and whose values are exact pi `provider/modelId` identifiers.
+**Status:** Implemented. This section supersedes the former `agents.modelAliases` contract.
+
+Secretary configuration supplies an `agents.modelFallbackLists` object whose keys are list names and whose values are ordered arrays of exact pi `provider/modelId` identifiers. A list's array order is the resolution order: models are tried from first to last, following the same fallback semantics as a CSS `font-family` list.
 
 - Global configuration is read from `<getAgentDir()>/secretary.json`.
-- Trusted project configuration is read from `<cwd>/<CONFIG_DIR_NAME>/secretary.json` and overrides corresponding global agent settings.
+- Trusted project configuration is read from `<cwd>/<CONFIG_DIR_NAME>/secretary.json` and overrides corresponding global agent settings. A project list with the same name replaces the global list entirely; lists are never merged.
 - Both files contain an `agents` object. Unsupported agent configuration fields fail validation.
+- List names follow the agent-name pattern: an alphanumeric first character followed by letters, digits, `-`, or `_`, up to 64 characters. The name `inherit` is reserved and cannot name a list.
+- The plugin ships with no model fallback lists. A fresh installation has an absent or empty `modelFallbackLists` object, and every list is user-created.
+- Users can create and remove lists. Removing a list does not rewrite definitions that reference it.
+- Duplicate entries within one list fail configuration validation. An empty list is valid configuration; a launch that resolves to an empty list fails as described below.
+- The former `agents.modelAliases` object and its four fixed alias names are removed. A configuration file that still contains `modelAliases` fails validation with an error that names `modelFallbackLists` as the replacement.
 
-Resolution order is:
+A definition or invocation model value is interpreted as follows:
 
-1. An explicit `Agent.model` alias resolves through the configured mapping.
-2. Otherwise, a definition's model resolves as an alias, an exact pi identifier, or `inherit`.
-3. Otherwise, the child inherits the parent's model captured at launch.
+1. The value `inherit` contributes the parent's model captured at launch.
+2. A value that exactly matches a model available in the session forms a single-candidate chain. The available-model match takes precedence over a fallback list with the same name.
+3. Otherwise, the value names a model fallback list, and the list's members form the candidate chain in configured order.
+4. A value that matches neither an available model nor a configured list fails the launch with an error naming the unmatched value.
 
-- Explicit aliases with no mapping produce an error naming the missing configuration.
-- There is no fuzzy matching or silent provider fallback.
-- Authentication and the parent's scoped-model restrictions are checked before execution.
+The model source is selected in the following order:
+
+1. An explicit `Agent.model` value.
+2. Otherwise, the definition's model value.
+3. Otherwise, `inherit`.
+
+Each candidate is checked in order against the model registry, the parent's scoped-model restrictions, and credential availability. The first candidate that passes every check is selected.
+
+- A named list that is not configured fails the launch with an error naming the missing list. There is no fuzzy matching and no silent provider fallback.
+- If every candidate fails its checks, the launch fails with an actionable error that lists each attempted model and its failure reason.
+- If the selected candidate fails during launch or on the run's first provider request with an availability failure — rate limiting, quota exhaustion, provider-side cooldown, or an unknown-model response — the runner discards the pre-work session state and attempts the next candidate. Errors that are not availability failures, such as content rejections or tool errors, fail the run without advancing the chain.
+- The chain is evaluated only before the run's first successful provider response. Once execution begins, the selected model is fixed for the run, and mid-run provider errors keep the existing fail-fast behavior.
+- A per-parent-session availability cache records candidates observed to be cooling down or quota-limited, including the provider-reported reset time when one is available. Later launches in the same parent session skip those candidates until the reset time passes.
+- The launch result and the run record state the resolved model. When the first candidate was not used, they also state which candidates were skipped and why.
+- Resumption retains the recorded model and does not re-evaluate the chain. A missing credential or unavailable model on resumption requires an explicit configuration correction, not a different model selected silently.
 - The child inherits the parent's thinking level unless a supported future definition field explicitly changes it. The initial public tool has no `thinking` parameter.
-- Resumption retains the resolved model. A missing credential or unavailable model requires an explicit configuration correction, not a different model selected silently.
 - Provider registrations and credentials must be obtained through supported pi facilities. Access to an undocumented model-registry backing field is not an accepted permanent integration strategy.
 
 ## 6. Data Model and Persistence
@@ -866,6 +885,8 @@ The `agents` configuration object gains an optional `ui` object with validated k
 
 The inspector-level actions are `close`, `scrollUp`, `scrollDown`, `selectUp`, `selectDown`, `selectFirst`, `selectLast`, `pageUp`, `pageDown`, `refresh`, `steer`, `stop`, and `toggleTools`, matching the upstream action set minus the plugin and prompt-audit actions. Prompt interactions such as composer Enter and Escape keep fixed keys. Configuration follows the existing global and trusted-project precedence of Section 5.3; project configuration overrides global values, and the editor-activation keys are not configurable in this release.
 
+The `/secretary` configuration menu edits the user-global `secretary.json`. Each menu mutation validates the resulting `agents` object against the same rules as file loading, including unknown-key rejection, before writing it; a failed validation or write leaves the previous configuration in effect. Project-level overrides are not edited through the menu in this release. Menu navigation and editing keys are fixed and are specified in the [interaction design's navigation table](../ux/subagents.md#4-navigation-and-accessibility).
+
 #### 12.6.6 Excluded surfaces
 
 The following upstream surfaces are not ported because they require runtime features outside Section 1.1. No placeholder or disabled control is shown for them.
@@ -885,7 +906,7 @@ If a future release adds one of these runtime features, its surface is designed 
 
 | Failure | Required behavior |
 | --- | --- |
-| Model or authentication setup fails. | The run fails with a diagnostic before any fallback model is selected. |
+| Model or authentication setup fails. | The candidate chain defined in Section 5.3 advances on availability failures. When no candidate remains, the run fails with a diagnostic that lists each attempted model and its failure reason. |
 | Session initialization is cancelled. | No later asynchronous callback may submit its prompt. |
 | Output persistence fails. | The run reports degraded evidence storage; it does not claim a durable output path that was not written. |
 | The database write fails before acceptance. | No run is launched. |
@@ -914,10 +935,11 @@ If a future release adds one of these runtime features, its surface is designed 
 | SA-04 | Startup cancellation, queue cancellation, foreground handler abort, abort-versus-settlement races, repeated stop, stale confirmation, and noncooperative tool tests cover stopping. |
 | SA-05 | Crash recovery, ownership locking, reload, session replacement, missing files, and no-auto-resume tests cover persistence. |
 | SA-06 | Disposable Git and non-Git projects cover shared-directory defaults, captured-HEAD worktrees, unborn and non-Git snapshots, copy bounds, ownership checks, retained changes, and conservative cleanup. |
-| SA-07 | Registry precedence, project trust, alias mapping, missing mappings, and late tool registration tests cover configuration. |
+| SA-07 | Registry precedence, project trust, fallback-list resolution, missing and empty lists, candidate ordering, availability-cache behavior, and late tool registration tests cover configuration. |
 | SA-08 | Atomic usage application, event replay, goal replacement, stopped goals, and continuation waiting tests cover goal integration. |
 | SA-09 | SDK and adapter tests cover host-mode restrictions and child UI lifecycles. Real-provider CLI tests separately exercise print-mode spawning and interactive-parent spawning with widget extensions. These do not establish every RPC client or extension combination. |
 | SA-10 | Structured-transcript parsing tests cover tool pairing, guidance notices, truncation bounds, and sanitization. View-model tests cover usage-label derivation and the no-zero-for-unknown rule. Widget render-key tests cover deduplication and timer disposal. Keybinding-configuration tests cover validation, precedence, and hint consistency. Border and layout snapshot tests cover minimum width, narrow and wide panes, and resize. The recorded UI walkthrough additionally covers the async widget and both display modes. |
+| SA-11 | Configuration-schema validation, menu interaction and persistence tests, rendered-layout baselines, headless text-behavior tests, and the recorded UI walkthrough cover model fallback list management. The model-resolution scenarios in `agent-configuration.feature` cover fallback lists. |
 
 Additional release conditions are:
 

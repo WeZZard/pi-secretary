@@ -81,14 +81,14 @@ model: inherit
 
 - Global configuration is read from `secretary.json` in the pi agent directory, which defaults to `~/.pi/agent/`.
 - Trusted project configuration in `.pi/secretary.json` overrides global agent settings.
-- Explicit model aliases require exact pi model mappings. The `Agent.model` input exposes only configured aliases; omitting the model uses the definition's model or inherits the parent model.
-- The following model identifier is an example placeholder and must be replaced with an available configured model.
+- Model fallback lists map a name to an ordered list of exact pi model identifiers. An agent definition's `model` field or the `Agent.model` input names a list; when a model is unavailable, the list's models are tried from first to last. An exact `provider/modelId` available in the session is also accepted, and omitting the model uses the definition's model or inherits the parent model. The plugin ships with no lists; every list is user-created, in the file or through the `/secretary` menu. The removed `agents.modelAliases` key fails validation with guidance toward `modelFallbackLists`.
+- The following model identifiers are example placeholders and must be replaced with available configured models.
 
 ```json
 {
   "agents": {
-    "modelAliases": {
-      "sonnet": "your-provider/your-model"
+    "modelFallbackLists": {
+      "primary": ["your-provider/your-model", "your-provider/your-cheap-model"]
     },
     "maxConcurrent": 4,
     "maxQueued": 16,

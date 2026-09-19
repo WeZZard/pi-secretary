@@ -30,7 +30,7 @@
 | Feature file | Requirements | Scope |
 | --- | --- | --- |
 | [delegation.feature](delegation.feature) | SA-01. | The scenarios cover foreground and background delegation, fresh context, queue admission, and tool availability. |
-| [agent-configuration.feature](agent-configuration.feature) | SA-07. | The scenarios cover definitions, model aliases, inheritance, project trust, and tool restrictions. |
+| [agent-configuration.feature](agent-configuration.feature) | SA-07. | The scenarios cover definitions, model fallback lists, inheritance, project trust, and tool restrictions. |
 | [messaging.feature](messaging.feature) | SA-03. | The scenarios cover guidance, resumption, delivery acknowledgment, and concurrent requests. |
 | [cancellation.feature](cancellation.feature) | SA-04. | The scenarios cover stopping, foreground interruption, wait cancellation, and stale confirmations. |
 | [session-recovery.feature](session-recovery.feature) | SA-05. | The scenarios cover exit, reload, session ownership, restoration, and recovery after failure. |

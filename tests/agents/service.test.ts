@@ -19,7 +19,7 @@ function harness(mode = "tui", concurrent = 1) {
   let starts = 0;
   const service = new AgentService({ parentId: "parent", root, repository,
     ctx: { cwd: root, mode } as ExtensionContext,
-    config: { modelAliases: {}, ui: defaultAgentUi(), maxConcurrent: concurrent, maxQueued: 2, shutdownTimeoutMs: 1000 },
+    config: { modelFallbackLists: {}, ui: defaultAgentUi(), maxConcurrent: concurrent, maxQueued: 2, shutdownTimeoutMs: 1000 },
     runner: async options => {
       starts++;
       const sessionPath = join(root, `${options.agent.agentId}.jsonl`);

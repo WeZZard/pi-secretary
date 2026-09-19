@@ -104,7 +104,7 @@ export async function durableService(t: TestContext) {
   let starts = 0;
   const delivered: string[] = [];
   const service = new AgentService({ parentId: "p", root, repository, ctx: { cwd: root, mode: "tui" } as ExtensionContext,
-    config: { modelAliases: {}, ui: defaultAgentUi(), maxConcurrent: 2, maxQueued: 2, shutdownTimeoutMs: 1000 },
+    config: { modelFallbackLists: {}, ui: defaultAgentUi(), maxConcurrent: 2, maxQueued: 2, shutdownTimeoutMs: 1000 },
     runner: async options => {
       starts++; const result = deferred<Awaited<RunningChild["result"]>>();
       const path = join(root, `${options.agent.agentId}.jsonl`); writeFileSync(path, '{"type":"session"}\n'); options.hooks.session(path);

@@ -1,10 +1,9 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
 import { validateInspectorKeybindings, type InspectorKeybindingsConfig } from "./ui/keybindings.ts";
 
-export const MODEL_ALIASES = ["sonnet", "opus", "haiku", "fable"] as const;
-export type AgentModelAlias = (typeof MODEL_ALIASES)[number];
+export const FALLBACK_LIST_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 export interface AgentUiConfiguration {
   inlineToolDisplay: "rich" | "summary";
   fleetViewPlacement: "belowEditor" | "aboveEditor";
@@ -12,7 +11,7 @@ export interface AgentUiConfiguration {
   fleetKeybindings: InspectorKeybindingsConfig;
 }
 export interface AgentConfiguration {
-  modelAliases: Partial<Record<AgentModelAlias, string>>;
+  modelFallbackLists: Record<string, string[]>;
   maxConcurrent: number;
   maxQueued: number;
   shutdownTimeoutMs: number;
@@ -35,25 +34,21 @@ function object(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-export function loadAgentConfiguration(cwd: string, agentDir: string, trusted: boolean): AgentConfiguration {
-  const result: AgentConfiguration = { modelAliases: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, ui: defaultAgentUi() };
-  const paths = [join(agentDir, "secretary.json")];
-  if (trusted) paths.push(join(cwd, CONFIG_DIR_NAME, "secretary.json"));
-  for (const path of paths) {
-    let text: string;
-    try { text = readFileSync(path, "utf8"); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
-    const root = object(JSON.parse(text), path);
-    if (!Object.hasOwn(root, "agents")) continue;
-    const agents = object(root.agents, `${path}: agents`);
-    for (const [key, value] of Object.entries(agents)) {
-      if (key === "modelAliases") {
-        for (const [alias, model] of Object.entries(object(value, `${path}: agents.modelAliases`))) {
-          if (!(MODEL_ALIASES as readonly string[]).includes(alias) || !isExactModelIdentifier(model)) {
-            throw new Error(`${path}: invalid agents.modelAliases.${alias}; expected an exact provider/modelId`);
+function applyAgentsConfiguration(agents: Record<string, unknown>, path: string, result: AgentConfiguration): void {
+  for (const [key, value] of Object.entries(agents)) {
+      if (key === "modelFallbackLists") {
+        for (const [name, list] of Object.entries(object(value, `${path}: agents.modelFallbackLists`))) {
+          if (!FALLBACK_LIST_NAME.test(name) || name === "inherit") {
+            throw new Error(`${path}: invalid agents.modelFallbackLists name ${name}; use the agent-name pattern and avoid the reserved name inherit`);
           }
-          result.modelAliases[alias as AgentModelAlias] = model;
+          if (!Array.isArray(list) || list.some(entry => !isExactModelIdentifier(entry))) {
+            throw new Error(`${path}: agents.modelFallbackLists.${name} must be an array of exact provider/modelId identifiers`);
+          }
+          if (new Set(list).size !== list.length) throw new Error(`${path}: agents.modelFallbackLists.${name} contains duplicate models`);
+          result.modelFallbackLists[name] = [...list];
         }
+      } else if (key === "modelAliases") {
+        throw new Error(`${path}: agents.modelAliases was removed; use agents.modelFallbackLists (an object mapping list names to ordered provider/modelId arrays)`);
       } else if (key === "maxConcurrent" || key === "maxQueued" || key === "shutdownTimeoutMs") {
         const minimum = key === "maxConcurrent" ? 1 : 0;
         if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum) {
@@ -77,7 +72,39 @@ export function loadAgentConfiguration(cwd: string, agentDir: string, trusted: b
           } else throw new Error(`${path}: unsupported agents.ui field ${uiKey}`);
         }
       } else throw new Error(`${path}: unsupported agents field ${key}`);
-    }
+  }
+}
+
+export function loadAgentConfiguration(cwd: string, agentDir: string, trusted: boolean): AgentConfiguration {
+  const result: AgentConfiguration = { modelFallbackLists: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, ui: defaultAgentUi() };
+  const paths = [join(agentDir, "secretary.json")];
+  if (trusted) paths.push(join(cwd, CONFIG_DIR_NAME, "secretary.json"));
+  for (const path of paths) {
+    let text: string;
+    try { text = readFileSync(path, "utf8"); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
+    const root = object(JSON.parse(text), path);
+    if (!Object.hasOwn(root, "agents")) continue;
+    applyAgentsConfiguration(object(root.agents, `${path}: agents`), path, result);
   }
   return result;
+}
+
+/**
+ * Validate and persist model fallback lists to the user-global secretary.json
+ * (architecture §12.6.5). The full resulting `agents` object is validated against the
+ * file-loading rules before anything is written; a failed validation or write leaves
+ * the previous configuration in effect. Project-level overrides are never touched.
+ */
+export function saveModelFallbackLists(agentDir: string, lists: Record<string, string[]>): void {
+  const path = join(agentDir, "secretary.json");
+  let root: Record<string, unknown> = {};
+  try { root = object(JSON.parse(readFileSync(path, "utf8")), path); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  const agents = Object.hasOwn(root, "agents") ? object(root.agents, `${path}: agents`) : {};
+  const candidate: Record<string, unknown> = { ...agents,
+    modelFallbackLists: Object.fromEntries(Object.entries(lists).map(([name, entries]) => [name, [...entries]])) };
+  applyAgentsConfiguration(candidate, path, { modelFallbackLists: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, ui: defaultAgentUi() });
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify({ ...root, agents: candidate }, null, 2) + "\n");
 }

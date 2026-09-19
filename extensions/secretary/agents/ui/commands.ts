@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { matchesKey } from "@earendil-works/pi-tui";
 import { AsyncWidget, ASYNC_WIDGET_KEY, startAsyncWidgetPolling } from "./async-widget.ts";
+import { SecretaryConfigMenu, headlessSecretaryConfig } from "./config-menu.ts";
 import { FleetView } from "./fleet-view.ts";
 import { Inspector } from "./inspector.ts";
 import type { InspectorKeybindingsConfig } from "./keybindings.ts";
@@ -111,6 +113,24 @@ export function registerAgentUI(pi: ExtensionAPI, port: AgentUIPort, resolveOpti
   };
   pi.on("ui_prompt_start", () => { promptDepth++; });
   pi.on("ui_prompt_end", () => { promptDepth = Math.max(0, promptDepth - 1); });
+  pi.registerCommand("secretary", {
+    description: "Configure Secretary: /secretary opens the configuration menu",
+    handler: async (_args, commandCtx) => {
+      const agentDir = getAgentDir();
+      if (commandCtx.mode !== "tui") {
+        // Headless modes receive text only; no terminal component, no edits (§6).
+        pi.sendMessage({ customType: "secretary-config", content: sanitize(headlessSecretaryConfig(agentDir)), display: true }, { triggerTurn: false });
+        return;
+      }
+      // Full-screen presentation (no overlay), matching pi's native configuration selectors.
+      await commandCtx.ui.custom<void>((tui, theme, _kb, done) => new SecretaryConfigMenu({
+        agentDir,
+        models: () => commandCtx.modelRegistry.getAll().map(model => `${model.provider}/${model.id}`),
+        onDismiss: () => done(),
+        theme,
+      }));
+    },
+  });
   pi.registerCommand("agents", {
     description: "Inspect agents: /agents [id-or-name], /agents stop <id>, /agents cleanup <id>",
     handler: async (args, commandCtx) => {

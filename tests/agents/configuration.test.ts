@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { CONFIG_DIR_NAME, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { loadAgentConfiguration } from "../../extensions/secretary/agents/configuration.ts";
+import { loadAgentConfiguration, saveModelFallbackLists } from "../../extensions/secretary/agents/configuration.ts";
+import { ModelAvailability } from "../../extensions/secretary/agents/availability.ts";
 import { discoverAgents, resolveAgentModel } from "../../extensions/secretary/agents/registry.ts";
 
 function fixture(t: TestContext) {
@@ -18,18 +19,18 @@ function fixture(t: TestContext) {
 
 test("configuration defaults, trusted overlay, and nonmutation", (t) => {
   const { cwd, agentDir, put } = fixture(t);
-  assert.deepEqual(loadAgentConfiguration(cwd, agentDir, false), { modelAliases: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, ui: { inlineToolDisplay: "rich", fleetViewPlacement: "belowEditor", asyncWidget: true, fleetKeybindings: {} } });
+  assert.deepEqual(loadAgentConfiguration(cwd, agentDir, false), { modelFallbackLists: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, ui: { inlineToolDisplay: "rich", fleetViewPlacement: "belowEditor", asyncWidget: true, fleetKeybindings: {} } });
   const global = join(agentDir, "secretary.json"), project = join(cwd, CONFIG_DIR_NAME, "secretary.json");
-  const content = JSON.stringify({ unrelated: true, agents: { modelAliases: { sonnet: "p/one", haiku: "p/two" }, maxConcurrent: 2 } });
+  const content = JSON.stringify({ unrelated: true, agents: { modelFallbackLists: { fast: ["p/one", "p/two"], cheap: [] }, maxConcurrent: 2 } });
   put(global, content);
-  put(project, JSON.stringify({ agents: { modelAliases: { sonnet: "q/three" }, maxQueued: 0 } }));
-  assert.equal(loadAgentConfiguration(cwd, agentDir, false).modelAliases.sonnet, "p/one");
+  put(project, JSON.stringify({ agents: { modelFallbackLists: { fast: ["q/three"] }, maxQueued: 0 } }));
+  assert.deepEqual(loadAgentConfiguration(cwd, agentDir, false).modelFallbackLists.fast, ["p/one", "p/two"]);
   const resolved = loadAgentConfiguration(cwd, agentDir, true);
-  assert.deepEqual(resolved.modelAliases, { sonnet: "q/three", haiku: "p/two" });
+  assert.deepEqual(resolved.modelFallbackLists, { fast: ["q/three"], cheap: [] }, "A project list replaces the same-named global list entirely; sibling lists are retained");
   assert.equal(resolved.maxQueued, 0);
-  resolved.modelAliases.haiku = "mutated/value";
+  (resolved.modelFallbackLists as Record<string, string[]>).cheap!.push("mutated/value");
   assert.equal(readFileSync(global, "utf8"), content);
-  assert.equal(loadAgentConfiguration(cwd, agentDir, true).modelAliases.haiku, "p/two");
+  assert.deepEqual(loadAgentConfiguration(cwd, agentDir, true).modelFallbackLists.cheap, []);
   put(project, "invalid JSON");
   assert.doesNotThrow(() => loadAgentConfiguration(cwd, agentDir, false));
   assert.throws(() => loadAgentConfiguration(cwd, agentDir, true));
@@ -37,12 +38,16 @@ test("configuration defaults, trusted overlay, and nonmutation", (t) => {
 
 test("configuration rejects unsupported fields and invalid values", (t) => {
   const { cwd, agentDir, put } = fixture(t);
-  for (const agents of [null, [], { extra: 1 }, { maxConcurrent: 0 }, { maxQueued: -1 }, { shutdownTimeoutMs: 1.2 }, { modelAliases: null }, { modelAliases: { unknown: "p/id" } }, { modelAliases: { sonnet: "inherit" } },
+  for (const agents of [null, [], { extra: 1 }, { maxConcurrent: 0 }, { maxQueued: -1 }, { shutdownTimeoutMs: 1.2 }, { modelAliases: { sonnet: "p/id" } }, { modelFallbackLists: null }, { modelFallbackLists: [] }, { modelFallbackLists: { "bad name": ["p/id"] } }, { modelFallbackLists: { inherit: ["p/id"] } }, { modelFallbackLists: { fast: "p/id" } }, { modelFallbackLists: { fast: ["no-slash"] } }, { modelFallbackLists: { fast: ["p/id", "p/id"] } }, { modelFallbackLists: { fast: [42] } },
     { ui: null }, { ui: { unknown: true } }, { ui: { inlineToolDisplay: "fancy" } }, { ui: { fleetViewPlacement: "sidebar" } }, { ui: { asyncWidget: "yes" } },
     { ui: { fleetKeybindings: [] } }, { ui: { fleetKeybindings: { frobnicate: ["f"] } } }, { ui: { fleetKeybindings: { stop: [] } } }, { ui: { fleetKeybindings: { stop: [42] } } }]) {
     put(join(agentDir, "secretary.json"), JSON.stringify({ agents }));
     assert.throws(() => loadAgentConfiguration(cwd, agentDir, false));
   }
+  put(join(agentDir, "secretary.json"), JSON.stringify({ agents: { modelAliases: { sonnet: "p/id" } } }));
+  assert.throws(() => loadAgentConfiguration(cwd, agentDir, false), /modelFallbackLists/, "The removed key's error names the replacement");
+  put(join(agentDir, "secretary.json"), JSON.stringify({ agents: { modelFallbackLists: { empty: [] } } }));
+  assert.deepEqual(loadAgentConfiguration(cwd, agentDir, false).modelFallbackLists, { empty: [] }, "An empty list is valid configuration");
 });
 
 test("ui configuration accepts documented values and project overrides merge over global", (t) => {
@@ -101,7 +106,7 @@ for (const scope of ["user", "project"] as const) {
 test("discovery rejects duplicate names, bad YAML, unsupported behaviors", (t) => {
   const { cwd, agentDir, put } = fixture(t);
   const path = join(agentDir, "agents", "one.md");
-  for (const extra of ["hooks: {}", "isolation: remote", "maxTurns: 0", "background: yes", "model: fuzzy", "tools: [read, 2]", "name: duplicate"]) {
+  for (const extra of ["hooks: {}", "isolation: remote", "maxTurns: 0", "background: yes", "model: 42", "tools: [read, 2]", "name: duplicate"]) {
     put(path, `---\nname: Custom\ndescription: Test\n${extra}\n---\nPrompt`);
     assert.throws(() => discoverAgents(cwd, agentDir, false));
   }
@@ -110,24 +115,64 @@ test("discovery rejects duplicate names, bad YAML, unsupported behaviors", (t) =
   assert.throws(() => discoverAgents(cwd, agentDir, false), /duplicate agent/);
 });
 
-test("model resolution uses exact registry IDs, aliases, scope and authentication", async (t) => {
+test("model resolution matches available models first, then fallback lists in order", async (t) => {
   const { cwd, agentDir } = fixture(t);
   const definition = discoverAgents(cwd, agentDir, false).get("general-purpose")!;
-  const config = loadAgentConfiguration(cwd, agentDir, false);
-  const model = { provider: "provider", id: "org/model" } as Model<Api>;
+  const parent = { provider: "provider", id: "org/parent" } as Model<Api>;
+  const listed = { provider: "provider", id: "org/listed" } as Model<Api>;
+  const models = new Map<string, Model<Api>>([[`${parent.provider}/${parent.id}`, parent], [`${listed.provider}/${listed.id}`, listed]]);
   let authOK = true;
-  const ctx = { model, scopedModels: [], modelRegistry: {
-    find(provider: string, id: string) { return provider === model.provider && id === model.id ? model : undefined; },
+  const ctx = { model: parent, scopedModels: [], modelRegistry: {
+    find(provider: string, id: string) { return models.get(`${provider}/${id}`); },
     async getApiKeyAndHeaders() { return authOK ? { ok: true } : { ok: false, error: "missing credentials" }; },
   } } as unknown as Pick<ExtensionContext, "model" | "modelRegistry" | "scopedModels">;
-  assert.equal(await resolveAgentModel(definition, undefined, config, ctx), model);
-  await assert.rejects(resolveAgentModel(definition, "sonnet", config, ctx), /modelAliases.sonnet/);
-  config.modelAliases.sonnet = "provider/org/model";
-  assert.equal(await resolveAgentModel({ ...definition, model: "unavailable/model" }, "sonnet", config, ctx), model);
-  assert.equal(await resolveAgentModel({ ...definition, model: "sonnet" }, undefined, config, ctx), model);
-  await assert.rejects(resolveAgentModel({ ...definition, model: "provider/model" }, undefined, config, ctx), /unavailable/);
-  await assert.rejects(resolveAgentModel(definition, undefined, config, { ...ctx, scopedModels: [{ model: { ...model, id: "different" } }] }), /scoped/);
+  const config = loadAgentConfiguration(cwd, agentDir, false);
+  config.modelFallbackLists.fast = ["provider/org/missing", "provider/org/listed"];
+  config.modelFallbackLists.scoped = ["provider/org/parent", "provider/org/listed"];
+  assert.equal((await resolveAgentModel(definition, undefined, config, ctx)).id, "provider/org/parent", "Omission inherits the parent model");
+  const exact = await resolveAgentModel({ ...definition, model: "provider/org/listed" }, undefined, config, ctx);
+  assert.equal(exact.model, listed, "An exact identifier forms a single-candidate chain");
+  assert.deepEqual(exact.skipped, []);
+  const viaList = await resolveAgentModel({ ...definition, model: "fast" }, undefined, config, ctx);
+  assert.equal(viaList.id, "provider/org/listed", "The list's members are tried in configured order");
+  assert.deepEqual(viaList.chain, ["provider/org/missing", "provider/org/listed"]);
+  assert.equal(viaList.skipped.length, 1);
+  assert.match(viaList.skipped[0]!.reason, /unavailable/);
+  assert.equal((await resolveAgentModel({ ...definition, model: "provider/org/parent" }, "fast", config, ctx)).id, "provider/org/listed", "An explicit invocation value wins over the definition");
+  const scoped = { ...ctx, scopedModels: [{ model: listed }] } as unknown as typeof ctx;
+  const viaScoped = await resolveAgentModel({ ...definition, model: "scoped" }, undefined, config, scoped);
+  assert.equal(viaScoped.id, "provider/org/listed", "A scoped-out candidate is skipped, not fatal");
+  assert.match(viaScoped.skipped[0]!.reason, /scoped/i);
+  await assert.rejects(resolveAgentModel(definition, "absent", config, ctx), /Unknown model fallback list: absent/);
+  config.modelFallbackLists.empty = [];
+  await assert.rejects(resolveAgentModel(definition, "empty", config, ctx), /empty/);
+  await assert.rejects(resolveAgentModel({ ...definition, model: "provider/absent" }, undefined, config, ctx), /provider\/absent/, "A slash value is never treated as a list name");
   authOK = false;
-  await assert.rejects(resolveAgentModel(definition, undefined, config, ctx), /Authentication/);
-  await assert.rejects(resolveAgentModel(definition, undefined, config, { ...ctx, model: undefined }), /parent model/);
+  await assert.rejects(resolveAgentModel({ ...definition, model: "scoped" }, undefined, config, ctx), /provider\/org\/parent[\s\S]*provider\/org\/listed/, "An all-failed chain lists each attempted model and its reason");
+  authOK = true;
+  const availability = new ModelAvailability();
+  availability.record("provider/org/listed", Date.now() + 60000);
+  config.modelFallbackLists.cached = ["provider/org/listed", "provider/org/parent"];
+  const viaCache = await resolveAgentModel({ ...definition, model: "cached" }, undefined, config, ctx, availability);
+  assert.equal(viaCache.id, "provider/org/parent", "A cooling-down candidate is skipped without a provider request");
+  assert.match(viaCache.skipped[0]!.reason, /cooling/i);
+  await assert.rejects(resolveAgentModel(definition, undefined, config, { ...ctx, model: undefined } as typeof ctx), /parent model/);
+});
+
+test("saveModelFallbackLists validates before writing, preserves other keys, and reloads", (t) => {
+  const { agentDir, put } = fixture(t);
+  const path = join(agentDir, "secretary.json");
+  saveModelFallbackLists(agentDir, { fast: ["p/one", "p/two"], empty: [] });
+  assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), { agents: { modelFallbackLists: { fast: ["p/one", "p/two"], empty: [] } } }, "A missing file is created");
+  assert.deepEqual(loadAgentConfiguration(agentDir, agentDir, false).modelFallbackLists.fast, ["p/one", "p/two"], "Saved lists take effect on the next read");
+  put(path, JSON.stringify({ unrelated: true, agents: { maxConcurrent: 2, modelFallbackLists: { old: ["q/three"] } } }));
+  saveModelFallbackLists(agentDir, { fast: ["p/one"] });
+  assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), { unrelated: true, agents: { maxConcurrent: 2, modelFallbackLists: { fast: ["p/one"] } } }, "Unrelated root keys and other agents fields are preserved");
+  const before = readFileSync(path, "utf8");
+  assert.throws(() => saveModelFallbackLists(agentDir, { "bad name": [] }), /modelFallbackLists/, "An invalid candidate is rejected before writing");
+  assert.throws(() => saveModelFallbackLists(agentDir, { inherit: ["p/one"] }), /inherit/);
+  assert.equal(readFileSync(path, "utf8"), before, "A rejected change leaves the previous configuration in effect");
+  put(path, JSON.stringify({ agents: { modelAliases: { sonnet: "p/one" }, modelFallbackLists: {} } }));
+  assert.throws(() => saveModelFallbackLists(agentDir, { fast: ["p/one"] }), /modelFallbackLists/, "A file with a removed key is reported rather than rewritten");
+  assert.match(readFileSync(path, "utf8"), /modelAliases/, "The unreadable configuration is not rewritten");
 });

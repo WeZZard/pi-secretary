@@ -28,13 +28,14 @@ export async function agentHarness(t: TestContext, options: { mode?: string; col
   } });
   const hooks = new Map<string, Array<(event: any, ctx: any) => any>>();
   const tools = new Map<string, any>();
+  const commands = new Map<string, any>();
   const notices: string[] = [], sent: any[] = [], entries: any[] = [];
   if (options.collision) tools.set(options.collision, { name: options.collision, foreign: true });
   const ctx: any = { cwd: root, mode: options.mode ?? "print", hasUI: true, model, modelRegistry: registry, scopedModels: [], thinkingLevel: "off", isProjectTrusted: () => true,
     sessionManager: { getSessionFile: () => undefined, getSessionId: () => "parent", getBranch: () => entries, getEntries: () => entries },
     isIdle: () => true, hasPendingMessages: () => false, abort: () => {},
     ui: { setStatus() {}, setWidget() {}, notify: (text: string) => notices.push(text) } };
-  const pi: any = { on: (name: string, fn: any) => hooks.set(name, [...(hooks.get(name) ?? []), fn]), registerTool: (tool: any) => tools.set(tool.name, tool), registerCommand() {}, getAllTools: () => [...tools.values()], getActiveTools: () => ["read", ...tools.keys(), "SubagentWorkflow"], getSessionName: () => "Fixture", setSessionName() {}, appendEntry: (customType: string, data: any) => entries.push({ type: "custom", customType, data }), sendMessage: (message: any, delivery: any) => sent.push({ message, delivery }) };
+  const pi: any = { on: (name: string, fn: any) => hooks.set(name, [...(hooks.get(name) ?? []), fn]), registerTool: (tool: any) => tools.set(tool.name, tool), registerCommand: (name: string, definition: any) => commands.set(name, definition), getAllTools: () => [...tools.values()], getActiveTools: () => ["read", ...tools.keys(), "SubagentWorkflow"], getSessionName: () => "Fixture", setSessionName() {}, appendEntry: (customType: string, data: any) => entries.push({ type: "custom", customType, data }), sendMessage: (message: any, delivery: any) => sent.push({ message, delivery }) };
   const sync = installSecretary(pi, engine, { agentsRoot: root });
   const emit = async (name: string, event: any = {}) => { let result: any; for (const fn of hooks.get(name) ?? []) result = await fn(event, ctx) ?? result; return result; };
   t.after(async () => {
@@ -42,7 +43,8 @@ export async function agentHarness(t: TestContext, options: { mode?: string; col
     finally { if (prior === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = prior; await rm(root, { recursive: true, force: true }); }
   });
   let sequence = 0;
-  return { root, engine, sync, ctx, pi, tools, calls, notices, sent, emit,
+  return { root, engine, sync, ctx, pi, tools, commands, calls, notices, sent, emit,
     start: () => emit("session_start", { reason: "startup" }),
+    command: (name: string, args: string) => { assert.ok(commands.has(name), `${name} is registered`); return commands.get(name).handler(args, ctx); },
     tool: (name: string, args: any, id = `invocation-${++sequence}`) => { assert.ok(tools.has(name), `${name} is registered`); return tools.get(name).execute(id, args, undefined, undefined, ctx); } };
 }

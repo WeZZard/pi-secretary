@@ -27,6 +27,13 @@ const expected: Record<string, string[]> = {
   "05-narrow-inspector": ["Task: Inspect acceptance fixture", "Esc close"],
   "06-stop-confirmation": ["Confirm stop", "Enter confirms"],
   "07-cancelled-inspector": ["acceptance-worker · cancelled", "Agents ·"],
+  "07b-menu-top": ["Subagents", "Esc dismiss"],
+  "07c-menu-manager": ["Model Fallback Lists", "＋ Add List", "a add list · d remove list"],
+  "07d-menu-name-prompt": ["Add List", "Name the fallback list.", "acceptance-fallback"],
+  "07e-menu-list-added": ["Added list acceptance-fallback", "0 models"],
+  "07f-menu-list-detail": ["Models are tried from first to last.", "＋ Add Model", "Enter/→ add"],
+  "07g-menu-model-picker": ["Add Model › acceptance-fallback", "fixture [secretary-tui-test]", "Enter add"],
+  "07h-menu-model-added": ["Added secretary-tui-test/fixture to acceptance-fallback", "Shift+K/J move up/down"],
   "08-editor-return": ["Preserved editor draft"],
 };
 const assertions: Array<{ checkpoint: string; passed: boolean; checks: string[] }> = [];

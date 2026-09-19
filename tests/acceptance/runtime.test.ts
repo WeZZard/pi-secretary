@@ -80,7 +80,7 @@ const bindings: ScenarioBindings = {
     const h = await publicHarness(t, { automatic: true }); await h.start();
     let args: any = { ...task, run_in_background: false }, diagnostic: RegExp;
     if (text.includes("unknown explicit agent")) { args.subagent_type = "not-installed"; diagnostic = /Unknown|unavailable/i; }
-    else if (text.includes("unavailable resolved model")) { h.ctx.model = { ...h.ctx.model, id: "unavailable" }; diagnostic = /Model unavailable/; }
+    else if (text.includes("unavailable resolved model")) { h.ctx.model = { ...h.ctx.model, id: "unavailable" }; diagnostic = /unavailable/i; }
     else if (text.includes("empty task")) { args.prompt = " \n"; diagnostic = /prompt.*nonempty/i; }
     else if (text.includes("name reserved")) { await h.tool("Agent", { ...task, name: "reserved", run_in_background: false }); args.name = "reserved"; diagnostic = /already exists|already in use/i; }
     else if (text.includes("remote isolation")) { args.isolation = "remote"; diagnostic = /Invalid Agent input/; }
@@ -294,7 +294,7 @@ const bindings: ScenarioBindings = {
     const moduleUrl = (name: string) => pathToFileURL(resolve(`extensions/secretary/agents/${name}.ts`)).href;
     const code = `import {DatabaseSync} from 'node:sqlite'; import {AgentRepository,acquireParentLock} from ${JSON.stringify(moduleUrl("storage/agent-repository"))}; import {AgentService} from ${JSON.stringify(moduleUrl("service"))};
       const db=new DatabaseSync(${JSON.stringify(join(h.root, "agents.sqlite"))}); const repository=new AgentRepository(db); await acquireParentLock(${JSON.stringify(h.root)},'crashed');
-      const service=new AgentService({parentId:'crashed',root:${JSON.stringify(h.root)},repository,ctx:{cwd:${JSON.stringify(h.root)},mode:'tui'},config:{modelAliases:{},maxConcurrent:1,maxQueued:1,shutdownTimeoutMs:10},runner:async o=>{o.hooks.text('Evidence from dead process');return {result:new Promise(()=>{}),steer:async()=>{},abort:async()=>{},dispose:async()=>{}}}});
+      const service=new AgentService({parentId:'crashed',root:${JSON.stringify(h.root)},repository,ctx:{cwd:${JSON.stringify(h.root)},mode:'tui'},config:{modelFallbackLists:{},maxConcurrent:1,maxQueued:1,shutdownTimeoutMs:10},runner:async o=>{o.hooks.text('Evidence from dead process');return {result:new Promise(()=>{}),steer:async()=>{},abort:async()=>{},dispose:async()=>{}}}});
       const result=await service.launch(${JSON.stringify(h.spec("crash"))}); process.stdout.write(JSON.stringify(result)+'\\n'); setInterval(()=>{},1000);`;
     const child = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", code], { stdio: ["ignore", "pipe", "pipe"] });
     let output = "", errors = ""; child.stderr.on("data", data => { errors += data; });

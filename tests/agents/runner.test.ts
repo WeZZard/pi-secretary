@@ -10,7 +10,7 @@ import { inChildSession, runInChildSession } from "../../extensions/secretary/ag
 import type { AgentRecord, AgentRun, RunnerHooks } from "../../extensions/secretary/agents/records.ts";
 import { goalTokenDeltaForUsage } from "../../extensions/secretary/goal/accounting.ts";
 
-async function fixture(t: TestContext, responses: Array<string | { tool: string; args?: Record<string, unknown> }> = ["done"]) {
+async function fixture(t: TestContext, responses: Array<string | { tool: string; args?: Record<string, unknown> } | { error: string }> = ["done"]) {
   const root = await mkdtemp(join(tmpdir(), "secretary-child-"));
   const old = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = join(root, "agent");
@@ -24,25 +24,28 @@ async function fixture(t: TestContext, responses: Array<string | { tool: string;
   const model: Model<"openai-completions"> = { id: "child", name: "Child test", provider: "child-test", api: "openai-completions",
     baseUrl: "http://127.0.0.1:1/never", reasoning: false, input: ["text"], contextWindow: 128000, maxTokens: 1024,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+  const secondary: Model<"openai-completions"> = { ...model, id: "secondary", name: "Secondary test" };
   const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null,
     modelsStorePath: join(root, "store.json"), refreshOnCreate: false, allowModelNetwork: false });
   const registry = new ModelRegistry(runtime);
-  const calls: Context[] = [];
+  const calls: Array<Context & { modelId: string }> = [];
   let gate: (() => Promise<void>) | undefined;
-  registry.registerProvider(model.provider, { api: model.api, baseUrl: model.baseUrl, apiKey: "fake", models: [model],
+  registry.registerProvider(model.provider, { api: model.api, baseUrl: model.baseUrl, apiKey: "fake", models: [model, secondary],
     streamSimple(m, context, options) {
       assert.equal(inChildSession(), true);
       assert.equal(options?.apiKey, "fake");
-      calls.push({ ...context, messages: structuredClone(context.messages), tools: context.tools?.map(({ name, description, parameters }) => ({ name, description, parameters })) });
+      calls.push({ modelId: m.id, ...context, messages: structuredClone(context.messages), tools: context.tools?.map(({ name, description, parameters }) => ({ name, description, parameters })) });
       const response = responses.shift() ?? "done";
+      const isError = response === "error" || (typeof response === "object" && "error" in response);
+      const errorMessage = typeof response === "object" && "error" in response ? response.error : "deterministic failure";
       const stream = createAssistantMessageEventStream();
       void (async () => {
         await gate?.();
         const message: AssistantMessage = { role: "assistant", api: m.api, provider: m.provider, model: m.id,
-          content: typeof response === "string" ? [{ type: "text", text: response }] : [{ type: "toolCall", name: response.tool, id: `call-${calls.length}`, arguments: response.args ?? {} }],
-          stopReason: options?.signal?.aborted ? "aborted" : response === "error" ? "error" : typeof response === "string" ? "stop" : "toolUse",
+          content: typeof response === "string" && response !== "error" ? [{ type: "text", text: response }] : typeof response === "object" && "tool" in response ? [{ type: "toolCall", name: response.tool, id: `call-${calls.length}`, arguments: response.args ?? {} }] : [],
+          stopReason: options?.signal?.aborted ? "aborted" : isError ? "error" : typeof response === "string" ? "stop" : "toolUse",
           usage: { input: 10, output: 4, cacheRead: 3, cacheWrite: 2, totalTokens: 19, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-          timestamp: Date.now(), ...(response === "error" ? { errorMessage: "deterministic failure" } : {}) };
+          timestamp: Date.now(), ...(isError ? { errorMessage } : {}) };
         if (message.stopReason === "aborted" || message.stopReason === "error") stream.push({ type: "error", reason: message.stopReason, error: message });
         else stream.push({ type: "done", reason: typeof response === "string" ? "stop" : "toolUse", message });
         stream.end();
@@ -83,6 +86,46 @@ test("SDK child inherits public provider, project instructions, role, tools, and
   await child.abort();
   assert.equal((await child.result).status, "succeeded");
   await child.dispose(); await child.dispose();
+});
+
+test("runner advances to the next fallback candidate on a first-request availability failure", async (t) => {
+  const f = await fixture(t, [{ error: 'OpenAI API error (429): {"code":"model_cooldown","reset_seconds":60} usage_limit_reached' }, "recovered"]);
+  f.agent.modelCandidates = ["child-test/secondary"];
+  const skipped: Array<{ id: string; resetAt?: number }> = [];
+  let committed: string | undefined;
+  f.hooks.availability = (id, resetAt) => skipped.push({ id, resetAt });
+  f.hooks.model = id => { committed = id; };
+  const child = await f.start();
+  assert.deepEqual(await child.result, { status: "succeeded", output: "recovered" });
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.calls[0]!.modelId, "child");
+  assert.equal(f.calls[1]!.modelId, "secondary");
+  assert.deepEqual(skipped.map(s => s.id), ["child-test/child"]);
+  assert.equal(skipped[0]!.resetAt! > Date.now(), true, "The provider-reported reset_seconds becomes an absolute reset time");
+  assert.equal(committed, "child-test/secondary", "The run record adopts the model that actually executed");
+});
+
+test("runner fails the run without advancing when the first-request error is not an availability failure", async (t) => {
+  const f = await fixture(t, [{ error: "content policy violation" }, "unused"]);
+  f.agent.modelCandidates = ["child-test/secondary"];
+  const child = await f.start();
+  const outcome = await child.result;
+  assert.equal(outcome.status, "failed");
+  assert.match(outcome.error!, /content policy/);
+  assert.equal(f.calls.length, 1, "No second candidate is attempted");
+});
+
+test("runner reports every attempted candidate when the whole chain fails", async (t) => {
+  const f = await fixture(t, [{ error: "429 quota exhausted" }, { error: "usage_limit_reached" }]);
+  f.agent.modelCandidates = ["child-test/secondary"];
+  const skipped: string[] = [];
+  f.hooks.availability = id => { skipped.push(id); };
+  const child = await f.start();
+  const outcome = await child.result;
+  assert.equal(outcome.status, "failed");
+  assert.match(outcome.error!, /child-test\/child[\s\S]*child-test\/secondary/, "The failure lists each attempted model and its reason");
+  assert.equal(f.calls.length, 2);
+  assert.deepEqual(skipped, ["child-test/child", "child-test/secondary"]);
 });
 
 async function installUIProbe(f: Awaited<ReturnType<typeof fixture>>) {

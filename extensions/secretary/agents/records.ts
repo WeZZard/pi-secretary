@@ -53,6 +53,8 @@ export interface AgentRecord {
   name?: string;
   definition: AgentDefinition;
   model: string;
+  /** Ordered fallback candidates remaining after `model` (architecture §5.3). Ignored on resumption, which retains the recorded model. */
+  modelCandidates?: string[];
   thinkingLevel?: string;
   tools: string[];
   cwd: string;
@@ -130,6 +132,10 @@ export interface RunnerHooks {
   usage(eventId: string, usage: TokenUsage): void;
   /** Called before each new model/tool action. Throw to refuse obsolete work. */
   authorize(): void;
+  /** Records an availability failure for a candidate, with an absolute reset time when the provider reported one. */
+  availability?(id: string, resetAt?: number): void;
+  /** Commits the model that actually executed when the chain advanced past the recorded model. */
+  model?(id: string): void;
   /** Current parent-authorized tool names; a saved definition cannot widen them. */
   allowedTools?(): readonly string[];
 }

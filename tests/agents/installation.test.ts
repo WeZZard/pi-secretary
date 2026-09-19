@@ -21,14 +21,15 @@ test("root installer delays delegation schemas until session_start and preserves
   assert.equal((await h.tool("get_goal", {})).details.goal, null);
 });
 
-test("session activation registers canonical schemas once, without background or model defaults", async (t) => {
+test("session activation registers canonical schemas once, without background defaults and with a free-form model field", async (t) => {
   const h = await agentHarness(t);
   for (const name of names) assert.equal(h.tools.has(name), false);
   await h.start();
   for (const name of names) assert.equal(h.tools.get(name).parameters.type, "object");
   const agent = h.tools.get("Agent");
   assert.deepEqual(agent.parameters.required, ["description", "prompt"]);
-  assert.equal(Object.hasOwn(agent.parameters.properties, "model"), false);
+  assert.equal(agent.parameters.properties.model.type, "string");
+  assert.equal(agent.parameters.properties.model.enum, undefined, "No fallback lists are configured, so no enum is advertised");
   assert.equal(Object.hasOwn(agent.parameters.properties.run_in_background, "default"), false);
   assert.equal(agent.prepareArguments({ ...task, mode: "manual" }).mode, "default");
   await h.start();
@@ -36,17 +37,29 @@ test("session activation registers canonical schemas once, without background or
   assert.equal(h.calls.length, 0);
 });
 
-test("project custom agent uses its configured pi model without exposing Claude aliases", async (t) => {
+test("project custom agent uses its configured pi model without advertising fallback lists", async (t) => {
   const h = await agentHarness(t);
   const directory = join(h.root, ".pi", "agents");
   await mkdir(directory, { recursive: true });
   await writeFile(join(directory, "project-worker.md"), "---\nname: project-worker\ndescription: Project task\nmodel: installer-test/fixture\ntools: [read]\n---\n");
   await h.start();
-  assert.equal(Object.hasOwn(h.tools.get("Agent").parameters.properties, "model"), false);
+  assert.equal(h.tools.get("Agent").parameters.properties.model.enum, undefined);
   const outcome = await h.tool("Agent", { ...task, subagent_type: "project-worker", run_in_background: false });
   assert.equal(outcome.details.status, "succeeded");
   assert.match(outcome.content[0].text, /Model: installer-test\/fixture/);
   assert.equal(h.calls.length, 1);
+});
+
+test("/secretary in headless mode returns the configuration summary and opens no terminal component", async (t) => {
+  const h = await agentHarness(t);
+  await writeFile(join(h.root, "agent", "secretary.json"), JSON.stringify({ agents: { modelFallbackLists: { primary: ["installer-test/fixture"] } } }));
+  await h.start();
+  await h.command("secretary", "");
+  const message = h.sent.find((s: any) => s.message.customType === "secretary-config");
+  assert.ok(message, "The command responds with a text message");
+  assert.match(message.message.content, /secretary\.json/);
+  assert.match(message.message.content, /primary: installer-test\/fixture/);
+  assert.deepEqual(message.delivery, { triggerTurn: false });
 });
 
 test("headless background and unsupported launches reject before provider execution", async (t) => {

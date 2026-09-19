@@ -12,27 +12,27 @@ import { runFeatures, deferred, tick, type ScenarioBindings } from "./support.ts
 const bindings: ScenarioBindings = {
   "ACC-SA-07-01": async ({ t }) => {
     const h = await configurationHarness(t);
-    await h.put(join(h.userDir, "secretary.json"), JSON.stringify({ agents: { modelAliases: {
-      sonnet: "test-provider/reviewer-model", opus: "test-provider/reviewer-model",
-      haiku: "test-provider/reviewer-model", fable: "test-provider/reviewer-model",
+    await h.put(join(h.userDir, "secretary.json"), JSON.stringify({ agents: { modelFallbackLists: {
+      primary: ["test-provider/reviewer-model", "test-provider/different-model"],
+      secondary: ["test-provider/parent-model"],
     } } }));
     await h.start();
     const schema = h.tools.get("Agent").parameters;
-    assert.deepEqual(schema.properties.model.enum, ["sonnet", "opus", "haiku", "fable"]);
+    assert.deepEqual(schema.properties.model.enum, ["primary", "secondary"]);
     assert.ok(!schema.required.includes("model"));
     assert.ok(!schema.properties.model.enum.includes("test-provider/reviewer-model"));
     assert.ok(!Object.hasOwn(schema.properties, "modelAliases"));
-    await h.put(join(h.userDir, "secretary.json"), JSON.stringify({ agents: { modelAliases: { sonnet: "test-provider/reviewer-model" } } }));
-    assert.equal(loadAgentConfiguration(h.root, h.userDir, true).modelAliases.sonnet, "test-provider/reviewer-model");
-    await assert.rejects(h.launch({ model: "test-provider/reviewer-model" }), /Unsupported Agent.model alias/);
+    await h.put(join(h.userDir, "secretary.json"), JSON.stringify({ agents: { modelFallbackLists: { secondary: ["test-provider/reviewer-model"] } } }));
+    assert.deepEqual(loadAgentConfiguration(h.root, h.userDir, true).modelFallbackLists.secondary, ["test-provider/reviewer-model"]);
+    await assert.rejects(h.launch({ model: "unknown-list" }), /Unknown model fallback list: unknown-list/);
     assert.equal(h.calls.length, 0);
   },
   "ACC-SA-07-02": async ({ t }) => {
     const h = await configurationHarness(t);
     await h.definition("reviewer", "model: test-provider/different-model");
-    await h.put(join(h.userDir, "secretary.json"), JSON.stringify({ agents: { modelAliases: { sonnet: "test-provider/reviewer-model" } } }));
+    await h.put(join(h.userDir, "secretary.json"), JSON.stringify({ agents: { modelFallbackLists: { primary: ["test-provider/reviewer-model"] } } }));
     await h.start();
-    const result = await h.launch({ subagent_type: "reviewer", model: "sonnet" });
+    const result = await h.launch({ subagent_type: "reviewer", model: "primary" });
     await h.finish(result.details.runId);
     assert.equal(h.calls[0]!.model, "test-provider/reviewer-model");
     assert.match(result.content[0].text, /Model: test-provider\/reviewer-model/);
@@ -40,7 +40,9 @@ const bindings: ScenarioBindings = {
   },
   "ACC-SA-07-03": async ({ t }) => {
     const h = await configurationHarness(t); await h.start();
-    await assert.rejects(h.launch({ model: "fable" }), /Missing agents.modelAliases.fable/);
+    await assert.rejects(h.launch({ model: "unconfigured" }), /Unknown model fallback list: unconfigured/);
+    await h.put(join(h.userDir, "secretary.json"), JSON.stringify({ agents: { modelFallbackLists: { empty: [] } } }));
+    await assert.rejects(h.launch({ model: "empty" }), /Model fallback list is empty: empty/);
     assert.equal(h.calls.length, 0);
     assert.deepEqual(h.repository.agents("parent"), []);
   },
@@ -125,6 +127,25 @@ const bindings: ScenarioBindings = {
       await assert.rejects(h.launch({ subagent_type: "reviewer" }), new RegExp(`unsupported agent field ${field}`));
     }
     assert.equal(h.calls.length, 0); assert.equal(h.repository.agents("parent").length, 0);
+  },
+  "ACC-SA-07-09": async ({ t }) => {
+    const h = await configurationHarness(t);
+    await h.definition("reviewer");
+    await h.put(join(h.userDir, "secretary.json"), JSON.stringify({ agents: { modelFallbackLists: { primary: ["test-provider/reviewer-model", "test-provider/different-model"] } } }));
+    await h.start();
+    h.replies.push({ error: '429 usage_limit_reached {"reset_seconds":30}' }, { text: "Recovered evidence." });
+    const result = await h.launch({ subagent_type: "reviewer", model: "primary" });
+    const finished = await h.finish(result.details.runId);
+    assert.equal(finished.details.status, "succeeded");
+    assert.deepEqual(h.calls.map(call => call.model), ["test-provider/reviewer-model", "test-provider/different-model"]);
+    assert.equal(h.repository.getAgent(result.details.agentId)!.model, "test-provider/different-model", "The run record adopts the model that actually executed");
+    assert.match(finished.content[0].text, /Model: test-provider\/different-model/);
+    assert.match(h.inspector(result.details.agentId), /test-provider\/different-model/);
+    h.replies.push({ text: "Later evidence." });
+    const later = await h.launch({ subagent_type: "reviewer", model: "primary" });
+    await h.finish(later.details.runId);
+    assert.equal(h.calls[2]!.model, "test-provider/different-model", "The recorded cooldown skips the failed candidate before any provider request");
+    assert.match(later.content[0].text, /Fallback: skipped test-provider\/reviewer-model \(cooling down/);
   },
   "ACC-SA-08-01": async ({ t, scenario, text }) => {
     const h = await configurationHarness(t); await h.start(); const goal = await h.goal();
@@ -276,6 +297,6 @@ const bindings: ScenarioBindings = {
 };
 
 runFeatures(["agent-configuration", "goal-integration"], bindings, {
-  "agent-configuration": "8f012c2ffffc07e057dbf02b2e35011e2a2936dbd54ca713cf05d606a51dbe5b",
+  "agent-configuration": "33e453d41e8473ed153b54e858230e530f0029108c12b248401add7af145c3ce",
   "goal-integration": "2a1badb878287c3d944eb8919e710c267461692dc210df7165d9f3e6273b84b3",
 });

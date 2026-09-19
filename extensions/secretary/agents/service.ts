@@ -15,6 +15,8 @@ export interface LaunchSpec {
   launchKey: string;
   definition: AgentDefinition;
   model: string;
+  /** Ordered fallback candidates remaining after `model` (architecture §5.3). */
+  modelCandidates?: string[];
   thinkingLevel?: string;
   tools: string[];
   prompt: string;
@@ -37,6 +39,8 @@ export interface ServiceOptions {
   currentTools?: () => readonly string[];
   resumeOrigin?: (previous: AgentRun) => GoalOrigin;
   validateResume?: (agent: AgentRecord) => Promise<void>;
+  /** Records an availability failure for a model candidate in the per-session cache. */
+  availability?: (id: string, resetAt?: number) => void;
   diagnostic?: (error: unknown) => void;
 }
 interface Active { controller: AbortController; child?: RunningChild; done: Promise<void> }
@@ -180,7 +184,7 @@ export class AgentService {
     const agentId = `agent_${randomUUID()}`;
     const agent: AgentRecord = {
       agentId, parentId: this.options.parentId, name: spec.name, definition: spec.definition,
-      model: spec.model, thinkingLevel: spec.thinkingLevel, tools: spec.tools,
+      model: spec.model, ...(spec.modelCandidates?.length ? { modelCandidates: spec.modelCandidates } : {}), thinkingLevel: spec.thinkingLevel, tools: spec.tools,
       cwd: this.options.ctx.cwd, configCwd: this.options.ctx.cwd,
       resumable: spec.definition.resumable, requestedWorktree, createdAt: Date.now(),
     };
@@ -262,6 +266,13 @@ export class AgentService {
         authorize: () => {
           if (entry.controller.signal.aborted || this.closed) throw new Error("Child execution is stopping.");
           this.options.authorize?.(this.run(runId));
+        },
+        availability: (id, resetAt) => { this.options.availability?.(id, resetAt); },
+        model: id => {
+          const a = this.resolve(agent.agentId);
+          if (a.model === id) return;
+          a.model = id; a.modelCandidates = [];
+          this.repo.putAgent(a); this.projectAgent(a);
         },
       };
       entry.child = await (this.options.runner ?? createChildRunner)({ agent, run, ctx: this.options.ctx,

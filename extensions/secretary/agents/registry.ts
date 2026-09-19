@@ -3,13 +3,13 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG_DIR_NAME, parseFrontmatter, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { MODEL_ALIASES, isExactModelIdentifier, type AgentConfiguration, type AgentModelAlias } from "./configuration.ts";
+import { FALLBACK_LIST_NAME, isExactModelIdentifier, type AgentConfiguration } from "./configuration.ts";
+import { ModelAvailability } from "./availability.ts";
 import type { AgentDefinition } from "./records.ts";
 
 const fields = new Set(["name", "description", "tools", "disallowedTools", "model", "maxTurns", "background", "isolation"]);
 const safeName = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const hash = (content: string) => createHash("sha256").update(content).digest("hex");
-const isAlias = (value: string): value is AgentModelAlias => (MODEL_ALIASES as readonly string[]).includes(value);
 
 function tools(value: unknown, field: string): string[] {
   const list = typeof value === "string" ? value.split(",").map((item) => item.trim()) : value;
@@ -31,7 +31,7 @@ function definition(content: string, source: string): AgentDefinition {
   const result: AgentDefinition = { name: data.name, description: data.description, prompt: body.trim() ? body : "", source, hash: hash(content), resumable: true };
   for (const key of ["tools", "disallowedTools"] as const) if (Object.hasOwn(data, key)) result[key] = tools(data[key], `${source}: ${key}`);
   if (Object.hasOwn(data, "model")) {
-    if (typeof data.model !== "string" || !(data.model === "inherit" || isAlias(data.model) || isExactModelIdentifier(data.model))) throw new Error(`${source}: invalid model; expected alias, inherit, or provider/modelId`);
+    if (typeof data.model !== "string" || !(data.model === "inherit" || isExactModelIdentifier(data.model) || FALLBACK_LIST_NAME.test(data.model))) throw new Error(`${source}: invalid model; expected inherit, provider/modelId, or a fallback list name`);
     result.model = data.model;
   }
   if (Object.hasOwn(data, "maxTurns")) {
@@ -78,29 +78,60 @@ export function discoverAgents(cwd: string, agentDir: string, trusted: boolean):
   return result;
 }
 
+export interface ModelResolution {
+  /** The selected candidate. */
+  model: Model<Api>;
+  /** The selected candidate's exact provider/modelId identifier. */
+  id: string;
+  /** The full ordered candidate chain the selection came from. */
+  chain: string[];
+  /** Candidates skipped before the selection, with their failure reasons. */
+  skipped: { id: string; reason: string }[];
+}
+
+/**
+ * Resolve a definition or invocation model value into an ordered candidate chain and
+ * select the first available candidate (architecture §5.3). A value is interpreted as
+ * `inherit`, then matched against models available in the session, then treated as a
+ * fallback-list name. Candidates are checked in order against the availability cache,
+ * the model registry, the parent's scoped models, and credential availability; the
+ * first candidate passing every check is selected. When every candidate fails, the
+ * error lists each attempted model and its reason. No fuzzy matching, no silent fallback.
+ */
 export async function resolveAgentModel(
   definition: AgentDefinition,
-  alias: AgentModelAlias | undefined,
+  requested: string | undefined,
   config: AgentConfiguration,
   ctx: Pick<ExtensionContext, "model" | "modelRegistry" | "scopedModels">,
-): Promise<Model<Api>> {
-  let requested: string | undefined = alias ?? definition.model;
-  if (alias !== undefined && !isAlias(alias)) throw new Error(`Unsupported Agent.model alias: ${alias}`);
-  if (requested && isAlias(requested)) {
-    const mapping = config.modelAliases[requested];
-    if (!mapping) throw new Error(`Missing agents.modelAliases.${requested} configuration`);
-    requested = mapping;
-  }
-  if (!requested || requested === "inherit") {
+  availability?: ModelAvailability,
+): Promise<ModelResolution> {
+  const value = requested ?? definition.model;
+  let chain: string[];
+  if (!value || value === "inherit") {
     if (!ctx.model) throw new Error("No parent model is available to inherit");
-    requested = `${ctx.model.provider}/${ctx.model.id}`;
+    chain = [`${ctx.model.provider}/${ctx.model.id}`];
+  } else if (isExactModelIdentifier(value)) {
+    chain = [value];
+  } else {
+    const list = config.modelFallbackLists[value];
+    if (!list) throw new Error(`Unknown model fallback list: ${value}`);
+    if (!list.length) throw new Error(`Model fallback list is empty: ${value}`);
+    chain = [...list];
   }
-  if (!isExactModelIdentifier(requested)) throw new Error(`Invalid exact model identifier: ${requested}`);
-  const slash = requested.indexOf("/");
-  const model = ctx.modelRegistry.find(requested.slice(0, slash), requested.slice(slash + 1));
-  if (!model) throw new Error(`Model unavailable: ${requested}`);
-  if (ctx.scopedModels.length && !ctx.scopedModels.some((entry) => entry.model.provider === model.provider && entry.model.id === model.id)) throw new Error(`Model outside parent scoped models: ${requested}`);
-  const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-  if (!auth.ok) throw new Error(`Authentication unavailable for ${requested}: ${auth.error}`);
-  return model;
+  const skipped: { id: string; reason: string }[] = [];
+  for (const id of chain) {
+    const cooling = availability?.unavailable(id);
+    if (cooling) { skipped.push({ id, reason: cooling }); continue; }
+    const slash = id.indexOf("/");
+    const model = ctx.modelRegistry.find(id.slice(0, slash), id.slice(slash + 1));
+    if (!model) { skipped.push({ id, reason: "model unavailable" }); continue; }
+    if (ctx.scopedModels.length && !ctx.scopedModels.some(entry => entry.model.provider === model.provider && entry.model.id === model.id)) {
+      skipped.push({ id, reason: "outside parent scoped models" });
+      continue;
+    }
+    const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+    if (!auth.ok) { skipped.push({ id, reason: `authentication unavailable: ${auth.error}` }); continue; }
+    return { model, id, chain, skipped };
+  }
+  throw new Error(`No model candidate is available for ${value ?? "inherit"}: ${skipped.map(s => `${s.id} (${s.reason})`).join("; ")}`);
 }

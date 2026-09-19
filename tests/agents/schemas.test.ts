@@ -6,8 +6,8 @@ import { agentSchema, createAgentSchema, sendMessageSchema, taskStopSchema, task
 test("Agent contract is strict without resume or turn-limit inputs", () => {
   const valid = { prompt: "Do work", description: "Task" };
   assert.equal(Value.Check(agentSchema, valid), true);
-  for (const model of ["sonnet", "opus", "haiku", "fable"]) assert.equal(Value.Check(agentSchema, { ...valid, model }), true);
-  for (const extra of [{ resume: "id" }, { max_turns: 2 }, { model: "p/id" }, { unknown: true }, { name: "../bad" }, { name: "a".repeat(65) }]) assert.equal(Value.Check(agentSchema, { ...valid, ...extra }), false);
+  for (const model of ["fast", "provider/model", "inherit"]) assert.equal(Value.Check(agentSchema, { ...valid, model }), true);
+  for (const extra of [{ resume: "id" }, { max_turns: 2 }, { model: 42 }, { unknown: true }, { name: "../bad" }, { name: "a".repeat(65) }]) assert.equal(Value.Check(agentSchema, { ...valid, ...extra }), false);
   assert.equal(Value.Check(agentSchema, { prompt: "Do work" }), false);
   assert.equal(Value.Check(agentSchema, { ...valid, isolation: "worktree", team_name: "unused", mode: "plan" }), true);
   assert.equal(Value.Check(agentSchema, { ...valid, isolation: "remote" }), false);
@@ -17,19 +17,19 @@ test("Agent contract is strict without resume or turn-limit inputs", () => {
   assert.equal(Object.hasOwn(agentSchema.properties.run_in_background, "default"), false);
 });
 
-test("Agent advertises no model override without configured aliases", () => {
+test("Agent exposes a free-form model field when no fallback lists are configured", () => {
   const schema = createAgentSchema({});
-  assert.equal(Object.hasOwn(schema.properties, "model"), false);
-  assert.equal(Value.Check(schema, { prompt: "Do work", description: "Task" }), true);
-  assert.equal(Value.Check(schema, { prompt: "Do work", description: "Task", model: "sonnet" }), false);
+  assert.equal(Object.hasOwn(schema.properties, "model"), true);
+  assert.equal(Object.hasOwn(schema.properties.model, "enum"), false);
+  assert.equal(Value.Check(schema, { prompt: "Do work", description: "Task", model: "provider/anything" }), true);
   assert.equal(Object.hasOwn(agentSchema.properties, "model"), true, "The baseline schema is not mutated");
 });
 
-test("Agent advertises only explicitly configured model aliases", () => {
-  const schema = createAgentSchema({ opus: "test/configured-model" });
-  assert.deepEqual(Reflect.get(schema.properties.model, "enum"), ["opus"]);
-  assert.equal(Value.Check(schema, { prompt: "Do work", description: "Task", model: "sonnet" }), false);
-  assert.equal(Value.Check(schema, { prompt: "Do work", description: "Task", model: "opus" }), true);
+test("Agent advertises only configured fallback list names", () => {
+  const schema = createAgentSchema({ fast: ["test/configured-model"] });
+  assert.deepEqual(Reflect.get(schema.properties.model, "enum"), ["fast"]);
+  assert.equal(Value.Check(schema, { prompt: "Do work", description: "Task", model: "fast" }), true);
+  assert.equal(Value.Check(schema, { prompt: "Do work", description: "Task", model: "other" }), false);
 });
 
 test("SendMessage enforces string-only profile and display bounds", () => {
