@@ -11,6 +11,8 @@ import { installSecretary } from "../../extensions/secretary/index.ts";
 export async function discoverySession(t: TestContext, options: {
   setup?: (root: string, agentDir: string) => Promise<void>;
   respond?: (context: Context, index: number) => Promise<AssistantMessage["content"]>;
+  respondChild?: (context: Context, index: number, signal?: AbortSignal) => Promise<AssistantMessage["content"]>;
+  mode?: "print" | "rpc";
   extension?: (pi: ExtensionAPI) => void;
   trusted?: boolean;
 } = {}) {
@@ -36,7 +38,7 @@ export async function discoverySession(t: TestContext, options: {
     systemPromptOverride: () => "Use only isolated fixtures.",
     extensionFactories: [pi => {
       pi.registerProvider(model.provider, { api: model.api, baseUrl: model.baseUrl, apiKey: "fixture", models: [model],
-        streamSimple(m, context) {
+        streamSimple(m, context, request) {
           const parent = context.tools?.some(tool => tool.name === "Agent") ?? false;
           const calls = parent ? parentCalls : childCalls;
           calls.push({ ...context, messages: structuredClone(context.messages),
@@ -45,11 +47,17 @@ export async function discoverySession(t: TestContext, options: {
           const stream = createAssistantMessageEventStream();
           void (async () => {
             const message: AssistantMessage = { role: "assistant", api: m.api, model: m.id, provider: m.provider,
-              content: parent && options.respond ? await options.respond(context, index) : [{ type: "text", text: "Fixture result." }],
+              content: parent && options.respond ? await options.respond(context, index)
+                : !parent && options.respondChild ? await options.respondChild(context, index, request?.signal)
+                : [{ type: "text", text: "Fixture result." }],
               stopReason: "stop", timestamp: Date.now(), usage: { input: 1, output: 1, totalTokens: 2, cacheRead: 0, cacheWrite: 0,
                 cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
             if (message.content.some(block => block.type === "toolCall")) message.stopReason = "toolUse";
-            stream.push({ type: "done", reason: message.stopReason as "stop" | "toolUse", message }); stream.end();
+            if (request?.signal?.aborted) {
+              message.stopReason = "aborted";
+              stream.push({ type: "error", reason: "aborted", error: message });
+            } else stream.push({ type: "done", reason: message.stopReason as "stop" | "toolUse", message });
+            stream.end();
           })().catch(error => { errors.push(error); stream.end(); });
           return stream;
         } });
@@ -60,7 +68,7 @@ export async function discoverySession(t: TestContext, options: {
   assert.deepEqual(loader.getExtensions().errors, []);
   const { session } = await createAgentSession({ cwd: root, agentDir, resourceLoader: loader, sessionManager: manager,
     settingsManager: settings, modelRuntime: runtime, model, thinkingLevel: "off" });
-  await session.bindExtensions({ mode: "print", onError: error => errors.push(error) });
+  await session.bindExtensions({ mode: options.mode ?? "print", onError: error => errors.push(error) });
   t.after(async () => {
     await session.abort();
     await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });

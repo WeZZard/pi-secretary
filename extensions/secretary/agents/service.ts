@@ -14,6 +14,7 @@ import { liveChildService } from "./live-services.ts";
 
 export interface LaunchSpec {
   launchKey: string;
+  parentEntryId?: string;
   definition: AgentDefinition;
   model: string;
   /** Ordered fallback candidates remaining after `model` (architecture §5.3). */
@@ -49,6 +50,8 @@ export interface ServiceOptions {
   /** Records an availability failure for a model candidate in the per-session cache. */
   availability?: (id: string, resetAt?: number) => void;
   diagnostic?: (error: unknown) => void;
+  branchDisposition?: (run: AgentRun) => "visible" | "outside" | "unknown";
+  admissionEntry?: () => string | undefined;
 }
 interface Active { controller: AbortController; child?: RunningChild; done: Promise<void> }
 const rejected = (message: string): Error & { definitive: true } => Object.assign(new Error(message), { definitive: true as const });
@@ -153,8 +156,22 @@ export class AgentService {
     if (!events.some(e => e.id === record.id)) events.push(record);
     this.projectionUsage.set(record.runId, events);
   }
+  isVisible(run: AgentRun): boolean { return !this.options.branchDisposition || this.options.branchDisposition(run) === "visible"; }
   list(): AgentSnapshot[] {
-    return this.projectionAgents.map(agent => ({ agent, run: (this.projectionRuns.get(agent.agentId) ?? []).at(-1) }));
+    return this.projectionAgents.flatMap(agent => {
+      const runs = this.projectionRuns.get(agent.agentId) ?? [];
+      const run = runs.filter(run => this.isVisible(run)).at(-1);
+      return run || !this.options.branchDisposition ? [{ agent, run }] : [];
+    });
+  }
+  /** Navigation cancels only proven abandoned admissions, never unknown legacy work. */
+  async reconcileBranch(): Promise<void> {
+    for (const run of this.repo.runs(this.options.parentId)) {
+      if (!TERMINAL_STATUSES.has(run.status) && this.options.branchDisposition?.(run) === "outside") {
+        await this.stop(run.runId, `rewind:${run.runId}`);
+      }
+    }
+    this.changed();
   }
   /** Immutable widget rows; consumers render them without deriving state or usage. */
   viewModels(): AgentRowView[] {
@@ -184,7 +201,7 @@ export class AgentService {
         visited.add(child.agent.agentId); result.push(child); visit(child.agent.agentId);
       }
     };
-    for (const snapshot of own) visit(snapshot.agent.agentId);
+    for (const snapshot of own) if (!this.savedConversationAdvanced(snapshot.agent.agentId)) visit(snapshot.agent.agentId);
     return result;
   }
   /** Tree view of viewModels(); the fleet view overlay drills into these rows. */
@@ -204,8 +221,13 @@ export class AgentService {
         visited.add(row.agentId); result.push(row); visit(row.agentId);
       }
     };
-    for (const row of own) visit(row.agentId);
+    for (const row of own) if (!this.savedConversationAdvanced(row.agentId)) visit(row.agentId);
     return result;
+  }
+  private savedConversationAdvanced(agentId: string): boolean {
+    const runs = this.projectionRuns.get(agentId) ?? [];
+    const selected = runs.filter(run => this.isVisible(run)).at(-1);
+    return !!selected && selected.runId !== runs.at(-1)?.runId;
   }
   private childrenOf(agentId: string): AgentSnapshot[] {
     const live = liveChildService(agentId);
@@ -228,9 +250,11 @@ export class AgentService {
     return result;
   }
   resolve(ref: string): AgentRecord {
-    const own = this.repo.agents(this.options.parentId).find(a => a.agentId === ref || a.name === ref);
-    if (own) return own;
-    const descendant = this.treeAgents().find(a => a.parentId !== this.options.parentId && (a.agentId === ref || a.name === ref));
+    const own = this.repo.getAgent(ref);
+    if (own?.parentId === this.options.parentId) return own;
+    const named = this.tree().find(s => s.agent.name === ref)?.agent;
+    if (named) return named;
+    const descendant = this.treeAgents().find(a => a.parentId !== this.options.parentId && a.agentId === ref);
     if (descendant) return descendant;
     throw rejected(`Agent not found in this parent session: ${ref}`);
   }
@@ -241,6 +265,11 @@ export class AgentService {
     const run = this.repo.runs(agent.parentId).filter(r => r.agentId === agent.agentId).at(-1);
     if (!run) throw new Error("Agent has no execution record.");
     return run;
+  }
+  /** Name/agent inspection follows branch visibility; exact run IDs retain historical access. */
+  inspectRun(ref: string): AgentRun {
+    const selected = this.tree().find(s => s.agent.agentId === ref || s.agent.name === ref)?.run;
+    return selected ?? this.run(ref);
   }
   /** The live service of the delegating agent's session, when a nested agent's owner is running. */
   private liveOwner(agent: AgentRecord): AgentService | undefined {
@@ -273,29 +302,31 @@ export class AgentService {
     const agentId = `agent_${randomUUID()}`;
     const agent: AgentRecord = {
       agentId, parentId: this.options.parentId, name: spec.name, definition: spec.definition,
+      ...(spec.parentEntryId ? { nameScope: spec.parentEntryId } : {}),
       ...(spec.parentAgentId !== undefined ? { parentAgentId: spec.parentAgentId } : {}),
       depth: depth + 1,
       model: spec.model, ...(spec.modelCandidates?.length ? { modelCandidates: spec.modelCandidates } : {}), thinkingLevel: spec.thinkingLevel, tools: spec.tools,
       cwd: this.options.ctx.cwd, configCwd: this.options.ctx.cwd,
       resumable: spec.definition.resumable, requestedWorktree, createdAt: Date.now(),
     };
-    const run = this.newRun(agent, spec.prompt, spec.description, spec.background, spec.launchKey, spec.goal);
+    const run = this.newRun(agent, spec.prompt, spec.description, spec.background, spec.launchKey, spec.goal, spec.parentEntryId);
     this.options.authorize?.(run);
     this.repo.transaction(() => {
-      if (spec.name && this.repo.agents(this.options.parentId).some(a => a.name === spec.name)) throw new Error(`Agent name already exists: ${spec.name}`);
+      if (spec.name && this.list().some(s => s.agent.name === spec.name)) throw new Error(`Agent name already exists: ${spec.name}`);
       this.repo.putAgent(agent); this.repo.putRun(run);
     });
     this.projectAgent(agent); this.projectRun(run);
     this.changed(); this.drain();
     return { agent, run };
   }
-  private newRun(agent: AgentRecord, prompt: string, description: string, background: boolean, launchKey: string, goal?: GoalOrigin): AgentRun {
+  private newRun(agent: AgentRecord, prompt: string, description: string, background: boolean, launchKey: string, goal?: GoalOrigin, parentEntryId?: string): AgentRun {
     const runId = `run_${randomUUID()}`;
     const dir = join(this.options.root, "runs", runId);
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const outputPath = join(dir, "output.txt");
     writeFileSync(outputPath, "", { mode: 0o600 });
     return { runId, agentId: agent.agentId, parentId: agent.parentId, launchKey, prompt, description,
+      ...(parentEntryId ? { parentEntryId } : {}),
       status: "queued", background, createdAt: Date.now(), outputPath, output: "", goal,
       toolCount: 0, turnCount: 0, revision: 0 };
   }
@@ -411,7 +442,7 @@ export class AgentService {
       });
     }
   }
-  message(ref: string, text: string, operationId: string, goal?: GoalOrigin): Promise<AgentRun> {
+  message(ref: string, text: string, operationId: string, goal?: GoalOrigin, admissionEntryId?: string): Promise<AgentRun> {
     let agent: AgentRecord;
     try { agent = this.resolve(ref); } catch (error) { return Promise.reject(error); }
     const owner = this.liveOwner(agent);
@@ -421,13 +452,14 @@ export class AgentService {
       return Promise.reject(rejected("The owning child session is unavailable; wait for the run to settle or stop its delegating agent."));
     }
     const id = agent.agentId;
+    const parentEntryId = admissionEntryId ?? this.options.admissionEntry?.();
     const prior = this.messages.get(id) ?? Promise.resolve();
-    const operation = prior.catch(() => {}).then(() => this.acceptMessage(id, text, operationId, goal));
+    const operation = prior.catch(() => {}).then(() => this.acceptMessage(id, text, operationId, goal, parentEntryId));
     this.messages.set(id, operation);
     void operation.finally(() => { if (this.messages.get(id) === operation) this.messages.delete(id); }).catch(() => {});
     return operation;
   }
-  private async acceptMessage(ref: string, text: string, operationId: string, goal?: GoalOrigin): Promise<AgentRun> {
+  private async acceptMessage(ref: string, text: string, operationId: string, goal?: GoalOrigin, parentEntryId?: string): Promise<AgentRun> {
     if (!text.trim()) throw rejected("Message must be nonempty.");
     if (this.closed) throw rejected("Agent controller is shutting down.");
     const receipt = this.repo.receipt(this.options.parentId, operationId) as { runId: string } | undefined;
@@ -453,12 +485,16 @@ export class AgentService {
       if (latest.worktree && latest.worktree.state !== "allocated") throw rejected("Worktree cleanup prevents resumption.");
     }
     const previous = this.run(agent.agentId);
+    if (agent.parentId === this.options.parentId && (!this.isVisible(previous)
+      || (parentEntryId && !this.isVisible({ ...previous, parentEntryId })))) {
+      throw rejected("The agent's saved conversation or this operation belongs to another branch. Return to that branch or launch a fresh agent.");
+    }
     if (!active && previous.goal && !goal) {
       if (!this.options.resumeOrigin) throw rejected("Resuming goal-attributed work requires current goal authorization.");
       try { goal = this.options.resumeOrigin(previous); }
       catch (error) { throw rejected(String(error)); }
     }
-    const run = active ?? this.newRun(agent, text, `Resume ${agent.name ?? agent.definition.name}`, true, `message:${operationId}`, goal);
+    const run = active ?? this.newRun(agent, text, `Resume ${agent.name ?? agent.definition.name}`, true, `message:${operationId}`, goal, parentEntryId);
     try { this.options.authorize?.(run); } catch (error) { throw rejected(String(error)); }
     this.repo.transaction(() => {
       if (!active) this.repo.putRun(run);
@@ -517,6 +553,11 @@ export class AgentService {
   }
   async transcript(ref: string): Promise<readonly TranscriptEvent[]> {
     const a = this.resolve(ref);
+    const selected = this.inspectRun(a.agentId);
+    if (selected.runId !== this.run(a.agentId).runId) {
+      return [{ kind: "notice", tone: "muted", text: "This branch's retained execution output is shown below. The saved child conversation advanced on another branch; launch a fresh agent to continue here." },
+        { kind: "assistant", text: selected.output || selected.error || "No retained output." }];
+    }
     const guidance = this.repo.runs(a.parentId).filter(run => run.agentId === a.agentId)
       .flatMap(run => this.repo.guidance(run.runId)).filter(item => item.state !== "consumed").slice(-20)
       .map(item => guidanceNotice(item));
@@ -569,7 +610,7 @@ export class AgentService {
   }
   receipt(id: string): unknown { return this.repo.receipt(this.options.parentId, id); }
   findLaunch(id: string): AgentRun | undefined { return this.repo.findLaunch(this.options.parentId, id); }
-  pendingCompletions() { return this.repo.completions(this.options.parentId).filter(c => c.state !== "observed"); }
+  pendingCompletions() { return this.repo.completions(this.options.parentId).filter(c => c.state !== "observed" && this.isVisible(this.run(c.runId))); }
   recordDelivery(id: string, state: "submitted" | "observed" | "uncertain"): void {
     const d = this.repo.completions(this.options.parentId).find(c => c.id === id);
     if (d) this.repo.putCompletion({ ...d, state });

@@ -165,7 +165,7 @@ interface AgentInput {
 
 - The description and prompt are required strings. Empty or whitespace-only values fail runtime validation.
 - Omitted `subagent_type` resolves to the enabled `general-purpose` definition. An explicit unknown type fails.
-- Names follow the researched 64-character pattern and reserved-recipient restrictions. Names are unique within the parent session and remain reserved while their agent record exists.
+- Names follow the researched 64-character pattern and reserved-recipient restrictions. Names are unique among the parent session's branch-visible agents. Abandoned admissions retain their identities but do not reserve names on a sibling branch. Section 6.4 defines the durable uniqueness key and visibility rules.
 - Type matching is exact. The implementation does not silently convert an unknown specialist into a general-purpose agent.
 - An explicit isolation field takes precedence over the definition's isolation. If neither specifies isolation, execution uses the parent's working directory. Requested worktree isolation is never silently downgraded.
 - The `manual` permission-mode compatibility spelling is normalized to `default` before validation, but the field remains ignored.
@@ -422,7 +422,7 @@ These cases define verification obligations. `tests/agents/discovery.test.ts` an
 
 | Entity | Key fields and responsibility |
 | --- | --- |
-| `AgentRecord` | It stores `agentId`, parent session identity, parent agent identity for nested delegation, optional name, definition snapshot, model, tool policy, session path, resumability, and optional worktree ID. |
+| `AgentRecord` | It stores `agentId`, parent session identity, parent agent identity for nested delegation, optional name and immutable admission name scope, definition snapshot, model, tool policy, session path, resumability, and optional worktree ID. |
 | `AgentRun` | It stores `runId`, `agentId`, status, launch origin, timestamps, output paths, partial-result metadata, and error or cancellation reason. |
 | `GuidanceRecord` | It stores an accepted guidance ID, target run, order, text, and delivery state. States distinguish pending, transport-accepted, consumed when provable, undelivered, and uncertain. |
 | `UsageRecord` | It stores a unique source event ID, run identity, normalized usage, and optional originating goal identity. |
@@ -456,8 +456,21 @@ An agent ID names a conversation. A run ID names one execution. A source tool-ca
 
 - Parent session identity, not the working directory, is the ownership boundary.
 - A new or forked parent session does not inherit control of the source session's agent records.
-- Navigation within one parent session tree does not rewind external agent execution. The inspector lists owned agents across that session, and current context identifies pending work without fabricating history on the selected branch.
+- Navigation within one parent session tree does not undo external execution. Durable ownership remains session-wide, while context, fleet navigation, and name resolution follow selected-branch admission ancestry. The [rewind interaction](../ux/subagents.md#52-rewind-the-parent-conversation) defines the user-facing behavior.
 - Historical tool calls are never executed merely because a transcript is replayed or a branch is selected.
+
+#### 6.4.1 Branch visibility and rewind cancellation
+
+- The user selected cancellation of abandoned work on 2026-09-20. This implements [SA-05](../user-stories/subagents.md#sa-05-retain-and-recover-conversations). The [investigation](../research/subagent-session-rewind.md) records the reproduced context leak and the independent name conflict.
+- Each new run retains an immutable `parentEntryId`. Tool admissions use the structured generating assistant entry; direct UI admissions use the selected leaf. `AgentBranchScope` compares that identity with the full selected ancestry, rather than the compacted model context. A missing generating tool entry is rejected instead of inventing provenance.
+- The service selects each agent's latest visible run for current context, fleet rows, name resolution, and named output inspection. Exact owned agent and run identifiers retain historical access and cleanup authority. Tool output labels an explicitly requested off-branch run as historical execution.
+- Agent operation keys contain both the generating assistant entry and tool-call ID. Messaging and cancellation receipts use the same admission-scoped identity. Retrying an accepted operation is idempotent; a sibling branch can reuse a provider's tool-call ID without reusing the earlier execution.
+- New agents retain an immutable `nameScope` equal to their admission entry. The repository serializes `[nameScope, name]` into the existing SQL uniqueness column while keeping the public name in the record payload. The service separately rejects collisions among visible names. Legacy index values and all historical rows remain unchanged; no destructive SQL migration is required.
+- `session_tree` clears catalog authority and reconciles branch visibility. Each proven-outside nonterminal run receives an idempotent stop request. A shared-ancestor run is retained. Cancellation remains pending until execution settles; statuses, usage, output, and filesystem effects are never rolled back.
+- Completion callbacks and pending-outcome enumeration require current visibility. Context preparation also removes stale completion messages whose run is not visible, protecting against previously queued messages. This does not retract messages already displayed or claim to cancel a parent turn already handed to pi before navigation.
+- A resumption records its own admission entry. If the saved child conversation's latest run is outside the selected ancestry, further messaging is refused rather than resuming a future transcript. Inspection shows the retained earlier output with a notice, and the advanced descendant roster is omitted. Child transcript rollback is not implemented.
+- For legacy runs, provenance recovery accepts only a unique structured historical `Agent` or resumption `SendMessage` call matching the stored operation key. It never searches arbitrary output text for identifiers. Unknown provenance is excluded from current state and does not authorize automatic cancellation.
+- Verification covers repeated launches, same-name and repeated-call-ID isolation, returning to the old branch, shared ancestry, live cancellation and completion suppression, resumption rejection, compacted ancestry, reopened JSONL ancestry, and conservative legacy handling. The verification report distinguishes these checks from process-restart and hosted-provider coverage.
 
 ## 7. Execution Lifecycle
 

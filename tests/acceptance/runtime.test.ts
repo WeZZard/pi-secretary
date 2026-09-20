@@ -73,7 +73,10 @@ const bindings: ScenarioBindings = {
     assert.match(JSON.stringify(h.calls[0]), /CHILD_EXPLICIT_TASK_285/);
     assert.match(h.calls[0]!.systemPrompt ?? "", /name the violet satellite/);
     assert.doesNotMatch(JSON.stringify(h.calls[0]), /PARENT_PRIVATE_SENTENCE_94721/);
-    assert.deepEqual(h.entries, before.entries); assert.equal(h.ctx.model, before.model); assert.deepEqual(h.pi.getActiveTools(), before.tools);
+    assert.deepEqual(h.entries.slice(0, before.entries.length), before.entries);
+    assert.equal(h.entries.length, before.entries.length + 1, "only the parent admission is appended, not the child's transcript");
+    assert.equal(h.entries.at(-1).message.content[0].name, "Agent");
+    assert.equal(h.ctx.model, before.model); assert.deepEqual(h.pi.getActiveTools(), before.tools);
     assert.equal(h.engine.service.getGoal("parent"), null);
   },
   "ACC-SA-01-05": async ({ t, text }) => {
@@ -331,13 +334,25 @@ const bindings: ScenarioBindings = {
     h.entries.push({ type: "custom_message", customType: "secretary:agent-completion", details: { deliveryId: `completion:${a.run!.runId}` } });
     await h.start(); assert.equal(h.repository.completions("parent")[0]!.state, "observed"); assert.equal(h.sent.filter(s => s.delivery?.triggerTurn).length, 0); assert.equal(h.calls.length, 0);
   },
-  "ACC-SA-05-08": async ({ t }) => {
-    const h = await publicHarness(t); await h.start(); const a = await h.tool("Agent", { ...task, run_in_background: true }); await h.call();
+  "ACC-SA-05-08": async ({ t, text }) => {
+    const h = await publicHarness(t); await h.start(); const a = await h.tool("Agent", { ...task, name: "repeat", run_in_background: true }); const child = await h.call();
+    const finished = text.includes("finished agent");
+    if (finished) { child.finish(); await h.outcome(a.details.runId); }
     const before = h.repository.getRun(a.details.runId)!;
+    const retained = [...h.entries];
     await h.emit("session_before_tree", { preparation: { targetId: "earlier-entry" } }); h.entries.splice(0);
     await h.emit("session_tree", { newLeafId: "earlier-entry", oldLeafId: "launch-entry" });
-    const context = await h.emit("context", { messages: [] }); assert.match(JSON.stringify(context), new RegExp(a.details.agentId)); assert.match(JSON.stringify(context), /running/);
-    assert.deepEqual(h.repository.getRun(a.details.runId), before); assert.equal(h.calls.length, 1);
+    if (!finished) await turn();
+    const context = await h.emit("context", { messages: [] }); assert.ok(!JSON.stringify(context).includes(a.details.agentId));
+    if (finished) assert.deepEqual(h.repository.getRun(a.details.runId), before);
+    else assert.ok(["cancelled", "cancelling"].includes(h.repository.getRun(a.details.runId)!.status));
+    assert.equal(h.calls.length, 1, "navigation does not replay execution");
+    const fresh = await h.tool("Agent", { ...task, name: "repeat", run_in_background: true });
+    assert.notEqual(fresh.details.agentId, a.details.agentId);
+    h.entries.splice(0, h.entries.length, ...retained);
+    await h.emit("session_tree", { newLeafId: retained.at(-1)?.id });
+    const restored = JSON.stringify(await h.emit("context", { messages: [] }));
+    assert.ok(restored.includes(a.details.agentId)); assert.ok(!restored.includes(fresh.details.agentId));
   },
   "ACC-SA-09-01": async ({ t }) => {
     const h = await publicHarness(t); await h.start(); const a = await h.tool("Agent", { ...task, run_in_background: true }); (await h.call()).partial("Partial output now"); await turn();
@@ -405,6 +420,6 @@ runFeatures(["delegation", "messaging", "cancellation", "session-recovery", "out
   delegation: "d02d850b85e528e20e965ddbb442a76bf3dc8b807460d50dd04ab26e08710c6d",
   messaging: "92bdf9ed1c321276fdb56c19ffc08e4eb7d591518741015a1689d561aa2f5555",
   cancellation: "19f34013acff66973c725eeb33afbc16248c527ce8b79bef06d3a1deace09709",
-  "session-recovery": "c61448a5697766d789537c4d869a16f55c3a4504fd42213a601f19aad4a42773",
+  "session-recovery": "3c682dcd45aeeed7daf574682707ac507ca3e9fbcb44366e131c3e093b820568",
   "output-and-headless": "28b939d53e04305786f49d97daeb5efb2911747bea9d58f7245d77fabfaca244",
 });

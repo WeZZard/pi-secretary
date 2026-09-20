@@ -67,9 +67,17 @@ Feature: Retain agent evidence without continuing execution after exit
     And no duplicate automatic follow-up turn is requested for the same completion.
 
   @ACC-SA-05-08 @proposed
-  Scenario: Keep external execution state when navigating parent history.
-    Given a parent session owns an active agent.
-    When the user navigates to an earlier branch of that parent's conversation tree.
-    Then the agent's execution state is not rewound.
+  Scenario Outline: Retain execution history without presenting abandoned work as current work.
+    Given a parent session owns a <state> agent.
+    When the user navigates to a branch before that agent was launched.
+    Then the agent is excluded from the current context and fleet.
+    And any unfinished abandoned execution receives a cancellation request.
+    And finished statuses, output, usage, and filesystem effects are not rolled back.
     And historical launch calls are not executed again.
-    And the current-session inspector continues to identify the owned active work.
+    And a new launch can reuse the abandoned agent's name without reusing its execution.
+    And returning to the original branch shows its retained execution history.
+
+    Examples:
+      | state    |
+      | running  |
+      | finished |

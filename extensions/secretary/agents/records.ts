@@ -59,6 +59,8 @@ export interface AgentRecord {
    */
   depth?: number;
   name?: string;
+  /** Admission entry used to namespace the name index across conversation branches. */
+  nameScope?: string;
   definition: AgentDefinition;
   model: string;
   /** Ordered fallback candidates remaining after `model` (architecture §5.3). Ignored on resumption, which retains the recorded model. */
@@ -79,6 +81,8 @@ export interface AgentRun {
   agentId: string;
   parentId: string;
   launchKey: string;
+  /** Parent session entry that admitted this execution; absent on legacy records. */
+  parentEntryId?: string;
   prompt: string;
   description: string;
   status: RunStatus;

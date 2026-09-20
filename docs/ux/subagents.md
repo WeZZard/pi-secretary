@@ -408,6 +408,15 @@ sequenceDiagram
 - Messaging and confirmation views retain the same complete top rule and side borders as the inspector, including the title embedded in the top rule.
 - Message drafts are not restored after leaving or replacing the parent UI session in this release.
 
+### 5.2 Rewind the parent conversation
+
+- **User intent:** The user returns to an earlier request and tries another approach without presenting later agents' outcomes as work performed for the new request.
+- **Entry conditions:** The parent conversation contains agent launches or resumptions after the point the user wants to revisit.
+- **User action:** The user selects an earlier point in pi's conversation tree and submits a request on that branch.
+- **Observable outcome:** The current fleet and agent context include only work admitted on the selected ancestry. Repeating a request before its launches creates fresh agents, even when their names are reused. Shared-ancestor work remains available. Selecting the old branch restores its retained execution history without starting it again.
+- **Feedback:** Unfinished abandoned work receives a cancellation request. A stop request does not claim that tools have already settled. Abandoned completions do not start a new parent turn after navigation. Explicit inspection by a retained run ID identifies an off-branch result as historical work.
+- **Failure and recovery:** Navigation does not roll back output files, token usage, or changes to the filesystem. A child conversation that advanced on an abandoned branch cannot be resumed from an earlier state; the inspector shows its retained earlier output with an explanation and omits the advanced descendant roster. The user can launch a fresh agent instead. Legacy records without provable launch ancestry are excluded from current work but are not automatically cancelled; explicit owned identifiers remain available for inspection and cleanup.
+
 ## 6. Notifications and Non-TUI Behavior
 
 - Successful completion updates inline history and FleetView without an extra success toast.

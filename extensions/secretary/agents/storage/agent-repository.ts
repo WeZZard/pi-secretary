@@ -29,8 +29,10 @@ export class AgentRepository {
   }
   putAgent(record: AgentRecord): void {
     const old = this.getAgent(record.agentId);
-    if (old && old.parentId !== record.parentId) throw new Error("Agent ownership cannot change");
-    this.db.prepare(`INSERT INTO secretary_agents VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,json=excluded.json`).run(record.agentId, record.parentId, record.name ?? null, JSON.stringify(record), record.parentAgentId ?? null);
+    if (old && (old.parentId !== record.parentId || old.nameScope !== record.nameScope)) throw new Error("Agent ownership or name scope cannot change");
+    // The SQL name column is a uniqueness key, not the display label. Legacy keys
+    // remain untouched; new admissions namespace that key by parent entry ID.
+    this.db.prepare(`INSERT INTO secretary_agents VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,json=excluded.json`).run(record.agentId, record.parentId, record.name === undefined ? null : record.nameScope ? JSON.stringify([record.nameScope, record.name]) : record.name, JSON.stringify(record), record.parentAgentId ?? null);
   }
   getAgent(id: string): AgentRecord | undefined { return this.one("secretary_agents", "id=?", id); }
   agents(parentId: string): AgentRecord[] { return this.many("secretary_agents", "parent_id=?", parentId); }
@@ -41,7 +43,7 @@ export class AgentRepository {
     if (!["queued", "starting", "running", "cancelling", ...TERMINAL_STATUSES].includes(record.status)) throw new Error("Unknown agent run status");
     const old = this.getRun(record.runId);
     if (old && TERMINAL_STATUSES.has(old.status) && old.status !== record.status) throw new Error("Terminal run status cannot change");
-    if (old && (old.agentId !== record.agentId || old.parentId !== record.parentId || old.launchKey !== record.launchKey)) throw new Error("Run identity cannot change");
+    if (old && (old.agentId !== record.agentId || old.parentId !== record.parentId || old.launchKey !== record.launchKey || old.parentEntryId !== record.parentEntryId)) throw new Error("Run identity cannot change");
     this.db.prepare(`INSERT INTO secretary_agent_runs VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,json=excluded.json`).run(record.runId, record.agentId, record.parentId, record.launchKey, record.status, JSON.stringify(record));
   }
   getRun(id: string): AgentRun | undefined { return this.one("secretary_agent_runs", "id=?", id); }

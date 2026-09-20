@@ -9,15 +9,15 @@ import { AgentService, type LaunchSpec } from "../../extensions/secretary/agents
 import { defaultAgentUi } from "../../extensions/secretary/agents/configuration.ts";
 import { AgentRepository } from "../../extensions/secretary/agents/storage/agent-repository.ts";
 import { WorktreeManager } from "../../extensions/secretary/agents/worktrees.ts";
-import type { RunningChild, RunnerHooks } from "../../extensions/secretary/agents/records.ts";
+import type { AgentRun, RunningChild, RunnerHooks } from "../../extensions/secretary/agents/records.ts";
 
-function harness(mode = "tui", concurrent = 1) {
+function harness(mode = "tui", concurrent = 1, branchDisposition?: (run: AgentRun) => "visible" | "outside" | "unknown") {
   const root = mkdtempSync(join(tmpdir(), "secretary-service-"));
   const db = new DatabaseSync(":memory:");
   const repository = new AgentRepository(db);
   const children = new Map<string, { finish: (out?: string) => void; messages: string[]; hooks: RunnerHooks }>();
   let starts = 0;
-  const service = new AgentService({ parentId: "parent", root, repository,
+  const service = new AgentService({ parentId: "parent", root, repository, branchDisposition,
     ctx: { cwd: root, mode } as ExtensionContext,
     config: { modelFallbackLists: {}, ui: defaultAgentUi(), maxConcurrent: concurrent, maxQueued: 2, shutdownTimeoutMs: 1000, maxNestingDepth: 3 },
     runner: async options => {
@@ -37,6 +37,39 @@ function harness(mode = "tui", concurrent = 1) {
   return { service, repository, spec, children, tick, starts: () => starts,
     async close() { await service.shutdown(); db.close(); rmSync(root, { recursive: true, force: true }); } };
 }
+
+test("historical branch inspection never exposes an advanced transcript or descendant roster", async () => {
+  const visible = new Set(["initial", "later"]);
+  const h = harness("tui", 1, run => visible.has(run.parentEntryId!) ? "visible" : "outside");
+  try {
+    const a = await h.service.launch({ ...h.spec("one"), name: "reader", parentEntryId: "initial" }); await h.tick();
+    h.children.get(a.run!.runId)!.finish("Retained initial output."); await h.tick();
+    const later = await h.service.message("reader", "follow up", "resume", undefined, "later"); await h.tick();
+    h.children.get(later.runId)!.finish("Future output."); await h.tick();
+    h.repository.putAgent({ ...a.agent, agentId: "future-child", parentAgentId: a.agent.agentId, parentId: "child-session", name: "future" });
+    h.repository.putRun({ ...later, runId: "future-child-run", agentId: "future-child", parentId: "child-session", status: "succeeded" });
+    assert.ok(h.service.tree().some(s => s.agent.agentId === "future-child"));
+    visible.delete("later"); await h.service.reconcileBranch();
+    assert.equal(h.service.inspectRun("reader").runId, a.run!.runId);
+    assert.equal(h.service.inspectRun(later.runId).runId, later.runId, "exact historical run IDs remain accessible");
+    assert.deepEqual(h.service.tree().map(s => s.agent.agentId), [a.agent.agentId]);
+    assert.deepEqual(h.service.treeViewModels().map(s => s.agentId), [a.agent.agentId]);
+    const transcript = JSON.stringify(await h.service.transcript("reader"));
+    assert.match(transcript, /Retained initial output/); assert.doesNotMatch(transcript, /Future output/);
+    assert.match(transcript, /advanced on another branch/);
+  } finally { await h.close(); }
+});
+
+test("unknown legacy provenance neither enters current context nor authorizes rewind cancellation", async () => {
+  const h = harness("tui", 1, () => "unknown");
+  try {
+    const a = await h.service.launch(h.spec("legacy")); await h.tick();
+    await h.service.reconcileBranch();
+    assert.equal(h.service.run(a.run!.runId).status, "running");
+    assert.deepEqual(h.service.list(), []);
+    assert.equal(h.service.resolve(a.agent.agentId).agentId, a.agent.agentId);
+  } finally { await h.close(); }
+});
 
 test("service deduplicates launch and admits queued children after settlement", async () => {
   const h = harness();

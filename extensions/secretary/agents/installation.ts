@@ -5,6 +5,7 @@ import type { GoalEngine } from "../goal-engine.ts";
 import type { GoalSynchronization } from "../goal/synchronization.ts";
 import { goalTokenDeltaForUsage } from "../goal/accounting.ts";
 import { AgentService } from "./service.ts";
+import { AgentBranchScope } from "./branch-scope.ts";
 import { ModelAvailability } from "./availability.ts";
 import { formatAgentOutcome } from "./presentation.ts";
 import { AgentRepository, acquireParentLock } from "./storage/agent-repository.ts";
@@ -42,6 +43,7 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
   let unregisterLive: (() => void) | undefined;
   let sessionId: string | undefined;
   let service: AgentService | undefined;
+  let branch: AgentBranchScope | undefined;
   let ctx: ExtensionContext | undefined;
   let release: (() => Promise<void>) | undefined;
   let registered = false;
@@ -91,7 +93,9 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
     if (goal?.status !== "active" || !sync.isCurrent(run.goal)) throw new Error("Delegated goal work was superseded or its budget is exhausted. Retain partial output; do not continue old instructions.");
   }
   function runText(run: AgentRun): string {
-    return formatAgentOutcome(run, service?.resolve(run.agentId));
+    const historical = run.parentId === sessionId && service && !service.isVisible(run)
+      ? "Historical execution outside the selected branch; this is not work performed for the current request.\n" : "";
+    return historical + formatAgentOutcome(run, service?.resolve(run.agentId));
   }
   function result(run: AgentRun) {
     const truncated = truncateTail(run.output, { maxBytes: 40000, maxLines: 1800 });
@@ -100,7 +104,7 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
       (truncated.truncated || run.output.length >= 50000 ? `\n[Truncated. Full output: ${run.outputPath}]` : "") }], details: run };
   }
   function completed(run: AgentRun): void {
-    if (!ctx || !service || closing || !run.background) return;
+    if (!ctx || !service || closing || !run.background || !service.isVisible(run)) return;
     const id = `completion:${run.runId}`;
     const trigger = !run.goal || (engine.service.getGoal(run.goal.threadId)?.status === "active" && sync.isCurrent(run.goal));
     try {
@@ -130,8 +134,10 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
       const sessionRoot = join(root, "agents", createHash("sha256").update(parentId).digest("hex"));
       release = await acquireParentLock(sessionRoot, parentId);
       const availability = new ModelAvailability();
+      branch = new AgentBranchScope(context.sessionManager);
       service = new AgentService({ parentId, root: sessionRoot, ctx: context, config, depth,
         repository: new AgentRepository(engine.db.connection), authorize, diagnostic, completion: completed,
+        branchDisposition: run => branch!.disposition(run), admissionEntry: () => branch!.admissionEntry(),
         availability: (id, resetAt) => availability.record(id, resetAt),
         currentTools: () => {
           const blocked = blockedChildTools(depth + 1, config.maxNestingDepth);
@@ -176,11 +182,14 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
           prepareArguments: args => (args && typeof args === "object" && "mode" in args && args.mode === "manual" ? { ...args, mode: "default" } : args) as AgentInput,
           async execute(id, params, signal, onUpdate, toolCtx) {
             const controller = current();
-            const existing = controller.findLaunch(id);
+            const parentEntryId = branch!.admissionEntry(id)!;
+            const launchKey = branch!.operationKey(id);
+            const existing = controller.findLaunch(launchKey);
             if (existing) return result(existing);
             const snapshot = catalogs.get(id, toolCtx.sessionManager.getSessionId());
             const assertAdmission = () => {
               signal?.throwIfAborted();
+              if (!toolCtx.sessionManager.getBranch().some(entry => entry.id === parentEntryId)) throw new Error("The launch's conversation branch is no longer selected.");
               if (snapshot.cwd !== toolCtx.cwd || (snapshot.trusted && !toolCtx.isProjectTrusted())) {
                 throw new Error("Project scope or trust changed after catalog publication. Prepare a new request before delegating.");
               }
@@ -202,7 +211,7 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
             const parentTools = pi.getActiveTools().filter(name => !blocked(name));
             const tools = parentTools.filter(name => (!definition.tools || definition.tools.includes(name)) && !definition.disallowedTools?.includes(name));
             if (!tools.length) throw new Error("Agent definition has no tools allowed by the parent.");
-            const launched = await controller.launch({ launchKey: id, definition, model: resolution.id, assertAdmission,
+            const launched = await controller.launch({ launchKey, parentEntryId, definition, model: resolution.id, assertAdmission,
               ...(myAgentId !== undefined ? { parentAgentId: myAgentId } : {}),
               ...(resolution.chain.length > 1 ? { modelCandidates: resolution.chain.slice(resolution.chain.indexOf(resolution.id) + 1) } : {}),
               thinkingLevel: toolCtx.thinkingLevel, tools, prompt: params.prompt, description: params.description,
@@ -228,12 +237,12 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
           },
         }));
         pi.registerTool(defineTool({ name: "SendMessage", label: "Send Message", description: "Send guidance to an agent by ID or name in this parent session. Running agents queue the message. Finished resumable agents start a new background run of their saved conversation. Acknowledgment does not establish compliance.", parameters: sendMessageSchema,
-          async execute(id, p) { return result(await current().message(p.to, p.message, `tool:${id}`, origin())); } }));
+          async execute(id, p) { return result(await current().message(p.to, p.message, `tool:${branch!.operationKey(id)}`, origin(), branch!.admissionEntry(id))); } }));
         pi.registerTool(defineTool({ name: "TaskStop", label: "Stop Task", description: "Request cancellation of a Secretary child run by run ID, agent ID, or name. Does not roll back files or stop unrelated shell tasks. A stopping result is not proof of termination.", parameters: taskStopSchema,
-          async execute(id, p) { const ref = p.task_id ?? p.shell_id; if (!ref) throw new Error("Missing required parameter: task_id"); return result(await current().stop(ref, `tool:${id}`)); } }));
+          async execute(id, p) { const ref = p.task_id ?? p.shell_id; if (!ref) throw new Error("Missing required parameter: task_id"); return result(await current().stop(ref, `tool:${branch!.operationKey(id)}`)); } }));
         pi.registerTool(defineTool({ name: "TaskOutput", label: "Task Output", description: "Read bounded output for a child run. Prefer read on its output path for full output. Defaults to blocking with a 30000ms wait. A wait timeout does not cancel execution. Output is capped at 50KB or 2000 lines.", parameters: taskOutputSchema,
           async execute(_id, p, signal) {
-            const controller = current(); const run = controller.run(p.task_id);
+            const controller = current(); const run = controller.inspectRun(p.task_id);
             if (p.block === false) return result(run);
             const outcome = await controller.wait(run.runId, p.timeout ?? 30000, signal);
             const response = result(outcome);
@@ -265,17 +274,28 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
   pi.on("turn_start", () => catalogs.begin());
   pi.on("turn_end", () => catalogs.clear());
   pi.on("agent_end", () => catalogs.clear());
-  pi.on("session_tree", () => catalogs.clear());
+  pi.on("session_tree", async (_event, context) => {
+    ctx = context; catalogs.clear(); waitSignature = undefined;
+    await service?.reconcileBranch();
+    ui.bind(context);
+  });
   pi.on("context", (event, context) => {
     ctx = context;
     catalogs.begin();
     if (!service) return;
-    const messages = event.messages.filter(m => !(m.role === "custom" && m.customType === SNAPSHOT));
+    const messages = event.messages.filter(m => {
+      if (m.role !== "custom") return true;
+      if (m.customType === SNAPSHOT) return false;
+      if (m.customType !== COMPLETION) return true;
+      const runId = (m.details as { runId?: string } | undefined)?.runId;
+      if (!runId) return false;
+      try { return service!.isVisible(service!.run(runId)); } catch { return false; }
+    });
     const snapshots = service.list();
     const pending = service.pendingCompletions();
     // Positive-only injection (architecture §13.3): no roster without agents or pending outcomes.
     if (snapshots.length === 0 && pending.length === 0) return { messages };
-    const content = `Current Secretary agents (state, not authorization to resume a goal):\n` +
+    const content = `Current Secretary agents on the selected conversation branch (state, not authorization to resume a goal):\n` +
       snapshots.map(s => `${s.agent.agentId} ${s.agent.name ?? s.agent.definition.name}: ${s.run?.status ?? "no run"}; run=${s.run?.runId}; output=${s.run?.outputPath}`).join("\n") +
       `\nUndelivered or uncertain outcomes: ${pending.map(p => p.runId).join(", ") || "none"}. Use TaskOutput for current results. Do not claim completion before observing an outcome.`;
     messages.push({ role: "custom", customType: SNAPSHOT, content: content.slice(0, 16000), display: false, timestamp: Date.now() });

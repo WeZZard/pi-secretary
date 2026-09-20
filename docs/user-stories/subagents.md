@@ -77,6 +77,10 @@ As a user, I want to inspect past work and explicitly resume supported agents af
 - An interrupted process is not reported as a successful execution.
 - Another session cannot obtain control of an agent merely by knowing its name.
 - Deleted or corrupted session files produce a clear error.
+- Rewinding before an agent launch excludes that work from the current conversation and fleet. Repeating the request can launch fresh agents with the same names without reusing previous outcomes.
+- Rewinding requests cancellation of unfinished work admitted outside the selected conversation's ancestry. Work admitted on a shared ancestor remains available.
+- Navigation does not undo completed work, token usage, output files, or filesystem changes. Returning to the original branch shows its retained execution history without replaying launches.
+- An agent whose saved conversation advanced on an abandoned branch cannot resume as though that conversation had been rewound. Its retained earlier result remains inspectable.
 
 ### SA-06: Isolate repository changes
 

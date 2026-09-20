@@ -8,6 +8,17 @@
 
 **Related documents:** [Architecture](../arch/subagents.md), [requirements](../user-stories/subagents.md), [interaction design](../ux/subagents.md), [testing guide](README.md), and [delivery record](../../.plans/2026-09-17-subagent-support.md).
 
+## 2026-09-20: Session rewind and abandoned subagent work
+
+- The reviewed implementation is the working tree based on `463b0cc`, implementing the [rewind repair plan](../../.plans/2026-09-20-subagent-session-rewind.md). The user selected cancellation of abandoned unfinished work; this is not approval of every implementation detail or interface.
+- Before the repair, the real-SDK ten-agent reproducer failed because the repeated request received abandoned run IDs. A controlled roster-only filter removed those IDs but exposed ten name-conflict rejections. Both findings are recorded in the [investigation](../research/subagent-session-rewind.md).
+- The repaired SDK test passes with twenty child executions across the original and repeated requests, reused names and provider tool-call IDs, unchanged original successful records, exclusion of a queued stale completion, and restoration of original outcomes when returning to that branch.
+- RPC-mode SDK tests pass for cancellation of an abandoned live run while an ancestral run remains active, suppression of the abandoned completion turn, selection of the retained run by name after a later resumption is abandoned, and refusal to resume the advanced saved child conversation.
+- Session-manager tests pass for reopened JSONL ancestry, a deterministic compaction entry retaining admission ancestry, and unique, missing, or ambiguous legacy provenance. Service tests pass for historical output and descendant-roster isolation, explicit historical-ID access, and preservation of live work whose legacy provenance is unknown. These checks do not establish whole-process restart behavior during navigation or hosted-model compaction.
+- Updated ACC-SA-05-08 bindings pass for both running and finished abandoned work, fresh same-name admission, retained records, and return to the original branch. Adapter fixtures now supply structured generating assistant entries, as the real SDK does; they no longer invoke admission-sensitive tools without an originating entry.
+- `npm run verify` passed TypeScript checking, all 650 tests, all 28 Mermaid blocks, and acceptance syntax validation for 11 feature files and 107 stable scenario identities. Generated output remains under ignored `test-results/agent-rewind/`, not in versioned documentation.
+- Reproduce the focused checks with `node --experimental-strip-types --test tests/agents/rewind.test.ts tests/agents/service.test.ts tests/acceptance/runtime.test.ts`. No paid-provider request, GUI recording, production-session modification, or human visual approval is claimed. A parent turn already dispatched before navigation cannot be retracted by this repair.
+
 ## 2026-09-20: Composer input, navigation bounds, and scrolling follow-up
 
 - The reviewed implementation is the working tree based on `fd8bdc3`, amending the [fleet geometry plan](../../.plans/2026-09-20-fleet-overlay-geometry.md) after user review. Navigation now stays within 20–40 content columns, and the transcript receives excess width; 61.8% is its minimum target rather than its maximum.
