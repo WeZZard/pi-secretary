@@ -201,6 +201,20 @@ const bindings: ScenarioBindings = {
   "ACC-SA-02-12": async () => {
     const h = new UIHarness().ready();
     const lines = plain(h.inspector.render(140)).split("\n");
+    const assertGeometry = () => {
+      const current = plain(h.inspector.render(140)).split("\n");
+      assert.equal(current.length, h.height);
+      for (const line of current) assert.equal(visibleWidth(line), 140);
+      for (const line of current.slice(1, -1)) assert.equal(line.at(-1), "│");
+      assert.equal(current[1]!.indexOf("│", 1), lines[1]!.indexOf("│", 1));
+    };
+    const divider = lines[1]!.indexOf("│", 1);
+    assert.ok(divider - 3 >= 20 && divider - 3 <= 40);
+    assert.ok(140 - divider - 4 >= Math.ceil(140 * 0.618));
+    const larger = plain(h.inspector.render(300)).split("\n")[1]!;
+    assert.equal(larger.indexOf("│", 1) - 3, 40);
+    assertGeometry();
+    assertGeometry();
     assert.match(lines[1]!, /│ ● a\b/, "the selected row carries the filled circle");
     assert.match(lines[1]!, /│ [^│]+│ a · running/, "the status header's first line shows name and status at the top of the transcript pane");
     assert.match(lines[2]!, /activity: /, "the header's second line shows current activity");
@@ -210,7 +224,10 @@ const bindings: ScenarioBindings = {
     h.inspector.handleInput("K"); // Scroll up: the header is fixed and does not scroll away.
     const scrolled = plain(h.inspector.render(140)).split("\n");
     assert.match(scrolled[1]!, /a · running/, "the status header does not scroll with the transcript");
-    const load = h.select("b"); await h.execute(load, port());
+    const load = h.select("b");
+    assertGeometry(); // Loading retains the same frame and divider.
+    await h.execute(load, port({ transcript: async () => [] }));
+    assertGeometry(); // An empty transcript retains the same padded frame.
     assert.match(plain(h.inspector.render(140)).split("\n")[1]!, /b · running/, "the transcript pane follows the selection");
   },
   "ACC-SA-02-13": async () => {
@@ -257,7 +274,9 @@ const bindings: ScenarioBindings = {
     const service = await durableService(t), id = service.service.list()[0]!.agent.agentId;
     const h = adapter(t, service.port); h.editor = "Original main draft";
     const closed = h.command(id); await tick(); h.inspector!.handleInput("s"); h.inspector!.handleInput("unsent guidance");
-    assert.match(h.render(), /unsent guidance/); h.inspector!.handleInput("\x1b");
+    assert.match(h.render(), /unsent guidance/);
+    assert.match(h.render().split("\n")[0]!, /^╭─ Agents ─+╮$/);
+    h.inspector!.handleInput("\x1b[27u");
     assert.ok(h.inspector); assert.equal(h.closes, 0); assert.match(h.render(), /Transcript/); assert.deepEqual(service.delivered, []);
     assert.equal(service.service.run(id).status, "running"); h.inspector!.handleInput("\x1b"); await closed;
     assert.equal(h.editor, "Original main draft"); assert.equal(h.input("k"), undefined); assert.equal(service.service.run(id).status, "running");
@@ -445,6 +464,6 @@ const bindings: ScenarioBindings = {
   },
 };
 runFeatures(["agent-inspection", "ui-state-machine"], bindings, {
-  "agent-inspection": "91644cd9021d7eb7a683f965eb53c6945d1e2c29724c27f23d2e51943f37820f",
+  "agent-inspection": "1ac61f8c5d98c2ae6ada2489fe15e91f361400ce46645f242be33380641889c8",
   "ui-state-machine": "3b9a317188b30125e993459338f98be087907c57a8885ad9f7409af2fe492b43",
 });

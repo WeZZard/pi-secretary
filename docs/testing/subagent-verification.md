@@ -8,6 +8,25 @@
 
 **Related documents:** [Architecture](../arch/subagents.md), [requirements](../user-stories/subagents.md), [interaction design](../ux/subagents.md), [testing guide](README.md), and [delivery record](../../.plans/2026-09-17-subagent-support.md).
 
+## 2026-09-20: Composer input, navigation bounds, and scrolling follow-up
+
+- The reviewed implementation is the working tree based on `fd8bdc3`, amending the [fleet geometry plan](../../.plans/2026-09-20-fleet-overlay-geometry.md) after user review. Navigation now stays within 20–40 content columns, and the transcript receives excess width; 61.8% is its minimum target rather than its maximum.
+- Before this amendment, real-TUI tests failed for the composer's blank top rule and for CSI-u Escape leaving the composer open. Legacy Escape already passed. Sharing the frame formatter and using pi-tui key matching made the same tests pass in main-screen and alternate-screen modes.
+- SGR wheel input already scrolled actual transcript content through the alternate-screen host. A new modal-isolation test exposed wheel sequences falling through into the composer's input handler. Consuming modal wheel events fixed that regression without changing the scroll state machine.
+- Real-TUI checks passed for retained unsent drafts, a second Escape returning to the editor, protocol-encoded Enter dispatching once, Page Up/Page Down, wheel-driven transcript scrolling and follow resumption, and wheel-driven agent selection. Width checks passed from 100 through 600 terminal columns, including the 40-column navigation maximum on large terminals.
+- `npm run verify` passed TypeScript checking, all 643 tests, all 28 Mermaid blocks, and acceptance syntax validation. Generated logs remain in ignored `test-results/`; no generated output is a versioned baseline.
+- These checks use real pi renderers with deterministic agent fixtures and `@xterm/headless`. They do not identify the user's terminal keyboard protocol, establish GUI animation behavior, or constitute human visual approval. Mouse scrolling is supported in the mouse-enabled alternate-screen host; normal main-screen mode retains terminal-owned scrollback and uses keyboard transcript scrolling.
+
+## 2026-09-20: Fleet overlay geometry
+
+- The reviewed implementation is the working tree based on `fd8bdc3`, implementing the [fleet overlay geometry repair](../../.plans/2026-09-20-fleet-overlay-geometry.md).
+- Before the repair, the real main-screen TUI regression tests failed for missing right borders, changed frame coordinates during transcript loading, and insufficient navigation width. Correcting only the wide-row width reservation fixed the border case while the other two cases still failed.
+- After the repair, real main-screen and alternate-screen TUI composition tests passed through keyboard selection, loading, empty transcripts, and terminal resize. They inspect ANSI output using `@xterm/headless`; agent records and transcript arrivals are deterministic fixtures.
+- Component checks additionally passed for Unicode labels, feedback, dialogs, very small dimensions, and keeping the selected row visible in an overflowing roster. The revised ACC-SA-02-12 binding checks the new frame and pane geometry before, during, and after loading an empty transcript.
+- `npm run verify` passed TypeScript checking, all 631 tests, all 28 Mermaid blocks, and acceptance syntax validation for 11 feature files and 107 scenario identities. The earlier verification attempt stopped at the expected acceptance-specification hash mismatch; the scenario assertions were extended before its reviewed hash was updated.
+- Reproduce the focused terminal checks with `node --experimental-strip-types --test tests/agents/inspector.test.ts`. Generated run logs remain under ignored `test-results/` and are not versioned baselines.
+- No live-provider request, GUI terminal recording, or human visual approval is claimed. Terminal-cell checks establish frame geometry, not animation timing in a particular terminal application.
+
 ## 2026-09-20: Request-context composition and agent discovery
 
 **Reviewed implementation:** The working tree based on `30c24e6`, implementing the [cited plan](../../.plans/2026-09-20-request-context-injection.md). The generic mechanism and subagent discovery have separate owners in [request-context architecture](../arch/request-context.md) and [subagent architecture Section 5.4](../arch/subagents.md#54-request-scoped-definition-catalog).

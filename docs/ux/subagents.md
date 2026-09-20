@@ -62,7 +62,8 @@ The following is a layout example with an active selection. Angle-bracket values
 
 - The fleet view overlay is the inspector, presented as a full fleet view. Pressing Enter on a fleet indicator row opens the overlay focused on that agent. `/agents` opens the overlay, and `/agents <id-or-name>` opens one agent directly.
 - The overlay is a bordered overlay with a title row showing the active agent count, a selection-position indicator, a footer of available keys, and a minimum supported width below which only a diagnostic line is shown.
-- On wide terminals the overlay is a vertical split: a narrow navigation list on the left and the selected agent's transcript on the right. The list column is a fixed narrow width sized to the longest visible row label, capped at 32 columns; the transcript occupies the remaining width.
+- The frame keeps both side borders visible. Its height depends only on the terminal height, not on the selected agent, loading state, transcript length, feedback, or an open dialog. Short content is padded rather than recentered. The height targets 61.8% of terminal rows, with an 18-row minimum that takes precedence on short terminals and yields to the terminal's physical height. Resizing the terminal recalculates the height.
+- On wide terminals the overlay is a vertical split with navigation on the left and the selected agent's transcript on the right. Navigation stays between 20 and 40 content columns. The transcript receives the remaining width, with 61.8% of terminal columns as its minimum target, not its maximum. Navigation's bounds take priority over proportional sizing, so larger terminals give all excess width to the transcript. The divider depends on terminal width rather than agent names. Long labels are truncated, and the list scrolls to keep the selection visible.
 - On narrow terminals the overlay displays a full-width selectable list followed by a full-width detail view for the chosen agent.
 - The list contains subagents only. The main session is not a row in the overlay; its transcript is the session behind the overlay.
 - The default filter lists active and queued agents. Pressing `a` toggles the filter to also list terminal agents (succeeded, failed, cancelled, or interrupted). The footer identifies the toggle.
@@ -74,7 +75,7 @@ The following is a layout example with an active selection. Angle-bracket values
 - The default filter lists active and queued agents at the current level. Pressing `a` toggles the filter to also list terminal agents (succeeded, failed, cancelled, or interrupted). The filter applies to every level and is identified in the footer.
 - The transcript pane always shows the selected agent and updates as the selection moves.
 - The transcript pane is split into a fixed status header and the scrolling transcript below it. The header floats at the top of the pane as an inline panel without an enclosing box: its first line shows the agent name, status label, elapsed time, and available usage labels, its second line shows the current activity, and a single horizontal divider separates it from the transcript. The header never scrolls with the transcript. The same header applies to the full-width detail view on narrow terminals.
-- Optionally, in a mouse-enabled full-screen host, wheel scrolling over the transcript pane scrolls the transcript with the same auto-follow pause and resume rules as keyboard scrolling, and wheel scrolling over the navigation list moves the selection. This enhancement is host-dependent and is not a required behavior; keyboard scrolling remains the primary contract.
+- In a mouse-enabled full-screen host, wheel scrolling over the transcript pane scrolls the transcript with the same auto-follow pause and resume rules as keyboard scrolling, and wheel scrolling over the navigation list moves the selection. Dialogs consume wheel input without changing the draft, transcript, or agent selection. Normal main-screen mode leaves the wheel to terminal scrollback; Page Up/Page Down and Shift+K/Shift+J remain available for transcript scrolling in both modes. The footer prioritizes the page-scroll and close hints on narrow terminals.
 
 The following is a layout example. Angle-bracket values are placeholders, not measurements:
 
@@ -403,7 +404,8 @@ sequenceDiagram
 - Dismissing a pending request returns focus to the originating view. It does not retract the request or cancel the agent.
 - A delayed response cannot replace a more recently selected transcript, close another dialog, or steal focus.
 - If the agent completes while the composer is open, the draft remains available. The interface explains whether submitting it will resume the agent or whether resumption is unavailable.
-- Escape dismisses only the currently focused dialog. A subsequent Escape can close the inspector without stopping work.
+- Escape dismisses only the currently focused dialog and retains any message draft without sending it. A subsequent Escape can close the inspector without stopping work. The same behavior applies to legacy and enhanced terminal keyboard protocols.
+- Messaging and confirmation views retain the same complete top rule and side borders as the inspector, including the title embedded in the top rule.
 - Message drafts are not restored after leaving or replacing the parent UI session in this release.
 
 ## 6. Notifications and Non-TUI Behavior

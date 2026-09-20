@@ -1,11 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { TuiAltScreen, TuiMainScreen, visibleWidth, type Terminal } from "@earendil-works/pi-tui";
+import xterm from "@xterm/headless";
 import { stripVTControlCharacters } from "node:util";
 import type { AgentSnapshot } from "../../extensions/secretary/agents/records.ts";
 import { transition } from "../../extensions/secretary/agents/ui/reducer.ts";
 import { initialState, type UiEvent, type UiState } from "../../extensions/secretary/agents/ui/state.ts";
-import { Inspector } from "../../extensions/secretary/agents/ui/inspector.ts";
+import { Inspector, inspectorHeight } from "../../extensions/secretary/agents/ui/inspector.ts";
 import type { TranscriptEvent } from "../../extensions/secretary/agents/ui/transcript-events.ts";
 
 const plain = (lines: string[]) => stripVTControlCharacters(lines.join("\n"));
@@ -19,6 +20,164 @@ function inspectorState(): UiState {
   s = transition(s, { type: "select", agentId: "b", requestId: "r" }).state;
   return transition(s, { type: "transcript", epoch: "e", viewId: "v1", agentId: "b", requestId: "r", events }).state;
 }
+
+// Exercise real keyboard routing, overlay composition, ANSI output, and terminal cells.
+async function terminalHarness(mode: "main" | "alternate") {
+  const screen = new xterm.Terminal({ cols: 160, rows: 50, allowProposedApi: true });
+  let input: (data: string) => void = () => {};
+  let output = "";
+  let resized: () => void = () => {};
+  const terminal: Terminal = {
+    get columns() { return screen.cols; }, get rows() { return screen.rows; }, kittyProtocolActive: false,
+    start(onInput, onResize) { input = onInput; resized = onResize; }, stop() {}, async drainInput() {},
+    write(data) { output += data; },
+    moveBy(n) { this.write(n < 0 ? `\x1b[${-n}A` : `\x1b[${n}B`); },
+    hideCursor() {}, showCursor() {}, clearLine() { this.write("\x1b[2K"); },
+    clearFromCursor() { this.write("\x1b[J"); }, clearScreen() { this.write("\x1b[2J\x1b[H"); },
+    setTitle() {}, setProgress() {},
+  };
+  let state = inspectorState();
+  const tui = mode === "main" ? new TuiMainScreen(terminal) : new TuiAltScreen(terminal);
+  const inspector = new Inspector(() => state, event => {
+    state = transition(state, event).state;
+    tui.requestRender();
+  }, () => "nav-request", () => inspectorHeight(terminal.rows));
+  tui.addChild({ render: () => Array.from({ length: 50 }, () => "background"), invalidate() {} });
+  tui.start();
+  tui.showOverlay(inspector, { width: "100%", maxHeight: "100%", anchor: "center" });
+  const paint = async () => {
+    tui.requestRender();
+    await new Promise(resolve => setTimeout(resolve, 30));
+    const data = output; output = "";
+    await new Promise<void>(resolve => screen.write(data, resolve));
+    return Array.from({ length: screen.rows }, (_, i) => screen.buffer.active.getLine(screen.buffer.active.viewportY + i)!.translateToString(false, 0, screen.cols));
+  };
+  return { paint, input: (data: string) => input(data), state: () => state,
+    resize: (cols: number, rows: number) => { screen.resize(cols, rows); resized(); },
+    load: (events: TranscriptEvent[]) => {
+      const nav = state.navigation;
+      assert.ok(nav.kind === "inspector" && nav.detail.kind === "loading");
+      state = transition(state, { type: "transcript", epoch: "e", viewId: "v1", agentId: nav.detail.agentId, requestId: nav.detail.requestId, events }).state;
+    },
+    close: () => { tui.stop(); screen.dispose(); },
+  };
+}
+
+for (const mode of ["main", "alternate"] as const) for (const defect of ["right border", "stable height", "pane proportions"] as const) {
+  test(`real ${mode} TUI fleet overlay preserves ${defect} through navigation`, async () => {
+    const h = await terminalHarness(mode);
+    try {
+      const ready = await h.paint();
+      const top = ready.findIndex(line => line.startsWith("╭"));
+      const bottom = ready.findIndex(line => line.startsWith("╰"));
+      assert.ok(top >= 0 && bottom > top);
+      assert.equal(bottom - top + 1, inspectorHeight(50));
+      if (defect === "right border") {
+        for (const line of ready.slice(top + 1, bottom)) assert.equal(line.at(-1), "│", line);
+      } else if (defect === "pane proportions") {
+        const divider = ready[top + 1]!.indexOf("│", 1);
+        assert.ok(divider - 3 >= 20 && divider - 3 <= 40, "navigation stays within 20–40 content columns");
+        assert.ok(160 - divider - 4 >= Math.ceil(160 * 0.618), "detail content has at least 61.8% of terminal columns");
+      } else {
+        h.input("\x1b[B");
+        const loading = await h.paint();
+        assert.equal(loading.findIndex(line => line.startsWith("╭")), top, "loading must not recenter");
+        assert.equal(loading.findIndex(line => line.startsWith("╰")), bottom);
+        h.load([]);
+        const empty = await h.paint();
+        assert.equal(empty.findIndex(line => line.startsWith("╭")), top, "empty transcript must not recenter");
+        assert.equal(empty.findIndex(line => line.startsWith("╰")), bottom);
+        h.resize(80, 24);
+        const narrow = await h.paint();
+        const resizedTop = narrow.findIndex(line => line.startsWith("╭"));
+        const resizedBottom = narrow.findIndex(line => line.startsWith("╰"));
+        assert.equal(resizedBottom - resizedTop + 1, inspectorHeight(24));
+        for (const line of narrow.slice(resizedTop + 1, resizedBottom)) assert.equal(line.at(-1), "│", JSON.stringify(line));
+      }
+    } finally { h.close(); }
+  });
+}
+
+for (const mode of ["main", "alternate"] as const) {
+  test(`real ${mode} TUI composer draws its top rule`, async () => {
+    const h = await terminalHarness(mode);
+    try {
+      await h.paint(); h.input("s");
+      const lines = await h.paint();
+      assert.match(lines.find(line => line.startsWith("╭"))!, /^╭─ Agents ─+╮$/);
+    } finally { h.close(); }
+  });
+  for (const escape of ["\x1b", "\x1b[27u", "\x1b[27;1u"]) {
+    test(`real ${mode} TUI composer dismisses Escape ${JSON.stringify(escape)} without sending`, async () => {
+      const h = await terminalHarness(mode);
+      try {
+        await h.paint(); h.input("s"); h.input("draft"); await h.paint();
+        assert.equal(h.state().dialog.kind, "composing");
+        h.input(escape); await h.paint();
+        assert.equal(h.state().dialog.kind, "closed");
+        assert.equal(h.state().navigation.kind, "inspector", "only the composer closes");
+        assert.deepEqual(h.state().pending, {}, "dismissal sends nothing");
+        h.input("s"); await h.paint();
+        const dialog = h.state().dialog;
+        assert.ok(dialog.kind === "composing"); assert.equal(dialog.draft, "draft");
+        h.input(escape); h.input(escape); await h.paint();
+        assert.equal(h.state().navigation.kind, "editor", "the second Escape exits inspection");
+      } finally { h.close(); }
+    });
+  }
+}
+
+for (const mode of ["main", "alternate"] as const) {
+  test(`real ${mode} TUI scrolls by keyboard and accepts protocol-encoded Enter`, async () => {
+    const h = await terminalHarness(mode);
+    try {
+      const before = await h.paint();
+      assert.match(before.join("\n"), /PgUp\/PgDn scroll/);
+      h.input("\x1b[5~");
+      const page = await h.paint();
+      const nav = h.state().navigation;
+      assert.ok(nav.kind === "inspector" && nav.detail.kind === "ready" && nav.detail.transcript.follow === "paused");
+      assert.notDeepEqual(page.filter(line => line.includes("paragraph")), before.filter(line => line.includes("paragraph")));
+      h.input("\x1b[6~"); await h.paint();
+      const tail = h.state().navigation;
+      assert.ok(tail.kind === "inspector" && tail.detail.kind === "ready" && tail.detail.transcript.follow === "following");
+      h.input("s"); h.input("guidance"); h.input("\x1b[13u"); await h.paint();
+      assert.equal(h.state().dialog.kind, "submitting");
+      assert.equal(Object.keys(h.state().pending).length, 1);
+      h.input("\x1b[27u"); await h.paint();
+      assert.equal(h.state().dialog.kind, "closed");
+      assert.equal(Object.keys(h.state().pending).length, 1, "dismissal does not cancel an accepted dispatch");
+    } finally { h.close(); }
+  });
+}
+
+test("real alternate TUI routes wheel input to the transcript and preserves selection", async () => {
+  const h = await terminalHarness("alternate");
+  try {
+    const before = await h.paint();
+    const selected = () => {
+      const nav = h.state().navigation;
+      assert.ok(nav.kind === "inspector" && nav.detail.kind === "ready");
+      return nav.detail;
+    };
+    assert.equal(selected().transcript.follow, "following");
+    h.input("\x1b[<64;130;25M"); // SGR wheel up inside the transcript pane.
+    const scrolled = await h.paint();
+    assert.equal(selected().agentId, "b");
+    assert.equal(selected().transcript.follow, "paused");
+    assert.notDeepEqual(scrolled.filter(line => line.includes("paragraph")), before.filter(line => line.includes("paragraph")));
+    h.input("\x1b[<65;130;25M"); await h.paint();
+    assert.equal(selected().transcript.follow, "following");
+    h.input("s"); await h.paint();
+    const modal = h.state();
+    h.input("\x1b[<64;130;25M"); await h.paint();
+    assert.equal(h.state(), modal, "the wheel cannot navigate behind a composer");
+    h.input("\x1b"); await h.paint();
+    h.input("\x1b[<64;5;25M"); await h.paint();
+    const nav = h.state().navigation;
+    assert.ok(nav.kind === "inspector" && nav.detail.kind === "loading" && nav.detail.agentId === "a", "wheel over the roster selects an agent");
+  } finally { h.close(); }
+});
 
 test("select-first and select-last are reducer events that load the boundary agents", () => {
   const s = inspectorState();
@@ -146,6 +305,51 @@ test("configured keybindings replace defaults in both input handling and the foo
   assert.match(rendered, /m message/);
   assert.match(rendered, /Ctrl\+Q close/);
   assert.doesNotMatch(rendered, /D stop/);
+});
+
+test("viewport sizing, dialogs, feedback, and Unicode preserve the complete frame", () => {
+  for (const [rows, expected] of [[1, 1], [10, 10], [24, 18], [40, 24], [50, 30], [100, 61]]) assert.equal(inspectorHeight(rows!), expected);
+  let s = inspectorState();
+  s.snapshots[0]!.agent.name = "分析🧪".repeat(30);
+  const states = [s, { ...s, feedback: "queued" }, transition(s, { type: "compose" }).state,
+    transition(s, { type: "control", action: "stop", agentId: "b" }).state,
+    transition(s, { type: "open", viewId: "list" }).state];
+  for (const state of states) for (const width of [36, 60, 99, 100, 140, 300]) for (const height of [4, 6, 18, 30]) {
+    const lines = new Inspector(() => state, () => {}, () => "id", () => height).render(width);
+    assert.equal(lines.length, height);
+    for (const line of lines) assert.equal(visibleWidth(line), width);
+    for (const line of lines.slice(1, -1)) assert.equal(stripVTControlCharacters(line).at(-1), "│");
+    if (height >= 18 && state.dialog.kind === "closed") assert.match(plain(lines), /Esc close/);
+  }
+});
+
+test("navigation bounds take priority and excess width belongs to the transcript", () => {
+  const state = inspectorState();
+  const inspector = new Inspector(() => state, () => {}, () => "id");
+  for (const width of [100, 101, 120, 140, 160, 300, 600]) {
+    const lines = inspector.render(width);
+    const divider = lines[1]!.indexOf("│", 1);
+    const navigationWidth = divider - 3;
+    const transcriptWidth = width - divider - 4;
+    assert.ok(navigationWidth >= 20 && navigationWidth <= 40);
+    assert.ok(transcriptWidth >= Math.ceil(width * 0.618));
+    if (width >= 140) assert.equal(navigationWidth, 40);
+    state.snapshots[0]!.agent.name = "long label ".repeat(100);
+    assert.equal(inspector.render(width)[1]!.indexOf("│", 1), divider);
+  }
+  assert.match(plain(inspector.render(36)), /PgUp\/PgDn scroll/);
+});
+
+test("the selected roster row remains visible when the fleet exceeds the viewport", () => {
+  const snapshots = Array.from({ length: 40 }, (_, i) => snapshot(`agent-${i}`));
+  let s = transition(initialState(), { type: "activate", parentId: "p", epoch: "e", viewId: "v" }, snapshots).state;
+  s = transition(s, { type: "open", viewId: "v1" }).state;
+  s = transition(s, { type: "select-last", requestId: "last" }).state;
+  for (const width of [60, 140]) {
+    const lines = new Inspector(() => s, () => {}, () => "id", () => 18).render(width);
+    assert.equal(lines.length, 18);
+    assert.match(plain(lines), /● agent-39/);
+  }
 });
 
 test("r and R reload the selected transcript as reducer events", () => {

@@ -58,7 +58,7 @@ Stage 1 delivers the unified indicator and the split overlay against the existin
 - **Design implemented:** [UX §2.4](../docs/ux/subagents.md#24-fleet-view-overlay); [architecture §12.1.6](../docs/arch/subagents.md#1216-internal-state-representation) and [§12.6.4](../docs/arch/subagents.md#1264-fleet-view-overlay-presentation-components).
 - **Dependencies:** U2 (Enter opens the overlay).
 - **Work:**
-  - Wide terminals: left navigation list sized to the longest visible row label and capped at 32 columns, transcript pane on the right; narrow terminals keep the stacked fallback; below 36 columns keep the diagnostic line.
+  - The original wide-terminal layout used label-dependent navigation capped at 32 columns. The [2026-09-20 fleet geometry amendment](2026-09-20-fleet-overlay-geometry.md) supersedes that sizing with viewport-based proportions and a fixed frame height. Narrow terminals keep the stacked fallback; below 36 columns they keep the diagnostic line.
   - List shows subagents only, active and queued by default; rows render only the selection circle and the agent name; `a` toggles terminal agents at every level; selection moves to the nearest remaining row if its row leaves the list.
   - Title row carries the bounded breadcrumb (root label `Agents`, current level, nearest ancestor, middle elided as `…`) and the active count.
   - The transcript pane renders a fixed status header above its scroll viewport: name, status label, and stats on the first line, current activity on the second, one divider, no enclosing box; the header is excluded from the scroll anchor and follow state.

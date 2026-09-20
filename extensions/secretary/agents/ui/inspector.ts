@@ -1,4 +1,4 @@
-import { Input, truncateToWidth, visibleWidth, type Component, type Focusable, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
+import { Input, matchesKey, truncateToWidth, visibleWidth, type Component, type Focusable, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { AgentRowView, AgentSnapshot } from "../records.ts";
 import type { InspectorLevel, UiEvent, UiState } from "./state.ts";
@@ -10,8 +10,14 @@ import { bindingLabel, matchesInspectorAction, resolveInspectorKeybindings, type
 
 const MIN_WIDTH = 36;
 const PANE_SPLIT = 100;
-/** The navigation list column is sized to its longest visible row label and capped (§12.6.4). */
-const LIST_CAP = 32;
+const LIST_MIN_WIDTH = 20;
+const LIST_MAX_WIDTH = 40;
+const VIEWPORT_RATIO = 0.618;
+
+/** The minimum yields only to the physical terminal height (architecture §12.6.4). */
+export function inspectorHeight(terminalRows: number): number {
+  return Math.max(1, Math.min(terminalRows, Math.max(18, Math.floor(terminalRows * VIEWPORT_RATIO))));
+}
 
 export interface InspectorOptions {
   theme?: Theme;
@@ -59,15 +65,15 @@ export class Inspector implements Component, Focusable {
   handleInput(data: string): void {
     const s = this.state(), d = s.dialog;
     // A focused dialog owns Escape; it never falls through to the overlay in the same event.
-    if (d.kind !== "closed" && data === "\x1b") { this.dispatch({ type: "escape" }); return; }
+    if (d.kind !== "closed" && matchesKey(data, "escape")) { this.dispatch({ type: "escape" }); return; }
     if (d.kind === "composing") {
       if (this.input.getValue() !== d.draft) this.input.setValue(d.draft);
-      if (data === "\r") this.dispatch({ type: "submit", operationId: this.id() });
+      if (matchesKey(data, "enter")) this.dispatch({ type: "submit", operationId: this.id() });
       else { this.input.handleInput(data); this.dispatch({ type: "draft", text: this.input.getValue() }); }
       return;
     }
     if (d.kind !== "closed") {
-      if (d.kind === "confirming" && data === "\r") this.dispatch({ type: "submit", operationId: this.id() });
+      if (d.kind === "confirming" && matchesKey(data, "enter")) this.dispatch({ type: "submit", operationId: this.id() });
       return;
     }
     if (this.action(data, "close")) { this.dispatch({ type: "escape" }); return; }
@@ -98,7 +104,9 @@ export class Inspector implements Component, Focusable {
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
     if (event.type !== "wheel" || !event.wheelDelta) return undefined;
     const s = this.state();
-    if (s.dialog.kind !== "closed" || s.navigation.kind !== "inspector") return undefined;
+    // A modal owns wheel input too; do not let the host forward its raw sequence to Input.
+    if (s.dialog.kind !== "closed") return { handled: true };
+    if (s.navigation.kind !== "inspector") return undefined;
     const nav = s.navigation;
     const delta = event.wheelDelta;
     if (event.x < this.transcriptPaneX) {
@@ -163,38 +171,50 @@ export class Inspector implements Component, Focusable {
       const nav = this.state().navigation;
       if (nav.kind === "inspector" && nav.detail.kind === "ready") optional.push(`${label("toggleTools")} tools`, `${label("refresh")} reload`);
     }
-    // Close is never expendable; narrower footers drop optional hints, then drill and filter, before navigation.
-    const parts = [select, drill, filter, ...optional, close];
-    while (parts.length > 2 && visibleWidth(parts.join(" · ")) > width) parts.splice(parts.length > 4 ? 3 : 1, 1);
+    const scroll = `${label("pageUp")}/${label("pageDown")} scroll`;
+    // Preserve scrolling and closing hints on narrow terminals; drop secondary actions first.
+    const parts = [select, scroll, drill, filter, ...optional, close];
+    while (parts.length > 3 && visibleWidth(parts.join(" · ")) > width) parts.splice(2, 1);
+    while (parts.length > 1 && visibleWidth(parts.join(" · ")) > width) parts.shift();
     return parts.join(" · ");
   }
   render(width: number): string[] {
     // Below the minimum width the overlay renders a single diagnostic line instead of panes.
     if (width < MIN_WIDTH) return [clip("Agents overlay requires a wider terminal.", width)];
-    const dialog = this.dialogRender(width);
-    if (dialog) return dialog;
+    const height = Math.max(1, Math.floor(this.height()));
+    if (height < 4) return [clip("Agents overlay requires a taller terminal.", width)];
     const s = this.state(), theme = this.theme;
+    const border = (text: string) => theme ? theme.fg("borderMuted", text) : text;
+    const fit = (text: string, columns: number) => truncateToWidth(text, columns, "", true);
+    const frameRow = (text: string) => border("│ ") + fit(text, width - 4) + border(" │");
+    const topBorder = (label: string) => {
+      const title = clip(` ${label} `, width - 3);
+      return border("╭─") + title + border("─".repeat(Math.max(0, width - 3 - visibleWidth(title)))) + border("╮");
+    };
+    const bottom = border(`╰${"─".repeat(width - 2)}╯`);
+    const dialog = this.dialogRender(width - 4);
+    if (dialog) {
+      const content = dialog.slice(0, -1).slice(0, height - 3);
+      while (content.length < height - 3) content.push("");
+      return [topBorder("Agents"), ...content.map(frameRow), frameRow(dialog.at(-1) ?? ""), bottom];
+    }
     const nav = s.navigation;
     if (nav.kind !== "inspector") return [];
-    const border = (text: string) => theme ? theme.fg("borderMuted", text) : text;
     const level = nav.detail.level;
     const roster = overlayRows(s, level);
     const selected = nav.detail.kind === "list" ? undefined : nav.detail.agentId;
     const record = s.snapshots.find(a => a.agent.agentId === selected);
     const position = record ? `${roster.findIndex(a => a.agent.agentId === selected) + 1}/${roster.length}` : `0/${roster.length}`;
     const activeCount = s.snapshots.filter(a => active(a)).length;
-    const inner = width - 2;
-    const title = clip(` ${this.breadcrumb(level)} · ${position} · ${activeCount} active `, inner - 1);
-    const top = border("╭─") + title + border("─".repeat(Math.max(0, inner - 1 - visibleWidth(title)))) + border("╮");
-    const bottom = border(`╰${"─".repeat(Math.max(0, inner))}╯`);
-    const footer = clip(this.footer(record, inner - 2), inner - 1);
-    const footerLine = border("│ ") + footer + " ".repeat(Math.max(0, inner - 2 - visibleWidth(footer))) + border(" │");
+    const top = topBorder(`${this.breadcrumb(level)} · ${position} · ${activeCount} active`);
+    const footerLine = frameRow(clip(this.footer(record, width - 4), width - 4));
     const body: string[] = [];
     const wide = width >= PANE_SPLIT;
-    const rosterLines = roster.map(a => this.rosterRow(a, selected, LIST_CAP));
-    const longest = Math.max(8, ...rosterLines.map(line => visibleWidth(line)));
-    const paneWidth = wide ? Math.min(LIST_CAP, longest) : width - 4;
-    const detailWidth = wide ? inner - paneWidth - 3 : inner - 4;
+    // Reserve seven columns for the outer frame, padding, and pane divider.
+    // Navigation's bounds take priority; the transcript receives all remaining columns.
+    const paneWidth = wide ? Math.max(LIST_MIN_WIDTH, Math.min(LIST_MAX_WIDTH, width - 7 - Math.ceil(width * VIEWPORT_RATIO))) : width - 4;
+    const rosterLines = roster.map(a => this.rosterRow(a, selected, paneWidth));
+    const detailWidth = wide ? width - paneWidth - 7 : width - 4;
     const header = record ? this.statusHeader(record, detailWidth) : [];
     const details: string[] = [];
     if (record) {
@@ -216,28 +236,28 @@ export class Inspector implements Component, Focusable {
     } else if (!record) details.push(`Select an agent with ${bindingLabel(this.keys, "selectUp")}/${bindingLabel(this.keys, "selectDown")}.`);
     // Feedback is part of the operation contract, not expendable transcript overflow.
     const fixedRows = 2 /* rules */ + 1 /* footer */ + (s.feedback ? 1 : 0);
-    const bodyHeight = Math.max(1, this.height() - fixedRows);
-    const rosterRows = wide ? bodyHeight : Math.min(rosterLines.length, Math.min(5, bodyHeight - 2));
+    const bodyHeight = Math.max(0, height - fixedRows);
+    const rosterRows = wide ? bodyHeight : Math.min(rosterLines.length, Math.min(5, Math.max(0, bodyHeight - 2)));
+    const selectedIndex = roster.findIndex(a => a.agent.agentId === selected);
+    const rosterStart = Math.max(0, Math.min(selectedIndex - rosterRows + 1, rosterLines.length - rosterRows));
+    const visibleRoster = rosterLines.slice(rosterStart, rosterStart + rosterRows);
     this.visibleTranscriptRows = Math.max(1, bodyHeight - (wide ? 0 : rosterRows) - header.length - details.length);
     const transcriptRows = nav.detail.kind === "ready" ? transcriptWindow(nav.detail.transcript, detailWidth, this.visibleTranscriptRows, theme) : [];
     const detailLines = [...header, ...details, ...transcriptRows];
     if (wide) {
       this.transcriptPaneX = 2 + paneWidth + 3;
-      const rows = Math.max(rosterLines.length, detailLines.length, 1);
-      for (let i = 0; i < Math.min(rows, bodyHeight); i++) {
-        const left = clip(rosterLines[i] ?? "", paneWidth);
+      for (let i = 0; i < bodyHeight; i++) {
+        const left = clip(visibleRoster[i] ?? "", paneWidth);
         const right = clip(detailLines[i] ?? "", detailWidth);
         const leftText = left + " ".repeat(Math.max(0, paneWidth - visibleWidth(left)));
-        body.push(border("│ ") + leftText + border(" │ ") + right + " ".repeat(Math.max(0, width - 4 - paneWidth - visibleWidth(right))) + border(" │"));
+        body.push(border("│ ") + leftText + border(" │ ") + right + " ".repeat(Math.max(0, detailWidth - visibleWidth(right))) + border(" │"));
       }
     } else {
       this.transcriptPaneX = 0;
-      for (const line of [...rosterLines.slice(0, rosterRows), ...detailLines].slice(0, bodyHeight)) {
-        const clipped = clip(line, inner - 4);
-        body.push(border("│ ") + clipped + " ".repeat(Math.max(0, inner - 2 - visibleWidth(clipped))) + border(" │"));
-      }
+      const lines = [...visibleRoster, ...detailLines];
+      for (let i = 0; i < bodyHeight; i++) body.push(frameRow(clip(lines[i] ?? "", detailWidth)));
     }
-    const feedback = s.feedback ? border("│ ") + clip(s.feedback, inner - 4) + border(" │") : undefined;
+    const feedback = s.feedback ? frameRow(clip(s.feedback, width - 4)) : undefined;
     return [top, ...body, ...(feedback ? [feedback] : []), footerLine, bottom].map(l => truncateToWidth(l, width, ""));
   }
 }

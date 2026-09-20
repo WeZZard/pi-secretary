@@ -4,7 +4,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { matchesKey } from "@earendil-works/pi-tui";
 import { SecretaryConfigMenu, headlessSecretaryConfig } from "./config-menu.ts";
 import { FleetView, startFleetPolling } from "./fleet-view.ts";
-import { Inspector } from "./inspector.ts";
+import { Inspector, inspectorHeight } from "./inspector.ts";
 import type { InspectorKeybindingsConfig } from "./keybindings.ts";
 import { runEffect, type AgentUIPort } from "./effects.ts";
 import { fleetRows, transition } from "./reducer.ts";
@@ -70,8 +70,8 @@ export function registerAgentUI(pi: ExtensionAPI, port: AgentUIPort, resolveOpti
     try {
       await owner.ui.custom<void>((tui, _theme, kb, done) => {
         close = () => done(); requestRender = () => tui.requestRender();
-        return new Inspector(() => state, dispatch, randomUUID, () => Math.max(6, Math.floor(tui.terminal.rows * 0.9)), { keybindings: options().keybindings, expandKey: data => kb.matches(data, "app.tools.expand"), rows: () => port.viewModels?.() ?? [] });
-      }, { overlay: true, overlayOptions: { width: "100%", maxHeight: "90%", anchor: "center" } });
+        return new Inspector(() => state, dispatch, randomUUID, () => inspectorHeight(tui.terminal.rows), { keybindings: options().keybindings, expandKey: data => kb.matches(data, "app.tools.expand"), rows: () => port.viewModels?.() ?? [] });
+      }, { overlay: true, overlayOptions: { width: "100%", maxHeight: "100%", anchor: "center" } });
     } catch (error) { if (state.epoch === epoch) owner.ui.notify(`Agent inspector unavailable: ${String(error)}`, "error"); }
     finally { if (state.epoch === epoch) { customOpen = false; close = undefined; requestRender = undefined; if (state.navigation.kind === "inspector" || state.dialog.kind !== "closed") { dispatch({ type: "escape" }); if (state.navigation.kind === "inspector") dispatch({ type: "escape" }); } } }
   };

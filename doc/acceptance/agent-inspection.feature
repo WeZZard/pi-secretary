@@ -137,9 +137,13 @@ Feature: Inspect delegated work without polling the parent model
   Scenario: Split the fleet view overlay vertically on a wide terminal.
     Given the terminal is wider than the split layout's minimum.
     When the fleet view overlay is open.
-    Then a narrow navigation list occupies the left column.
+    Then a navigation list with between 20 and 40 content columns occupies the left column.
     And each list row shows only the selection circle and the agent name.
-    And the selected agent's transcript occupies the remaining width on the right.
+    And the selected agent's transcript content occupies at least 61.8 percent of terminal columns on the right.
+    And excess width belongs to the transcript rather than widening navigation beyond 40 content columns.
+    And both side borders remain visible on every body row.
+    And the frame height and position remain unchanged while selecting agents and loading their transcripts.
+    And short or empty transcripts leave padded space instead of shrinking the frame.
     And the transcript pane follows the selection as it moves.
     And a status header floats at the top of the transcript pane without an enclosing box.
     And the header shows the agent name, status label, stats, and current activity above a single divider.
