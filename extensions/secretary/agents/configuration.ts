@@ -5,7 +5,6 @@ import { validateInspectorKeybindings, type InspectorKeybindingsConfig } from ".
 
 export const FALLBACK_LIST_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 export interface AgentUiConfiguration {
-  inlineToolDisplay: "rich" | "summary";
   fleetViewPlacement: "belowEditor" | "aboveEditor";
   fleetKeybindings: InspectorKeybindingsConfig;
 }
@@ -18,7 +17,7 @@ export interface AgentConfiguration {
   maxNestingDepth: number;
   ui: AgentUiConfiguration;
 }
-export const defaultAgentUi = (): AgentUiConfiguration => ({ inlineToolDisplay: "rich", fleetViewPlacement: "belowEditor", fleetKeybindings: {} });
+export const defaultAgentUi = (): AgentUiConfiguration => ({ fleetViewPlacement: "belowEditor", fleetKeybindings: {} });
 
 /** Omission inherits the definition; an explicit none keeps the parent directory. */
 export function resolveIsolation(requested: unknown, definition?: "none" | "worktree"): "none" | "worktree" {
@@ -61,7 +60,8 @@ function applyAgentsConfiguration(agents: Record<string, unknown>, path: string,
         for (const [uiKey, uiValue] of Object.entries(ui)) {
           if (uiKey === "inlineToolDisplay") {
             if (uiValue !== "rich" && uiValue !== "summary") throw new Error(`${path}: agents.ui.inlineToolDisplay must be "rich" or "summary"`);
-            result.ui.inlineToolDisplay = uiValue;
+            // Retired selector: accept old known values without retaining a display mode.
+            // Pi's expanded state is now the only detail-disclosure control.
           } else if (uiKey === "fleetViewPlacement") {
             if (uiValue !== "belowEditor" && uiValue !== "aboveEditor") throw new Error(`${path}: agents.ui.fleetViewPlacement must be "belowEditor" or "aboveEditor"`);
             result.ui.fleetViewPlacement = uiValue;

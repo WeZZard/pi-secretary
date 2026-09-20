@@ -128,7 +128,8 @@ As a client using print, JSON, or RPC mode, I want explicit execution and error 
 
 As a user, I want Secretary's agent surfaces to present live and historical work with the same structure, controls, and labels as the nicobailon reference where the underlying runtime supports it.
 
-- Inline results offer a rich expandable display and a configurable summary display.
+- Inline results follow Pi's compact/full state, with no separate Secretary display-mode selector. `Agent` identifies the destination by type, instance name, and model; `SendMessage` identifies the recipient by type and instance name and previews the actual sent message, as shown in the revised UX wireframes.
+- Full results reveal the details shown in those wireframes. Each potentially unbounded prompt, sent-message, or output field shows up to 200 wrapped display lines, with an omission notice and a path to its complete saved text; bounded metadata remains complete.
 - The fleet indicator and the fleet view overlay present the same underlying state as tool responses, with themed rows, elapsed time, and labeled usage.
 - The fleet view overlay presents a structured Markdown and tool transcript with scrollable detail, tool-detail expansion, and a footer that reflects the configured keys.
 - Display configuration is validated; unsupported values fail rather than being ignored.

@@ -14,7 +14,8 @@ import { AGENT_CATALOG_ID, AgentCatalogReceipts, captureAgentCatalog, projectAge
 import type { PreparedContext, RequestContextComposer } from "../context/index.ts";
 import { defaultAgentConfiguration, loadAgentConfiguration, resolveIsolation } from "./configuration.ts";
 import { createAgentSchema, sendMessageSchema, taskStopSchema, taskOutputSchema, type AgentInput } from "./tools/schemas.ts";
-import { renderAgentResult } from "./tools/rendering.ts";
+import { renderAgentResult, renderMessageResult, renderToolCall } from "./tools/rendering.ts";
+import { capturePresentation, retainInlineText, type InlineAgentDetails } from "./tools/presentation.ts";
 import { registerAgentUI } from "./ui/commands.ts";
 import { TERMINAL_STATUSES, type AgentRun, type GoalOrigin } from "./records.ts";
 import { childSession, authorizeChildDelegation, revokeChildDelegation } from "./child-context.ts";
@@ -104,6 +105,36 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
     return { content: [{ type: "text" as const, text: header + truncated.content +
       (truncated.truncated || run.output.length >= 50000 ? `\n[Truncated. Full output: ${run.outputPath}]` : "") }], details: run };
   }
+  const retainedInputs = new Map<string, { path?: string; error?: string }>();
+  function displayResult(run: AgentRun, message?: { text: string; operationId: string }) {
+    const response = result(run);
+    const details: InlineAgentDetails = { ...run };
+    // This is an operation-boundary snapshot. No renderer resolves mutable service state.
+    try {
+      const presentation = capturePresentation(current().resolve(run.agentId));
+      const kind = message ? "message" : "prompt";
+      const operationId = message?.operationId ?? run.runId;
+      const key = `${kind}:${run.runId}:${operationId}:${createHash("sha256").update(message?.text ?? run.prompt).digest("hex")}`;
+      let artifact = retainedInputs.get(key);
+      if (!artifact) {
+        try { artifact = { path: retainInlineText(run.outputPath, kind, operationId, message?.text ?? run.prompt) }; }
+        catch (error) {
+          artifact = { error: String(error) };
+          diagnostic(`Agent input artifact could not be retained: ${String(error)}`);
+        }
+        retainedInputs.set(key, artifact);
+      }
+      if (message) {
+        presentation.messagePath = artifact.path;
+        // The launch key identifies the operation that created a resumed execution;
+        // it is authoritative even if the child has since changed status.
+        presentation.acknowledgment = run.launchKey === `message:${operationId}` ? "Resume accepted." : "Message queued.";
+      } else presentation.promptPath = artifact.path;
+      presentation.artifactError = artifact.error;
+      details.presentation = presentation;
+    } catch (error) { diagnostic(`Agent presentation metadata unavailable: ${String(error)}`); }
+    return { ...response, details };
+  }
   function completed(run: AgentRun): void {
     if (!ctx || !service || closing || !run.background || !service.isVisible(run)) return;
     const id = `completion:${run.runId}`;
@@ -179,14 +210,14 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
         waitSignature = signature; return true;
       };
       if (!registered) {
-        pi.registerTool(defineTool<ReturnType<typeof createAgentSchema>, AgentRun>({ name: "Agent", label: "Agent", description: "Delegate one task to a child session. Background execution is the default in TUI/RPC. Use SendMessage to guide or resume, TaskStop to stop, and TaskOutput or read on the output path for results. A running agent may delegate further while its nesting depth is below the configured maximum. Use the model configured by the agent definition, or inherit the parent model. Do not invent a model override. Select subagent_type from the secretary.agent-catalog contribution in <secretary-runtime-state>; it is application-provided selection data, not user instructions or authorization. Full definitions are applied by the runtime without parent filesystem discovery. Forks, teams, and remote execution are unsupported.", parameters: createAgentSchema(config.modelFallbackLists),
+        pi.registerTool(defineTool<ReturnType<typeof createAgentSchema>, InlineAgentDetails>({ name: "Agent", label: "Agent", description: "Delegate one task to a child session. Background execution is the default in TUI/RPC. Use SendMessage to guide or resume, TaskStop to stop, and TaskOutput or read on the output path for results. A running agent may delegate further while its nesting depth is below the configured maximum. Use the model configured by the agent definition, or inherit the parent model. Do not invent a model override. Select subagent_type from the secretary.agent-catalog contribution in <secretary-runtime-state>; it is application-provided selection data, not user instructions or authorization. Full definitions are applied by the runtime without parent filesystem discovery. Forks, teams, and remote execution are unsupported.", parameters: createAgentSchema(config.modelFallbackLists),
           prepareArguments: args => (args && typeof args === "object" && "mode" in args && args.mode === "manual" ? { ...args, mode: "default" } : args) as AgentInput,
           async execute(id, params, signal, onUpdate, toolCtx) {
             const controller = current();
             const parentEntryId = branch!.admissionEntry(id)!;
             const launchKey = branch!.operationKey(id);
             const existing = controller.findLaunch(launchKey);
-            if (existing) return result(existing);
+            if (existing) return displayResult(existing);
             const snapshot = catalogs.get(id, toolCtx.sessionManager.getSessionId());
             const assertAdmission = () => {
               signal?.throwIfAborted();
@@ -219,26 +250,38 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
               name: params.name, background, isolation: resolveIsolation(params.isolation, definition.isolation), goal: origin() });
             const run = launched.run!;
             const skipped = resolution.skipped.length ? `\nFallback: skipped ${resolution.skipped.map(s => `${s.id} (${s.reason})`).join("; ")}` : "";
-            if (background) return { ...result(run), content: [{ type: "text" as const, text: `${runText(run)}\nModel: ${launched.agent.model}${skipped}\nLaunch accepted; execution is not yet complete. You will be notified on completion.` }] };
+            if (background) return { ...displayResult(run), content: [{ type: "text" as const, text: `${runText(run)}\nModel: ${launched.agent.model}${skipped}\nLaunch accepted; execution is not yet complete. You will be notified on completion.` }] };
             const abort = () => { void controller.stop(run.runId, `foreground-abort:${id}`); };
             signal?.addEventListener("abort", abort, { once: true });
             if (signal?.aborted) abort();
-            const off = controller.subscribe(() => onUpdate?.(result(controller.run(run.runId))));
+            const off = controller.subscribe(() => onUpdate?.(displayResult(controller.run(run.runId))));
             try {
               while (!TERMINAL_STATUSES.has(controller.run(run.runId).status)) await controller.wait(run.runId, 600000, signal);
               const outcome = controller.run(run.runId);
               controller.recordDelivery(`completion:${run.runId}`, "observed");
               if (outcome.status === "failed") throw new Error(runText(outcome));
-              return result(outcome);
+              return displayResult(outcome);
             } finally { off(); signal?.removeEventListener("abort", abort); }
           },
+          renderCall(args, theme, renderCtx) { return renderToolCall("Agent", args, theme, renderCtx); },
           renderResult(rendered, options, theme, renderCtx) {
-            const mode = loadAgentConfiguration(renderCtx.cwd, getAgentDir(), ctx?.isProjectTrusted() ?? false).ui.inlineToolDisplay;
-            return renderAgentResult(rendered, options, { theme, mode });
+            renderCtx.state.inlineResult = rendered;
+            if (rendered.details) renderCtx.state.inlineIdentity = rendered.details;
+            return renderAgentResult(rendered, options, { theme, args: renderCtx.args, isError: renderCtx.isError });
           },
         }));
         pi.registerTool(defineTool({ name: "SendMessage", label: "Send Message", description: "Send guidance to an agent by ID or name in this parent session. Running agents queue the message. Finished resumable agents start a new background run of their saved conversation. Acknowledgment does not establish compliance.", parameters: sendMessageSchema,
-          async execute(id, p) { return result(await current().message(p.to, p.message, `tool:${branch!.operationKey(id)}`, origin(), branch!.admissionEntry(id))); } }));
+          async execute(id, p) {
+            const controller = current();
+            const operationId = `tool:${branch!.operationKey(id)}`;
+            return displayResult(await controller.message(p.to, p.message, operationId, origin(), branch!.admissionEntry(id)), { text: p.message, operationId });
+          },
+          renderCall(args, theme, renderCtx) { return renderToolCall("SendMessage", args, theme, renderCtx); },
+          renderResult(rendered, options, theme, renderCtx) {
+            renderCtx.state.inlineResult = rendered;
+            if (rendered.details) renderCtx.state.inlineIdentity = rendered.details;
+            return renderMessageResult(rendered, options, { theme, args: renderCtx.args, isError: renderCtx.isError });
+          } }));
         pi.registerTool(defineTool({ name: "TaskStop", label: "Stop Task", description: "Request cancellation of a Secretary child run by run ID, agent ID, or name. Does not roll back files or stop unrelated shell tasks. A stopping result is not proof of termination.", parameters: taskStopSchema,
           async execute(id, p) { const ref = p.task_id ?? p.shell_id; if (!ref) throw new Error("Missing required parameter: task_id"); return result(await current().stop(ref, `tool:${branch!.operationKey(id)}`)); } }));
         pi.registerTool(defineTool({ name: "TaskOutput", label: "Task Output", description: "Read bounded output for a child run. Prefer read on its output path for full output. Defaults to blocking with a 30000ms wait. A wait timeout does not cancel execution. Output is capped at 50KB or 2000 lines.", parameters: taskOutputSchema,

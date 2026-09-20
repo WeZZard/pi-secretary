@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,6 +17,7 @@ import { Inspector } from "../../extensions/secretary/agents/ui/inspector.ts";
 import { transition } from "../../extensions/secretary/agents/ui/reducer.ts";
 import type { AgentSnapshot, RunStatus } from "../../extensions/secretary/agents/records.ts";
 
+initTheme("dark", false);
 const bindings: ScenarioBindings = {
   "ACC-SA-02-01": async ({ t }) => {
     const installed = await agentHarness(t, { mode: "rpc" });
@@ -423,19 +425,25 @@ const bindings: ScenarioBindings = {
   },
   "ACC-SA-UI-15": async ({ t }) => {
     const root = mkdtempSync(join(tmpdir(), "inline-mode-")); t.after(() => rmSync(root, { recursive: true, force: true }));
-    writeFileSync(join(root, "secretary.json"), JSON.stringify({ agents: { ui: { inlineToolDisplay: "summary" } } }));
-    const config = loadAgentConfiguration(root, root, false);
-    assert.equal(config.ui.inlineToolDisplay, "summary");
     const record = snapshot(); record.run!.status = "succeeded"; record.run!.endedAt = 4600; record.run!.startedAt = 1000;
+    record.run!.background = false;
+    record.run!.prompt = "Original delegated prompt";
+    record.run!.output = "Original child result";
     const result = { content: [{ type: "text" as const, text: "Agent: a\nStatus: succeeded" }], details: record.run! };
-    for (const expanded of [false, true]) {
-      const lines = renderAgentResult(result, { expanded, isPartial: false }, { mode: config.ui.inlineToolDisplay }).render(100);
-      assert.equal(lines.length, 1, "summary mode is one static row regardless of expansion");
-      assert.match(plain(lines), /✓ a inspection · succeeded/);
+    for (const legacy of ["rich", "summary"]) {
+      writeFileSync(join(root, "secretary.json"), JSON.stringify({ agents: { ui: { inlineToolDisplay: legacy } } }));
+      const config = loadAgentConfiguration(root, root, false);
+      assert.ok(!("inlineToolDisplay" in config.ui), "the accepted legacy key is not a rendering mode");
+      const compact = renderAgentResult(result, { expanded: false, isPartial: false }).render(100);
+      assert.equal(compact.length, 1);
+      assert.match(plain(compact), /^✓ succeeded/);
+      assert.doesNotMatch(plain(compact), /Original delegated prompt|Original child result/);
+      const full = plain(renderAgentResult(result, { expanded: true, isPartial: false }).render(100));
+      assert.match(full, /Prompt:\nOriginal delegated prompt\nResult:\nOriginal child result/);
     }
-    record.run!.status = "running";
-    const rich = plain(renderAgentResult(result, { expanded: false, isPartial: true }, { mode: "rich", now: () => 6500 }).render(100));
-    assert.match(rich, /●/); assert.match(rich, /task: a inspection/); assert.match(rich, /expand for task details/);
+    record.run!.status = "running"; record.run!.endedAt = undefined;
+    const live = plain(renderAgentResult(result, { expanded: false, isPartial: true }, { now: () => 6500 }).render(100));
+    assert.match(live, /● running/); assert.doesNotMatch(live, /task: a inspection/); assert.match(live, /expand.*task details.*result/i);
   },
   "ACC-SA-UI-16": async ({ t }) => {
     const root = mkdtempSync(join(tmpdir(), "keybindings-")); t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -513,5 +521,5 @@ const bindings: ScenarioBindings = {
 };
 runFeatures(["agent-inspection", "ui-state-machine"], bindings, {
   "agent-inspection": "1ac61f8c5d98c2ae6ada2489fe15e91f361400ce46645f242be33380641889c8",
-  "ui-state-machine": "c0873ced4c4b5ac72feac4ba0d4d6a66412e267f37d2caeb1b70a3e8cac33113",
+  "ui-state-machine": "e06e01393574e0f5f42ec636a349a2df9d8add47023d0120838025447a0451b4",
 });

@@ -20,6 +20,7 @@ The default `npm test` and `npm run verify` commands do not include the paid-pro
 
 ## Procedures and references
 
+- The [inline tool wireframe tests](inline-tool-wireframes.md) compare registered tools' composed Pi rows against UX wireframes A–I and are included in the default test gate. Run `python3 scripts/record-inline-tools.py` for the separate deterministic keyboard-driven compact/full walkthrough; it launches an isolated real Pi PTY, records fresh evidence under `test-results/`, and checks the replayed terminal grids.
 - Follow [Subagent E2E Tests](subagent-e2e.md) for provider setup, interaction modes, fixture layout, and live-run evidence.
 - The shared-store concurrency case `tests/e2e/cases/interactive/goal-widget-storage-lock.test.ts` ([architecture §13.7](../arch/architecture.md#137-verification-requirements)) drives the interactive TUI with a real provider while an external process holds a write transaction on the goals database; its fast complement asserts the storage read succeeds under the lock. Run it with the interactive suite (`npm run test:e2e:interactive`) or by file path.
 - Follow the [deterministic TUI recording procedure](../../doc/acceptance/tui-recording.md) for the longer inspector and keyboard walkthrough.

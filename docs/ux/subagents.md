@@ -15,6 +15,9 @@
 - Closing a view is different from stopping execution.
 - A completed execution is different from a completed user objective.
 - The UI and tool responses report the same underlying state.
+- Tool rendering uses Pi's compact and full states, not a separate Secretary display-mode selector.
+- Compact results prioritize the destination and operation according to the wireframes. `Agent` identifies the agent type, instance, and model; `SendMessage` identifies the recipient and previews the actual sent message. Compact `Agent` does not repeat the task prompt or description.
+- Full results retain destination identity and reveal operation details. For `SendMessage`, the full message replaces the compact preview. Potentially unbounded content is limited to 200 wrapped display lines per field, with an omission notice and a saved text file for the complete content.
 
 Foreground detach, live prompt auditing, external job display, and external terminal inspectors remain excluded. The corresponding upstream surfaces are not ported because their runtime features are out of scope. All other upstream controls and configuration are ported.
 
@@ -22,15 +25,208 @@ Foreground detach, live prompt auditing, external job display, and external term
 
 ### 2.1 Inline tool display
 
-- Each `Agent` call displays the agent type, task description, execution mode, and available status.
+**Status:** This section defines the compact/full rendering contract implemented by the registered `Agent` and `SendMessage` tool hooks. [Section 2.1.1](#211-working-inline-tool-wireframes) contains explanatory layouts, not screenshots or human visual approval. [Section 2.1.2](#212-remaining-design-decisions) records implementation policies and scope limits. Executed checks are reported separately in the verification report.
+
+- **Compact** is Pi's collapsed tool-result state. **Full** is Pi's expanded tool-result state. The configured Pi expansion control switches between them; Secretary adds no independent display modes or replacement configuration values.
+- `Agent` uses one identity header: `Agent · <agent type> · <agent name> · <provider/model>`. The model identifies the relevant execution's resolved model, not an assumed parent default or an unresolved fallback-list name.
+- `SendMessage` uses `SendMessage · <agent type> · <agent name>` in both compact and full states. It does not show a model or a separate agent-ID row in these layouts.
+- Identity remains visible across launch, progress, completion, and failure. An unnamed instance uses its agent ID; information that is unresolved or unavailable is labeled accordingly rather than invented.
+- Compact foreground `Agent` results show the identity header and execution status, with activity and statistics during progress. Completed results use F when at least one turn or tool call is recorded; otherwise they use C. Elapsed time alone does not select F. They do not show separate task, model, or foreground-mode rows.
+- A successful compact background launch shows only the identity header with `· background` appended. It does not add a task preview, status body, launch-acknowledgment sentence, or fleet-navigation instruction.
+- Compact `SendMessage` shows the identity header and one preview line derived from the actual sent message, with an ellipsis when truncated. Its optional summary or a generic acknowledgment does not replace the preview. Successful acknowledgment and run metadata appear in the full state, not as extra compact rows.
+- Full `Agent` reveals the delegated prompt, result, and execution metadata in wireframe D's order. Full `SendMessage` replaces its preview with the sent message, then shows `Run` and the operation acknowledgment in wireframe I's order. Sent guidance remains distinct from the child's reply; acceptance does not establish compliance.
+- The bounded metadata shown in the full wireframes is complete. Long values wrap instead of silently losing their suffixes. “Full” does not require adding metadata rows that the edited wireframes omit.
+- Each potentially unbounded prompt, sent-message, and output field shows at most 200 display lines after terminal-width wrapping. The limit applies separately to each field, not to the entire card or bounded metadata. Labels and omission notices remain visible outside that field's content limit.
+- A clipped field has an explicit omission notice and the path to its complete saved text. Prompts and individual sent messages have separate text artifacts; output uses its existing output artifact. A child-output path must not substitute for the complete sent message.
 - A fresh agent with no model override in its launch or definition inherits the main session's active model, not the configured default for new pi sessions. An explicit definition model or fallback list takes precedence over inheritance, and an explicit launch model takes precedence over the definition. Resuming an existing agent retains its recorded model.
-- Two display modes are configurable. Rich mode is the default and allows expansion; summary mode keeps one static result row per call and ignores expansion.
-- A foreground call streams bounded recent activity until it settles. Its card shows the agent name and status glyph, a bounded task line, current activity, a live status line, the configured tool-expansion hint, and available token and duration statistics.
+- The UI removes the Secretary `rich`/`summary` distinction and the `agents.ui.inlineToolDisplay` selector. Only Pi's compact/full state controls detail disclosure. Existing configuration files may retain either known old selector value; it is accepted and ignored, not copied into resolved UI configuration. Unsupported values remain validation errors.
+- A foreground call streams bounded recent activity until it settles. Its compact card retains destination identity, activity, status, the configured tool-expansion hint, and available statistics without a task row. Switching to full reveals available details while execution is still running.
 - Interrupting a foreground `Agent` call requests cancellation of that child. The child's output remains inspectable if the foreground response is interrupted. Cancelling a `TaskOutput` wait stops only the wait.
-- A background call reports the launch identifier and directs the user to FleetView for current activity.
+- The `background` header suffix identifies the launch operation, not successful completion of the child task. Switching to full reveals the prompt, launch identifier, and available operation details.
 - A completed background execution creates a separate completion entry. It does not rewrite the historical launch result. A failed or interrupted completion produces a visible notice in the owning session.
-- The configured pi tool-expansion key reveals task details, result text, and artifact paths in rich mode.
+- The configured pi tool-expansion key reveals complete or explicitly line-limited task or message content, result text, and artifact paths.
 - A truncated result identifies where the full output can be read.
+
+#### 2.1.1 Working inline tool wireframes
+
+**Status:** These layouts evolve the source-derived baseline at revision `4cdd76c` with the user's design edits. The registered renderers implement the compact/full contract; the layouts remain design illustrations, not generated test output or human visual approval. Width handling and unsuccessful variants are specified in Section 2.1.2.
+
+- The scope includes `Agent`, `SendMessage`, `TaskStop`, and `TaskOutput` in the conversation transcript. The fleet indicator and fleet view overlay remain separate surfaces.
+- The examples use illustrative identifiers, paths, output, and statistics rather than measured results.
+- The drawn borders represent the host's padded tool background, not literal border characters. Color and exact terminal dimensions are omitted.
+- `Agent` keeps type, instance name, and model together in its header in both states. `SendMessage` keeps type and instance name together and omits the model. Do not add a separate model row to these layouts.
+- Example G is explicitly a legacy supporting-tool reference, pending refinement of `TaskStop` and `TaskOutput`.
+
+**A. Before a result arrives**
+
+```text
+┌─────────────────────────────────────────────────────────────────────┐
+│ Agent · <agent type> · <agent name> · <provider/model>              │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+- This header shows destination information as it becomes available. Unresolved model or instance information is labeled pending.
+- This initial layout does not add task-preview or foreground-mode rows. Until execution supplies a resolved identity snapshot, unavailable type/name information is labeled explicitly and the model reads `model pending`, not the requested model or fallback-list name.
+
+**B. Foreground progress, compact**
+
+```text
+┌─────────────────────────────────────────────────────────────────────┐
+│ Agent · <agent type> · <agent name> · <provider/model>              │
+│ ● running                                                           │
+│   ⎿  read                                                           │
+│   ⟳ 2 · 3 tools · 6s                                                │
+│   expand for task details and result                                │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+- The live card retains agent type, instance name, and model alongside execution status.
+- There is no compact task line. Switching to full reveals the prompt, subject to the per-field 200-display-line limit.
+- The activity line shows recorded activity, or `thinking…` when running without recorded activity.
+- The example statistics line shows available turn count, tool count, and elapsed time. Any additional usage statistics retain their defined labels.
+- Expansion reveals available details during execution. The rendered hint identifies the configured expansion key.
+
+**C. Completed result, compact**
+
+```text
+┌─────────────────────────────────────────────────────────────────────┐
+│ Agent · <agent type> · <agent name> · <provider/model>              │
+│ ✓ succeeded                                                         │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+- This compact result contains only the identity header and outcome. It adds no task description, answer preview, execution-mode label, or metadata body.
+- Switching to full reveals the workspace information, prompt, and result shown in D.
+
+**D. Completed result, full**
+
+```text
+┌─────────────────────────────────────────────────────────────────────┐
+│ Agent · <agent type> · <agent name> · <provider/model>              │
+│ ✓ succeeded                                                         │
+│ Agent ID: agent_1                                                   │
+│ Run: run_1                                                          │
+│ Working directory: /repo                                            │
+│ Isolation: none (parent working directory).                         │
+│ Output: /output/agent_1.txt                                         │
+│ Partial: false                                                      │
+│ Prompt:                                                             │
+│ Inspect authentication and identify its entry points.               │
+│ Result:                                                             │
+│ Found two authentication entry points.                              │
+│ The session middleware validates incoming credentials.              │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+- The full state adds the prompt, execution details, and result text in the illustrated order. The label remains `Run`, as shown in the edited wireframe.
+- Bounded metadata is complete and wraps when necessary. Prompt and output each use the 200-wrapped-display-line limit; any omitted content is identified with its complete text artifact path.
+- Expansion preserves readable message structure rather than silently discarding line endings or clipping long lines horizontally.
+
+**E. Background launch, compact**
+
+```text
+┌─────────────────────────────────────────────────────────────────────┐
+│ Agent · <agent type> · <agent name> · <provider/model> · background │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+- Background execution is the default in TUI sessions. A successful compact launch result consists of this one header, including the `background` suffix.
+- The suffix is not a child-completion status. No separate status or acknowledgment row is added to this successful compact layout.
+- Switching to full reveals the prompt, launch identifier, and other available details without implying task completion.
+- The historical launch result does not become a continuously updated progress card. Completion arrives as a separate conversation message.
+
+**F. Compact presentation with statistics**
+
+```text
+┌────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Agent · <agent type> · <agent name> · <provider/model>                                         │
+│ ✓ succeeded · ⟳ 2 · 3 tools · 6s                                                               │
+└────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+- This is a compact completion variant with statistics on the outcome line. It is not a separate display mode and adds no task or foreground label.
+- Switching to full follows D's detail-disclosure rules.
+- F is selected when the execution records at least one turn or tool call. C is selected otherwise. Both use the same full state, and neither depends on a separate display setting.
+
+**G. Legacy supporting-tool reference**
+
+```text
+┌─────────────────────────────────────────────────────────────────────┐
+│ TaskOutput                                                          │
+│ Agent: agent_1                                                      │
+│ Run: run_1                                                          │
+│ Status: succeeded                                                   │
+│ Description: Inspect authentication                                 │
+│ Model: provider/model                                               │
+│ Working directory: /repo                                            │
+│ Isolation: none (parent working directory).                         │
+│ Output: /output/agent_1.txt                                         │
+│ Partial: false                                                      │
+│                                                                     │
+│ ... (<remaining count> more lines, <shortcut> to expand)            │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+- `TaskStop` and `TaskOutput` retain the host's default execution-report rendering. `SendMessage` now uses H/I instead of this legacy layout.
+- The collapsed fallback shows the first ten text lines, which can hide the answer. Expansion reveals all returned text, subject to the tool's upstream output limits.
+- The fallback wraps long lines. Full custom `Agent` and `SendMessage` details also wrap, with per-field limits rather than a metadata-prefix preview.
+- `TaskStop` retains its legacy report rather than gaining a dedicated cancellation-request layout.
+- `TaskOutput` has no dedicated waiting or timeout layout. Its timeout explanation follows the execution report and can be hidden by the preview.
+
+**H. `SendMessage`, compact**
+
+```text
+┌─────────────────────────────────────────────────────────────────────┐
+│ SendMessage · <agent type> · <agent name>                           │
+│ Message: Focus on session validation, then check whether…           │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+- The one-line preview comes from the actual sent message. An ellipsis indicates omitted content.
+- The destination's type and instance name remain visible. The model, run identifier, and successful acknowledgment are omitted in this compact layout.
+- The full state shows the acknowledgment. A rejected call additionally shows an explicit error in compact state; it never looks like successful delivery.
+
+**I. `SendMessage`, full**
+
+```text
+┌─────────────────────────────────────────────────────────────────────┐
+│ SendMessage · <agent type> · <agent name>                           │
+│ Message:                                                            │
+│ Focus on session validation, then check whether expired             │
+│ credentials are rejected.                                           │
+│ Report any untested paths separately.                               │
+│ Run: run_1                                                          │
+│ Message queued.                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+- The full sent message replaces the one-line preview. Long lines wrap and message structure remains readable.
+- If the message exceeds 200 wrapped display lines, an explicit notice gives the path to that message's complete saved text. The child-output artifact is not a substitute.
+- Other available operation details remain distinct from the child's response or execution outcome.
+
+**Failure and recovery boundaries**
+
+- Structured `Agent` results use status symbols and explicit labels, including `✗` for failure or cancellation, `!` for interruption, and `■` for partial output or cancellation in progress.
+- A thrown error may lack structured run details. The header uses only identity available from the call; the compact body explicitly shows the error, while full state provides its bounded detail. It does not manufacture a successful outcome or resolve identity from another execution.
+- A returned tool result is not proof that the child completed successfully. Launch acknowledgment, message acceptance, a pending stop request, and an expired wait remain separate from child execution status.
+- If input-artifact retention fails after an operation is accepted, the interface does not relabel the operation as rejected or claim that a file was saved. A diagnostic identifies the storage failure; full detail explains unavailable retention, and any clipping notice states that the full artifact is unavailable.
+
+#### 2.1.2 Remaining design decisions
+
+**Confirmed direction:** Pi provides the only two presentation states: compact and full. `Agent` uses a single type/name/model header; `SendMessage` uses a type/name header without the model. Compact foreground completion follows C or F, and successful compact background launch follows E. Full content follows D and I. Each unbounded field is limited to 200 wrapped display lines with a path to its complete saved text.
+
+**Implementation policies:**
+
+- C applies when no turns or tool calls are recorded; F applies when either count is nonzero. Full detail is identical for both.
+- Identity headers and full metadata wrap on narrow terminals. Compact message/activity previews use a visible ellipsis. At widths too small to contain a single wide Unicode glyph, an ellipsis represents that undisplayable glyph; increasing width restores the readable content.
+- Pending identity is labeled pending or unavailable. Resumption uses `Resume accepted.` in full message detail; queued guidance uses `Message queued.`. Rejections show errors, and historical results lacking acknowledgment metadata explicitly say that it is unavailable.
+- Known retired selector values are accepted and ignored for configuration compatibility. There is no separate mode to select or disable full detail.
+- Saved text artifacts follow the execution's artifact-retention boundary. Old sessions without those files remain inspectable but do not advertise invented artifact paths.
+- `TaskStop` and `TaskOutput` remain unchanged in this work; any operation-specific redesign needs separate wireframes.
+
+**Verification boundary:** Automated component/host tests and an isolated TUI walkthrough are different evidence. Neither establishes human visual approval; consult the verification report for executed results and limits.
+
+**Source references:** The original baseline and implementation differences are derived from the [tool registrations](../../extensions/secretary/agents/installation.ts), [inline result rendering](../../extensions/secretary/agents/tools/rendering.ts), and [execution-report text](../../extensions/secretary/agents/presentation.ts). The [inline rendering tests](../../tests/agents/inline-rendering.test.ts) describe component-level cases, not a full host walkthrough. The inspected host fallback uses a tool-name header and a ten-line collapsed text preview; host-version changes may alter that fallback.
 
 ### 2.2 Fleet indicator
 

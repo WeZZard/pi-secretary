@@ -128,13 +128,14 @@ Feature: Keep interaction state consistent during asynchronous agent activity
     And the fleet indicator and tool responses show the same underlying state.
 
   @ACC-SA-UI-15 @proposed @SA-10
-  Scenario: Render the Agent call in the configured inline display mode.
-    Given agents.ui.inlineToolDisplay is "summary".
-    When an Agent call completes.
-    Then exactly one static result row is shown for the call.
-    And expansion does not change the rendered row.
-    When agents.ui.inlineToolDisplay is "rich" and a foreground call is running.
-    Then the card shows the agent name, status glyph, bounded task line, activity, live status, and an expansion hint.
+  Scenario: Use host compact and full state rather than a Secretary inline display mode.
+    Given legacy agents.ui.inlineToolDisplay values "rich" and "summary" are accepted and ignored.
+    When an Agent call completes in compact state.
+    Then its result body shows the outcome without the original prompt or child result.
+    When the host expands that call.
+    Then its result body exposes the original prompt and child result.
+    When a foreground call is running in compact state.
+    Then its body shows progress and an expansion hint without a task preview.
 
   @ACC-SA-UI-16 @proposed @SA-10
   Scenario: Reflect configured overlay keybindings in behavior and hints.

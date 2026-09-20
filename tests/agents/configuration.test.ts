@@ -19,7 +19,7 @@ function fixture(t: TestContext) {
 
 test("configuration defaults, trusted overlay, and nonmutation", (t) => {
   const { cwd, agentDir, put } = fixture(t);
-  assert.deepEqual(loadAgentConfiguration(cwd, agentDir, false), { modelFallbackLists: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, maxNestingDepth: 3, ui: { inlineToolDisplay: "rich", fleetViewPlacement: "belowEditor", fleetKeybindings: {} } });
+  assert.deepEqual(loadAgentConfiguration(cwd, agentDir, false), { modelFallbackLists: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, maxNestingDepth: 3, ui: { fleetViewPlacement: "belowEditor", fleetKeybindings: {} } });
   const global = join(agentDir, "secretary.json"), project = join(cwd, CONFIG_DIR_NAME, "secretary.json");
   const content = JSON.stringify({ unrelated: true, agents: { modelFallbackLists: { fast: ["p/one", "p/two"], cheap: [] }, maxConcurrent: 2 } });
   put(global, content);
@@ -57,13 +57,13 @@ test("ui configuration accepts documented values and project overrides merge ove
   const global = join(agentDir, "secretary.json"), project = join(cwd, CONFIG_DIR_NAME, "secretary.json");
   put(global, JSON.stringify({ agents: { ui: { inlineToolDisplay: "summary", asyncWidget: false, fleetKeybindings: { stop: ["shift+t"], close: ["ctrl+q"] } } } }));
   const base = loadAgentConfiguration(cwd, agentDir, false);
-  assert.equal(base.ui.inlineToolDisplay, "summary");
+  assert.ok(!Object.hasOwn(base.ui, "inlineToolDisplay"), "the retired selector is accepted but cannot control rendering");
   assert.ok(!Object.hasOwn(base.ui, "asyncWidget"), "the removed asyncWidget key is recognized and ignored (§12.6.5)");
   assert.equal(base.ui.fleetViewPlacement, "belowEditor");
   assert.deepEqual(base.ui.fleetKeybindings, { stop: ["shift+t"], close: ["ctrl+q"] });
   put(project, JSON.stringify({ agents: { ui: { fleetViewPlacement: "aboveEditor", fleetKeybindings: { stop: ["shift+w"] } } } }));
   const trusted = loadAgentConfiguration(cwd, agentDir, true);
-  assert.equal(trusted.ui.inlineToolDisplay, "summary", "project omission inherits the global value");
+  assert.ok(!Object.hasOwn(trusted.ui, "inlineToolDisplay"), "the retired selector is not inherited into resolved configuration");
   assert.equal(trusted.ui.fleetViewPlacement, "aboveEditor");
   assert.deepEqual(trusted.ui.fleetKeybindings, { stop: ["shift+w"], close: ["ctrl+q"] }, "action-level overrides merge; sibling actions are retained");
   const untrusted = loadAgentConfiguration(cwd, agentDir, false);

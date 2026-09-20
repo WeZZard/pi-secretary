@@ -28,7 +28,7 @@
 - Normal print and JSON invocations use foreground execution when neither the caller nor the definition requires background execution. An explicit background request or a definition that requires background execution is rejected in those modes. `SendMessage` resumption of an idle agent is also rejected there because that operation starts background work and has no foreground parameter. This avoids accepting work that the host will immediately terminate.
 - Reload, new-session, resume-to-another-session, and parent-session fork stop the departing session's children rather than transferring live execution.
 - The initial concurrency limit is four active child executions, and the pending queue limit is sixteen. These are configurable limits, not measured performance claims.
-- The TUI ports nicobailon's surfaces onto the existing runtime: rich inline tool display with a summary alternative, the unified fleet indicator below the editor, and the split fleet view overlay with configurable overlay keybindings. No runtime feature beyond the existing scope is added for display purposes.
+- The TUI uses Pi's compact/full state for inline tool detail, the unified fleet indicator below the editor, and the split fleet view overlay with configurable overlay keybindings. Inline tools have no independent Secretary display-mode selector. The revised inline rendering contract in Section 12.6.7 is pending implementation and user review; no execution capability is added for display purposes.
 - A child conversation retains its resolved definition and model across resumption, subject to current permission and trust checks.
 - Agent records and transcripts are retained until explicit removal outside this release. The host does not perform automatic transcript deletion or worktree commits.
 
@@ -959,7 +959,7 @@ This section defines how nicobailon's TUI surfaces map onto Secretary components
 
 | Upstream surface | Upstream source | Secretary component | Data source |
 | --- | --- | --- | --- |
-| Inline tool display, rich and summary modes | `src/tui/render.ts` (`renderSubagentSummary`, `renderSubagentResult`) | `tools/rendering.ts` | The tool result details and live `AgentSnapshot` |
+| Inline tool display, using Pi compact/full state | `src/tui/render.ts` is the historical reference; the revised UX wireframes define the target layout. | `tools/rendering.ts` and registered tool rendering hooks | Execution-bound presentation details and the actual tool arguments, as specified in Section 12.6.7 |
 | Fleet indicator widget | `src/tui/fleet-status.ts` | `ui/fleet-view.ts` | `AgentService` view-model snapshots |
 | Async widget | `src/tui/render.ts` (`buildWidgetLines`, `renderWidget`) | Removed; its rows are merged into the fleet indicator | `AgentService` view-model snapshots |
 | Fleet view overlay (inspector) | `src/tui/fleet.ts` | `ui/inspector.ts` | `AgentService` view-model snapshots and the structured transcript reader |
@@ -1013,6 +1013,8 @@ The fleet view overlay adds presentation-layer components that upstream implemen
 - The list viewport scrolls to retain the selected row when the roster exceeds its height. Agent selection and changes in label length do not move the divider.
 - Selection circles per row so the filled circle marks the selected row and the hollow circle marks the rest. List rows carry only the circle and the agent name; run status, stats, and activity render in the transcript pane's status header. The former status-glyph alphabet is not used on these rows, and color is never the only channel.
 - The navigation list presents exactly one drill level at a time, derived from the `InspectorLevel` of Section 12.1.6, and renders the bounded breadcrumb for that level.
+`agents.ui.inlineToolDisplay` is retired. Pi's `expanded` rendering state alone selects compact (`false`) or full (`true`) presentation; there is no replacement mode setting. Known legacy values are validated and ignored rather than copied into `AgentUiConfiguration`, allowing existing files to load without preserving old rendering behavior. Unknown values remain validation errors.
+
 - The transcript viewport, scrolling, and follow behavior of Sections 12.1.3 and 12.4 render the structured events of Section 12.6.2. A fixed status header renders above the viewport: name, status label, and stats on the first line, current activity on the second, and a single divider between the header and the viewport. The header is not part of the scroll anchor or the follow state. Tool-detail expansion toggles the bounded argument and output blocks. In the mouse-enabled alternate-screen host, SGR wheel events over the transcript pane scroll the transcript and wheel events over the list move the selection; both reuse the existing state machines and add no states. Dialogs return a handled result for wheel events so the host cannot forward the raw mouse sequence into the text input. Main-screen mode retains terminal-owned wheel scrolling; keyboard scrolling remains available in both modes.
 - The footer enumerates only the actions available for the selected record and reflects configured keybindings. It prioritizes page-scroll and close hints when the width cannot accommodate every action.
 
@@ -1024,7 +1026,6 @@ The `agents` configuration object gains an optional `ui` object with validated k
 
 | Key | Values | Default |
 | --- | --- | --- |
-| `agents.ui.inlineToolDisplay` | `"rich"` or `"summary"` | `"rich"` |
 | `agents.ui.fleetViewPlacement` | `"belowEditor"` or `"aboveEditor"` | `"belowEditor"` |
 | `agents.ui.fleetKeybindings` | Overlay-level action-to-key-list overrides | Upstream defaults |
 
@@ -1037,6 +1038,27 @@ The `agents.ui` values are consumed on the display path: the widgets re-resolve 
 The `/secretary` configuration menu edits the user-global `secretary.json`. Each menu mutation validates the resulting `agents` object against the same rules as file loading, including unknown-key rejection, before writing it; a failed validation or write leaves the previous configuration in effect. Project-level overrides are not edited through the menu in this release. Menu navigation and editing keys are fixed and are specified in the [interaction design's navigation table](../ux/subagents.md#4-navigation-and-accessibility).
 
 #### 12.6.6 Excluded surfaces
+#### 12.6.7 Inline compact/full rendering contract
+
+**Status:** This is the implemented technical boundary for the revised [UX Section 2.1](../ux/subagents.md#21-inline-tool-display). Verification evidence and its limits are recorded separately in the testing report.
+
+- The host's expansion state is the only detail selector. Registered `Agent` and `SendMessage` call/result hooks compose one destination header and the appropriate body, without an additional host-name header or separate Secretary mode.
+- `Agent` uses the type/name/model header shown in A–F. `SendMessage` uses the type/name header shown in H/I and omits the model. The header and body contents follow the edited wireframes rather than a generic prefix of the model-facing text report.
+- `InlineAgentDetails` retains every existing `AgentRun` field at the top level and adds optional `presentation` metadata with `version: 1`, definition type, instance name, recorded model, cwd, workspace lines, input artifact paths, artifact failure information, and an optional operation acknowledgment. `installation.ts` captures this snapshot at the operation boundary; renderers do not resolve mutable live identity. Legacy results without the metadata use call arguments and explicit unavailable labels rather than parsing the generic text report.
+- The actual call arguments supply the delegated prompt and sent message. The optional `SendMessage.summary` field and child output are not substitutes for sent guidance. An operation acknowledgment distinguishes queued guidance from accepted resumption and does not assert instruction compliance.
+- A successful compact background result is the one-line identity header with the `background` suffix. Later completion does not rewrite that historical launch result. Pending headers do not assume a requested model is resolved. Thrown errors render explicit bounded error text; a row retains an identity snapshot already observed in progress, while replay of an error without such metadata uses only available call arguments.
+- Full `Agent` shows the bounded metadata, prompt, and result in D's order. Full `SendMessage` replaces the preview with the original message, followed by `Run` and acknowledgment as in I. Expansion during foreground execution reveals available details without changing execution state.
+- Untrusted content is sanitized before trusted theme styling. Compact message previews collapse whitespace to one line and use a visible ellipsis when clipped. Full content preserves line structure and wraps by terminal display width.
+- Each unbounded prompt, sent-message, and output section is limited to 200 wrapped display lines at the current width. Its label and omission notice are outside the content limit. Bounded metadata is wrapped completely rather than charged against a global card limit.
+- The exact original prompt and each individual sent message are retained as separate text artifacts associated with the relevant operation. Full output retains its existing output artifact. An omission notice names the correct artifact for that field; output is not presented as a substitute for a message artifact.
+- Artifact generation belongs to operation handling, not painting. Rendering must not write files, perform shared-store reads, or create new work. Artifact paths must refer to successfully retained content; unavailable historical content must not be represented as a file that exists.
+- Input files live beside the execution's output file as `prompt-<sha256>.txt` or `message-<sha256>.txt`. The digest covers the operation identifier and original text; retries reuse matching regular files, while distinct guidance operations receive distinct files. Files are created exclusively with mode `0600`; newly created directories use `0700`. Existing files are opened without following symlinks and verified before reuse. They share the existing run-artifact retention boundary and may contain sensitive instructions.
+- Retention failure after acceptance does not turn an accepted launch/message into a rejected operation. The result omits the failed path, records an artifact diagnostic, and full rendering explains unavailable retention. Truncated legacy fields without a retained path likewise state that the artifact is unavailable.
+- Compact completion selects the statistics variant when `turnCount > 0 || toolCount > 0`; elapsed time alone does not select it. Both variants have the same full view. All header and bounded metadata values wrap by terminal display width; an ellipsis represents a glyph wider than the entire available width.
+- The call-hook component reads shared row state at paint time, after the result hook has published the current snapshot. This prevents a first-paint stale header without scheduling a second repaint. The result hook renders only the body. Neither hook reads configuration on the display path, since there is no inline display selector.
+- Tool schemas, model-facing text, headless output, runtime state transitions, and `TaskStop`/`TaskOutput` behavior remain unchanged by the layout revision. Compatibility work must preserve existing result-detail consumers and saved sessions.
+- Verification must exercise registered hooks through the real host tool-row component, including first result paint, later updates, compact/full toggling, and replay. Component checks do not replace a keyboard-driven TUI walkthrough or human approval.
+
 
 The following upstream surfaces are not ported because they require runtime features outside Section 1.1. No placeholder or disabled control is shown for them.
 
