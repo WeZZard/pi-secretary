@@ -25,12 +25,16 @@ export const DEFAULT_INSPECTOR_KEYBINDINGS: ResolvedInspectorKeybindings = {
   pageDown: ["pageDown"],
   refresh: ["r", "shift+r"],
   steer: ["s"],
-  stop: ["shift+d"],
-  toggleTools: ["x", "shift+x", "ctrl+o"],
+  stop: ["shift+x", "x", "shift+d"],
+  toggleTools: ["o", "ctrl+o"],
   drillIn: ["return", "right"],
   drillOut: ["left"],
   toggleFinished: ["a"],
 };
+
+export const matchesStopSelected = (data: string): boolean => matchesKey(data, "x") || matchesKey(data, "shift+x");
+export const matchesStopAll = (data: string): boolean => matchesKey(data, "ctrl+x");
+export const CANCELLATION_HINT = "X stop selected · Ctrl+X stop all";
 
 export function resolveInspectorKeybindings(config?: InspectorKeybindingsConfig): ResolvedInspectorKeybindings {
   return Object.fromEntries(INSPECTOR_ACTIONS.map(action => [action, config?.[action] ?? DEFAULT_INSPECTOR_KEYBINDINGS[action]])) as ResolvedInspectorKeybindings;
@@ -44,6 +48,9 @@ export function validateInspectorKeybindings(value: unknown, label: string): Ins
     if (!(INSPECTOR_ACTIONS as readonly string[]).includes(action)) throw new Error(`${label}.${action} is not a supported inspector action`);
     if (!Array.isArray(bindings) || !bindings.length || bindings.some(binding => typeof binding !== "string" || !binding.trim())) {
       throw new Error(`${label}.${action} must be a non-empty array of key strings`);
+    }
+    if (bindings.some(binding => binding.toLowerCase() === "ctrl+x" || (action !== "stop" && ["x", "shift+x"].includes(binding.toLowerCase())))) {
+      throw new Error(`${label}.${action} conflicts with the reserved X selected / Ctrl+X fleet cancellation shortcuts`);
     }
     result[action as InspectorAction] = bindings;
   }

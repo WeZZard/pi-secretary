@@ -63,6 +63,8 @@ As a user or parent agent, I want to send guidance to an existing agent rather t
 As a user or parent agent, I want to stop selected work without aborting unrelated agents or the main conversation.
 
 - A stop request identifies its target and reports when cancellation is still pending.
+- The active fleet indicator displays shortcuts for stopping the selected agent and stopping the current fleet. Users do not need to discover a command or open the inspector to find cancellation.
+- Stopping all captures the current fleet's active executions for confirmation. It does not stop unrelated sessions, later launches, or replacement runs. The main editor retains its draft.
 - Cancellation preserves available output and changes to files.
 - Closing the inspector does not cancel work.
 - Stopping an already finished run does not stop a later run by accident.

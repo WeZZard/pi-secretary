@@ -505,6 +505,50 @@ export class AgentService {
     this.changed(); if (active) this.flushGuidance(run.runId); else this.drain();
     return run;
   }
+  /** Commit the exact parent fleet batch before callbacks can settle work or admit queued runs. */
+  async stopMany(runIds: readonly string[], operationId: string): Promise<{ runIds: string[] }> {
+    const receipt = this.repo.receipt(this.options.parentId, operationId) as { runIds: string[] } | undefined;
+    if (receipt) return receipt;
+    // Validate the entire set before writing. Agent names/IDs and foreign sessions must
+    // never resolve implicitly here: confirmation captures execution identities only.
+    const runs = [...new Set(runIds)].map(id => {
+      const run = this.repo.getRun(id);
+      if (!run || run.parentId !== this.options.parentId) throw rejected(`Run is not in this parent session: ${id}`);
+      return run;
+    });
+    const result = { runIds: runs.map(run => run.runId) };
+    const completions: AgentRun[] = [];
+    this.repo.transaction(() => {
+      for (const run of runs) {
+        if (TERMINAL_STATUSES.has(run.status)) continue;
+        run.status = run.status === "queued" && !this.active.has(run.runId) ? "cancelled" : "cancelling";
+        if (run.status === "cancelled") {
+          run.endedAt = Date.now(); this.settleGuidance(run.runId);
+          if (!this.repo.completions(run.parentId).some(c => c.runId === run.runId)) {
+            this.repo.putCompletion({ id: `completion:${run.runId}`, runId: run.runId, parentId: run.parentId, state: "pending", trigger: run.background });
+            completions.push(run);
+          }
+        }
+        run.revision++; this.repo.putRun(run);
+      }
+      this.repo.putReceipt(this.options.parentId, operationId, result);
+    });
+    // Publish only after the complete transaction. No callback sees a partially
+    // cancelled queue, and no await separates target transitions.
+    for (const run of runs) this.projectRun(run);
+    this.changed();
+    for (const run of runs) {
+      if (TERMINAL_STATUSES.has(run.status)) continue;
+      const active = this.active.get(run.runId);
+      active?.controller.abort();
+      try { if (active?.child) void active.child.abort().catch(e => this.options.diagnostic?.(e)); }
+      catch (error) { this.options.diagnostic?.(error); }
+    }
+    for (const run of completions) {
+      try { this.options.completion?.(run); } catch (error) { this.options.diagnostic?.(error); }
+    }
+    return result;
+  }
   async stop(ref: string, operationId: string): Promise<AgentRun> {
     const receipt = this.repo.receipt(this.options.parentId, operationId) as { runId: string } | undefined;
     if (receipt) return this.run(receipt.runId);

@@ -1,7 +1,8 @@
 import { TERMINAL_STATUSES, type AgentSnapshot } from "../records.ts";
 import { captureAnchor, restoreTranscript, transcriptLineCount } from "./transcript.ts";
-import { initialState, type ActionTarget, type InspectorLevel, type Operation, type UiEffect, type UiEvent, type UiState } from "./state.ts";
+import { initialState, type ActionTarget, type StopTarget, type InspectorLevel, type Operation, type UiEffect, type UiEvent, type UiState } from "./state.ts";
 export const active = (s: AgentSnapshot) => !!s.run && !TERMINAL_STATUSES.has(s.run.status);
+export const stopTargets = (s: UiState): StopTarget[] => fleetRows(s).filter(a => active(a) && a.run?.status !== "cancelling").map(a => ({ action: "stop", parentId: s.parentId, agentId: a.agent.agentId, runId: a.run!.runId, revision: a.run!.revision }));
 export const messageEligible = (s: AgentSnapshot | undefined): boolean => !!s && s.agent.resumable && (!s.agent.worktree || s.agent.worktree.state === "allocated") && s.run?.status !== "cancelling" && (active(s) || !!s.agent.sessionPath);
 /** The fleet indicator lists top-level agents while their run is non-terminal; terminal rows leave immediately (UX §2.2). */
 export const fleetRows = (s: UiState) => s.snapshots.filter(a => !a.agent.parentAgentId && (!a.run || !TERMINAL_STATUSES.has(a.run.status)));
@@ -21,7 +22,13 @@ export function transition(previous: UiState, event: UiEvent, snapshots: readonl
   const feedback = (message: string) => { patch({ feedback: message }); effects.push({ type: "feedback", message }); };
   const focus = (target: "editor" | "fleet" | "inspector" | "dialog") => effects.push({ type: "focus", target });
   const find = (id: string) => state.snapshots.find(s => s.agent.agentId === id);
-  const restore = () => focus(state.navigation.kind === "inspector" ? "inspector" : "editor");
+  const restore = () => focus(state.navigation.kind === "inspector" ? "inspector" : state.navigation.kind === "fleet" ? "fleet" : "editor");
+  const pendingStop = (targets: readonly StopTarget[]) => Object.values(state.pending).find(op =>
+    op.action === "stop-all" ? op.targets.some(t => targets.some(target => target.runId === t.runId)) :
+      op.action === "stop" && op.target.action === "stop" && targets.map(target => target.runId).includes(op.target.runId));
+  const unresolved = (operation: Operation) => {
+    patch({ dialog: { kind: "uncertain", operation, reason: "An earlier cancellation remains unresolved. Do not resend." } }); focus("dialog");
+  };
   if (event.type === "deactivate") return { state: { ...initialState(), revision: previous.revision + 1 }, effects: [{ type: "render" }] };
   if (event.type === "activate") {
     state = { ...initialState(), ...event, navigation: { kind: "editor" }, snapshots: structuredClone(snapshots.filter(s => s.agent.parentId === event.parentId)) };
@@ -33,9 +40,13 @@ export function transition(previous: UiState, event: UiEvent, snapshots: readonl
       if (state.dialog.kind === "confirming" && !eligible(state.dialog.target, find(state.dialog.target.agentId))) {
         patch({ dialog: { kind: "closed" } }); feedback("The captured target is no longer eligible. No operation was sent."); restore();
       }
+      if (state.dialog.kind === "confirming-all" && !state.dialog.targets.some(t => eligible(t, find(t.agentId)))) {
+        patch({ dialog: { kind: "closed" } }); feedback("The captured runs are no longer eligible. No operation was sent."); restore();
+      }
       const nav = state.navigation;
       // When the last non-terminal row leaves, the hidden indicator cannot hold focus (UX §2.2).
       if (nav.kind === "fleet" && fleetRows(state).length === 0) { patch({ navigation: { kind: "editor" } }); focus("editor"); }
+      else if (nav.kind === "fleet" && nav.selectedAgentId && !fleetRows(state).some(a => a.agent.agentId === nav.selectedAgentId)) patch({ navigation: { kind: "fleet", selectedAgentId: null } });
       else if (nav.kind === "inspector" && nav.detail.kind !== "list" && !find(nav.detail.agentId)) patch({ navigation: { kind: "inspector", detail: { kind: "unavailable", level: nav.detail.level, agentId: nav.detail.agentId, reason: "Agent is no longer available." } } });
       break;
     }
@@ -114,14 +125,27 @@ export function transition(previous: UiState, event: UiEvent, snapshots: readonl
     }
     case "draft":
       if (state.dialog.kind === "composing") patch({ drafts: { ...state.drafts, [state.dialog.agentId]: event.text }, dialog: { ...state.dialog, draft: event.text, error: undefined } }); break;
+    case "stop-all": {
+      if (state.dialog.kind !== "closed") break;
+      const targets = stopTargets(state);
+      const pending = pendingStop(targets);
+      if (pending) { unresolved(pending); break; }
+      if (!targets.length) { feedback("No runs are eligible for cancellation; existing cancellation requests remain in progress."); break; }
+      patch({ dialog: { kind: "confirming-all", targets }, feedback: undefined }); focus("dialog"); break;
+    }
     case "control": {
-      if (state.dialog.kind !== "closed" || state.navigation.kind === "fleet") break;
+      if (state.dialog.kind !== "closed") break;
       const s = find(event.agentId);
       if (!s) { feedback("Agent is not available."); break; }
       const base = { parentId: state.parentId, agentId: event.agentId, revision: s.run?.revision ?? 0 };
       const target: ActionTarget | undefined = event.action === "stop" && s.run ? { ...base, action: "stop", runId: s.run.runId } : event.action === "cleanup" && s.agent.worktree ? { ...base, action: "cleanup", worktreeId: s.agent.worktree.id } : undefined;
       if (!target || !eligible(target, s)) { feedback("The target is not eligible for this operation."); break; }
-      patch({ dialog: { kind: "confirming", target } }); focus("dialog"); break;
+      if (target.action === "stop") {
+        const pending = pendingStop([target]);
+        if (pending) { unresolved(pending); break; }
+        if (s.run?.status === "cancelling") { feedback("Cancellation is already in progress."); break; }
+      }
+      patch({ dialog: { kind: "confirming", target }, feedback: undefined }); focus("dialog"); break;
     }
     case "submit": {
       const d = state.dialog;
@@ -131,6 +155,12 @@ export function transition(previous: UiState, event: UiEvent, snapshots: readonl
       if (d.kind === "composing") {
         if (!d.draft.trim() || !messageEligible(find(d.agentId))) { patch({ dialog: { ...d, error: !d.draft.trim() ? "Enter nonempty guidance." : "Recipient is no longer eligible. Your draft is retained." } }); break; }
         operation = { ...correlation, action: "message", agentId: d.agentId, text: d.draft };
+      } else if (d.kind === "confirming-all") {
+        const targets = d.targets.filter(t => eligible(t, find(t.agentId)) && find(t.agentId)?.run?.status !== "cancelling");
+        if (!targets.length) { patch({ dialog: { kind: "closed" } }); feedback("The captured runs are no longer eligible."); restore(); break; }
+        const pending = pendingStop(targets);
+        if (pending) { unresolved(pending); break; }
+        operation = { ...correlation, action: "stop-all", agentId: state.parentId, targets };
       } else if (d.kind === "confirming") {
         if (!eligible(d.target, find(d.target.agentId))) { patch({ dialog: { kind: "closed" } }); feedback("The captured target is no longer eligible."); restore(); break; }
         operation = { ...correlation, action: d.target.action, agentId: d.target.agentId, target: d.target };
@@ -143,7 +173,7 @@ export function transition(previous: UiState, event: UiEvent, snapshots: readonl
       if (!operation || operation.viewId !== event.viewId) break;
       if (event.outcome !== "uncertain") { const pending = { ...state.pending }; delete pending[event.operationId]; patch({ pending }); }
       const d = state.dialog;
-      const matching = (d.kind === "submitting" || d.kind === "uncertain") && d.operation.id === event.operationId && state.viewId === event.viewId;
+      const matching = (d.kind === "submitting" || d.kind === "uncertain") && d.operation.id === event.operationId;
       if (event.outcome === "uncertain") {
         if (matching) patch({ dialog: { kind: "uncertain", operation, reason: event.message } });
         if (d.kind !== "uncertain") effects.push({ type: "receipt", operation });

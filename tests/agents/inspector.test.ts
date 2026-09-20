@@ -243,8 +243,8 @@ test("the footer enumerates only actions available for the selected record", () 
   const running = inspectorState();
   const withRunning = plain(new Inspector(() => running, () => {}, () => "id").render(140));
   assert.match(withRunning, /s message/);
-  assert.match(withRunning, /D stop/);
-  assert.match(withRunning, /x tools/);
+  assert.match(withRunning, /X stop selected · Ctrl\+X stop all/);
+  assert.match(withRunning, /o tools/);
   assert.match(withRunning, /r reload/);
   // A finished one-shot agent can only be viewed; message and stop disappear.
   const done = snapshot("b"); done.run!.status = "succeeded"; done.agent.resumable = false;
@@ -255,15 +255,15 @@ test("the footer enumerates only actions available for the selected record", () 
   const finished = plain(new Inspector(() => s, () => {}, () => "id").render(140));
   assert.doesNotMatch(finished, /s message/);
   assert.doesNotMatch(finished, /D stop/);
-  assert.match(finished, /x tools/);
+  assert.match(finished, /o tools/);
   assert.match(finished, /Esc close/);
   // The list view without a selection offers selection and closing only.
   const list = transition(s, { type: "open", viewId: "v2" }).state;
   const listRender = plain(new Inspector(() => list, () => {}, () => "id").render(140));
-  assert.doesNotMatch(listRender, /s message|D stop|x tools/);
+  assert.doesNotMatch(listRender, /s message|D stop|o tools/);
 });
 
-test("tool-detail expansion toggles on x, X, and the configured expansion key", () => {
+test("tool-detail expansion toggles on o and the configured expansion key", () => {
   let s = inspectorState();
   const withTool: TranscriptEvent[] = [{ kind: "tool", entryId: "t1", name: "bash", status: "complete", argsPreview: "```\n{\"command\":\"ls\"}\n```", output: "file-a\nfile-b" }];
   const nav = s.navigation;
@@ -280,10 +280,10 @@ test("tool-detail expansion toggles on x, X, and the configured expansion key", 
     dispatched.push(e);
   }, () => "id");
   assert.doesNotMatch(plain(inspector.render(120)), /"command"/);
-  inspector.handleInput("x");
+  inspector.handleInput("o");
   assert.match(plain(inspector.render(120)), /"command"/);
   assert.match(plain(inspector.render(120)), /file-a/);
-  inspector.handleInput("X");
+  inspector.handleInput("o");
   assert.doesNotMatch(plain(inspector.render(120)), /"command"/);
   inspector.handleInput("\x0f"); // ctrl+o: the default configured expansion binding
   assert.match(plain(inspector.render(120)), /"command"/);

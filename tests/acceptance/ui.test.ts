@@ -166,7 +166,7 @@ const bindings: ScenarioBindings = {
     const attacks = { "CSI clear screen": "\x1b[2J", "OSC clipboard BEL": "\x1b]52;c;Y2xpcGJvYXJk\x07", "OSC title ST": "\x1b]0;forged title\x1b\\", "DCS payload": "\x1bPmalicious payload\x1b\\", "C1 CSI": "\x9b2J" };
     for (const [name, attack] of Object.entries(attacks)) await t.test(name, () => {
       const h = new UIHarness().ready([{ kind: "tool", entryId: "shell-1", name: "shell", status: "complete", output: `Readable before ${attack} readable after` }]);
-      h.inspector.handleInput("x");
+      h.inspector.handleInput("o");
       const rendered = h.inspector.render(120).join("\n");
       assert.ok(!rendered.includes(attack));
       assert.doesNotMatch(rendered, /Y2xpcGJvYXJk|forged title|malicious payload/);
@@ -450,6 +450,42 @@ const bindings: ScenarioBindings = {
     writeFileSync(join(root, "secretary.json"), JSON.stringify({ agents: { ui: { fleetKeybindings: { inspect: ["i"] } } } }));
     assert.throws(() => loadAgentConfiguration(root, root, false), /not a supported inspector action/);
   },
+  "ACC-SA-UI-18": async ({ t }) => {
+    const stopped: string[] = [];
+    const h = adapter(t, port({ stop: async id => { stopped.push(id); } }));
+    assert.match(h.fleet(), /X stop selected/); assert.match(h.fleet(), /Ctrl\+X stop all/);
+    assert.equal(h.input("X"), undefined, "the editor receives X unchanged");
+    h.input("\x1b[B"); h.input("\x1b[B"); h.input("X"); await tick();
+    assert.match(h.render(), /Confirm stop: a/); assert.match(h.render(), /a-run/);
+    h.inspector!.handleInput("\x1b"); await tick();
+    assert.equal(h.inspector, undefined); assert.match(h.fleet(), /● a/); assert.deepEqual(stopped, []);
+  },
+  "ACC-SA-UI-19": async ({ t }) => {
+    let snapshots = [snapshot(), snapshot("b"), snapshot("foreign", "other")];
+    const listeners = new Set<() => void>(), stopped: string[] = [];
+    const h = adapter(t, port({ list: () => snapshots, stop: async id => { stopped.push(id); }, subscribe: fn => { listeners.add(fn); return () => { listeners.delete(fn); }; } }));
+    h.editor = "Main draft"; h.input("\x18"); await tick();
+    assert.match(h.render(), /Confirm stop all/); assert.match(h.render(), /a-run, b-run/);
+    snapshots = snapshots.map(s => s.agent.agentId === "a" ? { ...s, run: { ...s.run!, runId: "replacement" } } : s);
+    snapshots.push(snapshot("new")); for (const fn of listeners) fn();
+    h.inspector!.handleInput("\r"); await tick();
+    assert.deepEqual(stopped, ["b-run"]); assert.equal(h.editor, "Main draft");
+    assert.match(h.fleet(), /b · running/, "UI acceptance does not manufacture completion");
+  },
+  "ACC-SA-UI-20": async () => {
+    const h = new UIHarness().ready(); let calls = 0;
+    const p = port({ stopMany: async () => { calls++; throw new Error("Acknowledgment lost"); }, receipt: () => ({ outcome: "accepted", message: "Cancellation accepted, not completed." }) });
+    h.inspector.handleInput("\x18"); const op = h.submit(); await h.execute(op, p);
+    assert.equal(h.state.dialog.kind, "uncertain");
+    for (const key of ["x", "\x18"]) {
+      h.inspector.handleInput("\x1b"); h.inspector.handleInput(key);
+      assert.equal(h.state.dialog.kind, "uncertain");
+      assert.ok(!h.send({ type: "submit", operationId: "duplicate" }).some(e => e.type === "operate"));
+    }
+    const receipt = h.effects.find(e => e.type === "receipt"); assert.ok(receipt);
+    await h.execute(receipt, p); assert.equal(h.state.dialog.kind, "closed"); assert.equal(calls, 1);
+    assert.match(h.render(), /Cancellation accepted, not completed/);
+  },
   "ACC-SA-UI-17": () => {
     const h = new UIHarness().ready();
     const wide = plain(h.inspector.render(140));
@@ -465,5 +501,5 @@ const bindings: ScenarioBindings = {
 };
 runFeatures(["agent-inspection", "ui-state-machine"], bindings, {
   "agent-inspection": "1ac61f8c5d98c2ae6ada2489fe15e91f361400ce46645f242be33380641889c8",
-  "ui-state-machine": "3b9a317188b30125e993459338f98be087907c57a8885ad9f7409af2fe492b43",
+  "ui-state-machine": "0fd236b79c0f2a3faaea5f690ce1ab5271a25c545d8f2a47ceb12172360c87bd",
 });

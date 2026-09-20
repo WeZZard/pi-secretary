@@ -8,8 +8,9 @@ export interface InspectorLevel { path: readonly string[]; includeFinished: bool
 export type InspectorState = { kind: "list"; level: InspectorLevel } | { kind: "loading"; level: InspectorLevel; agentId: string; requestId: string; previous?: TranscriptView } | { kind: "ready"; level: InspectorLevel; agentId: string; transcript: TranscriptView } | { kind: "unavailable"; level: InspectorLevel; agentId: string; reason: string };
 export type NavigationState = { kind: "inactive" } | { kind: "editor" } | { kind: "fleet"; selectedAgentId: string | null } | { kind: "inspector"; detail: InspectorState };
 export type ActionTarget = { parentId: string; agentId: string; revision: number } & ({ action: "stop"; runId: string } | { action: "cleanup"; worktreeId: string });
-export type Operation = Correlation & { id: string; agentId: string; action: "message"; text: string } | Correlation & { id: string; agentId: string; action: "stop" | "cleanup"; target: ActionTarget };
-export type DialogState = { kind: "closed" } | { kind: "composing"; agentId: string; draft: string; error?: string } | { kind: "confirming"; target: ActionTarget } | { kind: "submitting"; operation: Operation } | { kind: "uncertain"; operation: Operation; reason: string };
+export type StopTarget = Extract<ActionTarget, { action: "stop" }>;
+export type Operation = Correlation & { id: string; agentId: string; action: "stop-all"; targets: readonly StopTarget[] } | Correlation & { id: string; agentId: string; action: "message"; text: string } | Correlation & { id: string; agentId: string; action: "stop" | "cleanup"; target: ActionTarget };
+export type DialogState = { kind: "closed" } | { kind: "composing"; agentId: string; draft: string; error?: string } | { kind: "confirming"; target: ActionTarget } | { kind: "confirming-all"; targets: readonly StopTarget[] } | { kind: "submitting"; operation: Operation } | { kind: "uncertain"; operation: Operation; reason: string };
 export interface UiState extends Correlation {
   parentId: string; revision: number; navigation: NavigationState; dialog: DialogState;
   snapshots: readonly AgentSnapshot[]; drafts: Readonly<Record<string, string>>;
@@ -33,6 +34,7 @@ export type UiEvent =
   | { type: "compose" }
   | { type: "draft"; text: string }
   | { type: "control"; action: "stop" | "cleanup"; agentId: string }
+  | { type: "stop-all" }
   | { type: "submit"; operationId: string }
   | ({ type: "outcome"; operationId: string; outcome: "accepted" | "rejected" | "uncertain"; message: string } & Correlation)
   | { type: "escape" }

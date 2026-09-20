@@ -8,6 +8,15 @@
 
 **Related documents:** [Architecture](../arch/subagents.md), [requirements](../user-stories/subagents.md), [interaction design](../ux/subagents.md), [testing guide](README.md), and [delivery record](../../.plans/2026-09-17-subagent-support.md).
 
+## 2026-09-20: Visible cancellation shortcuts and model inheritance investigation
+
+- The reviewed implementation is the working tree based on `dc04e5c`. The [cancellation plan](../../.plans/2026-09-20-fleet-cancellation-ui.md) cites the changed shortcut, confirmation, and batch-stop contracts. The [model investigation](../research/subagent-model-inheritance.md) records the separate definition-policy cause without claiming a runtime model-selection repair.
+- Eight real-TUI cancellation regressions failed before implementation and passed afterward in main-screen and alternate-screen modes. They exercise registered input routing, visible hints, selected-agent cancellation, fleet-wide confirmation, and overlay routing. Additional checks cover draft preservation, idle and modal host-key fallback, captured-run replacement safety, and duplicate submission prevention.
+- Service regressions establish that batch cancellation commits the complete parent-owned set before callbacks observe it. Captured queued runs do not start, rejected abort acknowledgments do not become false termination claims, and noncooperative work remains cancelling. Alternate UI ports' per-run fallback reports partial receipts but does not provide the installed batch operation's admission barrier.
+- Six real-SDK model tests pass. The incident-shaped case keeps the parent model unchanged and recreates a captured `general-purpose` definition with `model: superior`. The child follows that explicit policy; removing only the definition override makes the next fresh child inherit. The current user definition already omits the override, and this investigation changed neither user configuration nor production model-selection code.
+- `npm run verify` passed TypeScript checking, all 674 tests, all 28 Mermaid blocks, and acceptance syntax validation for 11 feature files and 110 scenario identities. New ACC-SA-UI-18 through ACC-SA-UI-20 bindings cover the cancellation interactions. Generated output remains under ignored `test-results/`.
+- Reproduce focused checks with `node --experimental-strip-types --test tests/agents/fleet-cancellation.test.ts tests/agents/model-inheritance.test.ts`. No paid-provider cancellation, foreground GUI recording, or human visual approval is claimed. The model checks do not establish nested or arbitrary hosted-provider behavior.
+
 ## 2026-09-20: Session rewind and abandoned subagent work
 
 - The reviewed implementation is the working tree based on `463b0cc`, implementing the [rewind repair plan](../../.plans/2026-09-20-subagent-session-rewind.md). The user selected cancellation of abandoned unfinished work; this is not approval of every implementation detail or interface.

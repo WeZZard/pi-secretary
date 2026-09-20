@@ -153,3 +153,34 @@ Feature: Keep interaction state consistent during asynchronous agent activity
     Then the roster stacks above a full-width detail view.
     When the terminal is below the minimum supported width.
     Then only a diagnostic line is shown.
+
+  @ACC-SA-UI-18 @proposed @SA-04
+  Scenario: Stop the selected agent from the focused fleet list.
+    Given the bottom fleet list contains active agents.
+    Then the list shows X for stopping the selected agent and Ctrl+X for stopping all agents.
+    When the user types X in the main editor.
+    Then the editor retains the input and no cancellation is requested.
+    When the user focuses an agent in the list and presses X.
+    Then confirmation identifies that agent's exact execution.
+    When the user dismisses confirmation.
+    Then no cancellation is requested and the list regains focus.
+
+  @ACC-SA-UI-19 @proposed @SA-04 @concurrency
+  Scenario: Stop only the fleet executions captured before confirmation.
+    Given this parent has active agents and the main editor contains a draft.
+    When the user presses Ctrl+X.
+    Then confirmation captures this parent's active top-level executions.
+    When one captured execution is replaced and a new agent is admitted.
+    And the user confirms cancellation.
+    Then cancellation targets only the captured executions that remain eligible.
+    And the replacement, new agent, and unrelated sessions are not targeted.
+    And the editor draft remains unchanged.
+    And acceptance is not presented as completed cancellation.
+
+  @ACC-SA-UI-20 @proposed @SA-04 @concurrency
+  Scenario: Keep uncertain fleet cancellation from being submitted twice.
+    Given fleet cancellation was submitted from the overlay and its acknowledgment was lost.
+    When the user dismisses the pending dialog and presses X or Ctrl+X again.
+    Then the unresolved operation is shown instead of a replacement request.
+    When the original receipt confirms acceptance.
+    Then the uncertainty clears without resubmitting cancellation.

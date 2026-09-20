@@ -10,6 +10,7 @@ import { installSecretary } from "../../extensions/secretary/index.ts";
 
 export async function discoverySession(t: TestContext, options: {
   setup?: (root: string, agentDir: string) => Promise<void>;
+  modelIds?: string[];
   respond?: (context: Context, index: number) => Promise<AssistantMessage["content"]>;
   respondChild?: (context: Context, index: number, signal?: AbortSignal) => Promise<AssistantMessage["content"]>;
   mode?: "print" | "rpc";
@@ -32,15 +33,19 @@ export async function discoverySession(t: TestContext, options: {
   const model: Model<"openai-completions"> = { id: "fixture", provider: "discovery-test", name: "Local discovery fixture",
     api: "openai-completions", baseUrl: "http://127.0.0.1:1/never", reasoning: false, input: ["text", "image"],
     contextWindow: 128000, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+  const models = (options.modelIds ?? [model.id]).map(id => ({ ...model, id }));
+  assert.ok(models.length, "The fixture requires an explicit local model");
+  const parentModels: string[] = [], childModels: string[] = [];
   const parentCalls: Context[] = [], childCalls: Context[] = [], errors: unknown[] = [];
   const loader = new DefaultResourceLoader({ cwd: root, agentDir, settingsManager: settings,
     noExtensions: true, noSkills: true, noThemes: true, noPromptTemplates: true, noContextFiles: true,
     systemPromptOverride: () => "Use only isolated fixtures.",
     extensionFactories: [pi => {
-      pi.registerProvider(model.provider, { api: model.api, baseUrl: model.baseUrl, apiKey: "fixture", models: [model],
+      pi.registerProvider(model.provider, { api: model.api, baseUrl: model.baseUrl, apiKey: "fixture", models,
         streamSimple(m, context, request) {
           const parent = context.tools?.some(tool => tool.name === "Agent") ?? false;
           const calls = parent ? parentCalls : childCalls;
+          (parent ? parentModels : childModels).push(`${m.provider}/${m.id}`);
           calls.push({ ...context, messages: structuredClone(context.messages),
             tools: context.tools?.map(({ name, description, parameters }) => ({ name, description, parameters })) });
           const index = calls.length - 1;
@@ -67,7 +72,7 @@ export async function discoverySession(t: TestContext, options: {
   await loader.reload();
   assert.deepEqual(loader.getExtensions().errors, []);
   const { session } = await createAgentSession({ cwd: root, agentDir, resourceLoader: loader, sessionManager: manager,
-    settingsManager: settings, modelRuntime: runtime, model, thinkingLevel: "off" });
+    settingsManager: settings, modelRuntime: runtime, model: models[0], thinkingLevel: "off" });
   await session.bindExtensions({ mode: options.mode ?? "print", onError: error => errors.push(error) });
   t.after(async () => {
     await session.abort();
@@ -77,5 +82,5 @@ export async function discoverySession(t: TestContext, options: {
     await rm(root, { recursive: true, force: true });
     assert.deepEqual(errors, [], "No swallowed extension or provider errors");
   });
-  return { root, agentDir, session, manager, engine, parentCalls, childCalls };
+  return { root, agentDir, session, manager, engine, parentCalls, childCalls, models, parentModels, childModels };
 }

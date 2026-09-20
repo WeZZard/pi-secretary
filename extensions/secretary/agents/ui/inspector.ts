@@ -6,7 +6,7 @@ import { messageEligible, active, overlayRows } from "./reducer.ts";
 import { clip, transcriptWindow } from "./transcript.ts";
 import { selectionCircle } from "./glyphs.ts";
 import { formatElapsed, formatUsageLabels } from "./usage-labels.ts";
-import { bindingLabel, matchesInspectorAction, resolveInspectorKeybindings, type ResolvedInspectorKeybindings, type InspectorKeybindingsConfig } from "./keybindings.ts";
+import { CANCELLATION_HINT, matchesStopAll, matchesStopSelected, bindingLabel, matchesInspectorAction, resolveInspectorKeybindings, type ResolvedInspectorKeybindings, type InspectorKeybindingsConfig } from "./keybindings.ts";
 
 const MIN_WIDTH = 36;
 const PANE_SPLIT = 100;
@@ -73,7 +73,13 @@ export class Inspector implements Component, Focusable {
       return;
     }
     if (d.kind !== "closed") {
-      if (d.kind === "confirming" && matchesKey(data, "enter")) this.dispatch({ type: "submit", operationId: this.id() });
+      if ((d.kind === "confirming" || d.kind === "confirming-all") && matchesKey(data, "enter")) this.dispatch({ type: "submit", operationId: this.id() });
+      return;
+    }
+    if (matchesStopAll(data)) { this.dispatch({ type: "stop-all" }); return; }
+    if (matchesStopSelected(data)) {
+      const nav = s.navigation;
+      if (nav.kind === "inspector" && nav.detail.kind !== "list") this.dispatch({ type: "control", action: "stop", agentId: nav.detail.agentId });
       return;
     }
     if (this.action(data, "close")) { this.dispatch({ type: "escape" }); return; }
@@ -129,6 +135,7 @@ export class Inspector implements Component, Focusable {
       const label = messageEligible(recipient) ? recipient && active(recipient) ? "Queue guidance" : "Resume conversation" : "Submission unavailable; draft retained";
       return [clip(`${label}: ${d.agentId}`, width), ...this.input.render(Math.max(1, width)).map(l => width <= 0 ? "" : l), clip(d.error ?? "Enter sends · Escape keeps draft", width)];
     }
+    if (d.kind === "confirming-all") return ["Confirm stop all agents in this session", `Captured runs: ${d.targets.map(t => t.runId).join(", ")}`, "Descendants are included. New runs are excluded. File changes are not rolled back.", "Enter confirms · Escape dismisses"].map(l => clip(l, width));
     if (d.kind === "confirming") return [`Confirm ${d.target.action}: ${d.target.agentId}`, d.target.action === "stop" ? `Run: ${d.target.runId}. File changes are not rolled back.` : `Workspace: ${d.target.worktreeId}. Cleanup disables future resumption.`, "Enter confirms · Escape dismisses"].map(l => clip(l, width));
     if (d.kind === "submitting" || d.kind === "uncertain") return [`${d.kind}: ${d.operation.action} ${d.operation.agentId}`, `Operation: ${d.operation.id}`, ...(d.operation.action === "message" ? [d.operation.text] : []), d.kind === "uncertain" ? d.reason : "Waiting for acceptance; this is not completion.", "Escape dismisses without cancelling or retrying"].map(l => clip(l, width));
     return undefined;
@@ -167,7 +174,7 @@ export class Inspector implements Component, Focusable {
     const optional: string[] = [];
     if (selected) {
       if (messageEligible(selected)) optional.push(`${label("steer")} message`);
-      if (active(selected)) optional.push(`${label("stop")} stop`);
+      if (active(selected) && label("stop") !== "X") optional.push(`${label("stop")} stop`);
       const nav = this.state().navigation;
       if (nav.kind === "inspector" && nav.detail.kind === "ready") optional.push(`${label("toggleTools")} tools`, `${label("refresh")} reload`);
     }
@@ -207,7 +214,9 @@ export class Inspector implements Component, Focusable {
     const position = record ? `${roster.findIndex(a => a.agent.agentId === selected) + 1}/${roster.length}` : `0/${roster.length}`;
     const activeCount = s.snapshots.filter(a => active(a)).length;
     const top = topBorder(`${this.breadcrumb(level)} · ${position} · ${activeCount} active`);
+    const cancellationLine = frameRow(clip(width - 4 >= CANCELLATION_HINT.length ? CANCELLATION_HINT : "Stop: X selected · Ctrl+X all", width - 4));
     const footerLine = frameRow(clip(this.footer(record, width - 4), width - 4));
+    if (height === 4) return [top, frameRow(clip(s.feedback ?? "", width - 4)), footerLine, bottom];
     const body: string[] = [];
     const wide = width >= PANE_SPLIT;
     // Reserve seven columns for the outer frame, padding, and pane divider.
@@ -235,7 +244,7 @@ export class Inspector implements Component, Focusable {
       if (nav.detail.transcript.expanded && record) details.push(`Original prompt: ${record.run?.prompt ?? ""}`, `Activity: ${record.run?.activity ?? "none"}`, `Definition hash: ${record.agent.definition.hash}`, `Outcome: ${record.run?.error ?? record.run?.status ?? "idle"}`);
     } else if (!record) details.push(`Select an agent with ${bindingLabel(this.keys, "selectUp")}/${bindingLabel(this.keys, "selectDown")}.`);
     // Feedback is part of the operation contract, not expendable transcript overflow.
-    const fixedRows = 2 /* rules */ + 1 /* footer */ + (s.feedback ? 1 : 0);
+    const fixedRows = 2 /* rules */ + 2 /* footers */ + (s.feedback ? 1 : 0);
     const bodyHeight = Math.max(0, height - fixedRows);
     const rosterRows = wide ? bodyHeight : Math.min(rosterLines.length, Math.min(5, Math.max(0, bodyHeight - 2)));
     const selectedIndex = roster.findIndex(a => a.agent.agentId === selected);
@@ -258,6 +267,6 @@ export class Inspector implements Component, Focusable {
       for (let i = 0; i < bodyHeight; i++) body.push(frameRow(clip(lines[i] ?? "", detailWidth)));
     }
     const feedback = s.feedback ? frameRow(clip(s.feedback, width - 4)) : undefined;
-    return [top, ...body, ...(feedback ? [feedback] : []), footerLine, bottom].map(l => truncateToWidth(l, width, ""));
+    return [top, ...body, ...(feedback ? [feedback] : []), ...(height >= 5 ? [cancellationLine] : []), footerLine, bottom].map(l => truncateToWidth(l, width, ""));
   }
 }

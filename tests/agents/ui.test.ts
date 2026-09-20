@@ -133,7 +133,7 @@ test("bounded event sequences preserve modal/navigation constraints and forbid a
       const result = transition(before, event), after = result.state;
       if (after.navigation.kind === "inactive") { assert.equal(after.dialog.kind, "closed"); assert.deepEqual(after.drafts, {}); }
       if (after.dialog.kind === "composing") assert.equal(after.navigation.kind, "inspector");
-      if (after.navigation.kind === "fleet") assert.equal(after.dialog.kind, "closed");
+      if (after.navigation.kind === "fleet") assert.notEqual(after.dialog.kind, "composing");
       if (event.type !== "submit") assert.ok(!result.effects.some(e => e.type === "operate"));
       if (before.dialog.kind === "submitting") assert.ok(!result.effects.some(e => e.type === "operate"));
       next.push(after);
@@ -185,6 +185,33 @@ test("effect runner correlates outcomes, never repeats uncertain mutations and s
   await runEffect({ type: "receipt", operation: s.dialog.operation }, port, e => events.push(e));
   assert.equal(calls, 1); assert.equal(events[1]?.type === "outcome" && events[1].outcome, "accepted");
 });
+test("partial fleet cancellation keeps per-run receipts and never abandons later targets after an error", async () => {
+  let s = step(ready(), { type: "stop-all" });
+  const submission = transition(s, { type: "submit", operationId: "batch" }); s = submission.state;
+  const effect = submission.effects.find(e => e.type === "operate"); assert.ok(effect);
+  const calls: string[] = [];
+  const port: AgentUIPort = { list: () => [], subscribe: () => () => {}, transcript: async () => [], message: async () => {}, cleanup: async () => {},
+    stop: async (runId, id) => {
+      calls.push(`${runId}:${id}`);
+      if (runId === "a-run") throw Object.assign(new Error("A rejected"), { definitive: true });
+      throw new Error("B acknowledgment lost");
+    },
+    receipt: id => id.endsWith("a-run") ? { outcome: "rejected", message: "A rejected" } : { outcome: "accepted", message: "B cancellation accepted" },
+  };
+  const dispatch = (event: UiEvent) => { s = transition(s, event).state; };
+  await runEffect(effect, port, dispatch);
+  assert.deepEqual(calls, ["a-run:batch:a-run", "b-run:batch:b-run"]);
+  assert.equal(s.dialog.kind, "uncertain");
+  assert.match(s.dialog.kind === "uncertain" ? s.dialog.reason : "", /1 rejected, 1 unresolved/);
+  s = step(step(s, { type: "escape" }), { type: "stop-all" });
+  assert.equal(s.dialog.kind, "uncertain");
+  assert.deepEqual(transition(s, { type: "submit", operationId: "retry" }).effects, []);
+  await runEffect({ type: "receipt", operation: effect.operation }, port, dispatch);
+  assert.equal(s.dialog.kind, "closed"); assert.deepEqual(s.pending, {});
+  assert.match(s.feedback!, /1 accepted, 1 rejected, 0 unresolved/);
+  assert.equal(calls.length, 2);
+});
+
 test("adapter uses one namespaced below-editor widget and does not consume normal editing or other prompts", () => {
   let terminal: ((data: string) => unknown) | undefined, editor = "draft", removed = 0;
   const hooks: Record<string, () => void> = {}, widgets: string[] = [];

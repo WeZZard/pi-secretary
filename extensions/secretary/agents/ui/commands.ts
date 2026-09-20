@@ -5,9 +5,9 @@ import { matchesKey } from "@earendil-works/pi-tui";
 import { SecretaryConfigMenu, headlessSecretaryConfig } from "./config-menu.ts";
 import { FleetView, startFleetPolling } from "./fleet-view.ts";
 import { Inspector, inspectorHeight } from "./inspector.ts";
-import type { InspectorKeybindingsConfig } from "./keybindings.ts";
+import { matchesStopAll, matchesStopSelected, type InspectorKeybindingsConfig } from "./keybindings.ts";
 import { runEffect, type AgentUIPort } from "./effects.ts";
-import { fleetRows, transition } from "./reducer.ts";
+import { active, fleetRows, transition } from "./reducer.ts";
 import { initialState, type UiEvent } from "./state.ts";
 import { sanitize } from "./transcript.ts";
 export type { AgentUIPort, OperationReceipt } from "./effects.ts";
@@ -52,8 +52,10 @@ export function registerAgentUI(pi: ExtensionAPI, port: AgentUIPort, resolveOpti
     if (event.type === "snapshot" && event.epoch === state.epoch) transcriptDirty = true;
     for (const effect of result.effects) {
       if (effect.type === "render") render();
-      else if (effect.type === "feedback") { /* Feedback remains in the originating view. */ }
-      else if (effect.type === "focus") { if (effect.target === "editor" && state.dialog.kind === "closed") close?.(); }
+      else if (effect.type === "feedback") {
+        if (state.navigation.kind !== "inspector") ctx?.ui.notify(sanitize(effect.message), "info");
+      }
+      else if (effect.type === "focus") { if ((effect.target === "editor" || effect.target === "fleet") && state.dialog.kind === "closed") close?.(); }
       else void runEffect(effect, port, dispatch);
     }
     if (state.navigation.kind === "editor" && state.dialog.kind === "closed") close?.();
@@ -98,6 +100,11 @@ export function registerAgentUI(pi: ExtensionAPI, port: AgentUIPort, resolveOpti
     if (typeof next.ui.onTerminalInput !== "function") { next.ui.notify("Fleet keyboard integration unavailable. Use /agents.", "warning"); return; }
     terminal = next.ui.onTerminalInput(data => {
       if (customOpen || promptDepth > 0 || state.dialog.kind !== "closed") return;
+      if (matchesStopAll(data) && fleetRows(state).some(active)) {
+        dispatch({ type: "stop-all" });
+        if (state.dialog.kind !== "closed") void show();
+        return { consume: true };
+      }
       if (state.navigation.kind === "editor") {
         // Down in an empty editor enters the indicator when it has rows; Left no longer activates it (UX §4).
         if (matchesKey(data, "down") && next.ui.getEditorText() === "" && fleetRows(state).length > 0) {
@@ -106,7 +113,15 @@ export function registerAgentUI(pi: ExtensionAPI, port: AgentUIPort, resolveOpti
         return;
       }
       if (state.navigation.kind !== "fleet") return;
-      if (matchesKey(data, "escape")) dispatch({ type: "escape" });
+      if (matchesStopSelected(data)) {
+        const id = state.navigation.selectedAgentId;
+        if (id && fleetRows(state).some(a => a.agent.agentId === id)) {
+          dispatch({ type: "control", action: "stop", agentId: id });
+          if (state.dialog.kind !== "closed") void show();
+
+        }
+      }
+      else if (matchesKey(data, "escape")) dispatch({ type: "escape" });
       else if (matchesKey(data, "enter")) {
         const id = state.navigation.selectedAgentId;
         if (id) {
@@ -165,7 +180,7 @@ export function registerAgentUI(pi: ExtensionAPI, port: AgentUIPort, resolveOpti
       if (action && selected) dispatch({ type: "control", action, agentId: selected.agent.agentId });
       else { dispatch({ type: "open", viewId: randomUUID() }); if (selected) dispatch({ type: "select", agentId: selected.agent.agentId, requestId: randomUUID() }); }
       if (state.dialog.kind !== "closed" || state.navigation.kind === "inspector") await show();
-      else if (state.feedback) commandCtx.ui.notify(sanitize(state.feedback), "warning");
+
     },
   });
   return { bind, dispose };

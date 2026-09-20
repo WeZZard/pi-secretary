@@ -68,6 +68,7 @@ export function installAgentSupport(pi: ExtensionAPI, engine: GoalEngine, sync: 
     transcript: id => current().transcript(id),
     message: (id, text, operationId) => current().message(id, text, operationId),
     stop: (id, operationId) => current().stop(id, operationId),
+    stopMany: (ids, operationId) => current().stopMany(ids, operationId),
     cleanup: (id, operationId) => current().cleanup(id, operationId),
     receipt: async id => service?.receipt(id) ? { outcome: "accepted", message: "Operation acceptance is recorded." } : undefined,
     subscribe: listener => {

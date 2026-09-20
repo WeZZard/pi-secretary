@@ -30,7 +30,7 @@ test("the indicator renders nothing while no agent is active", () => {
 test("agent rows show the selection circle, name, status label, and right-aligned stats", () => {
   const { view } = fleet([snapshot("a", "running")], [vm("a", { name: "reviewer", windowTokens: 3800, cumulativeTokens: 4250 })]);
   const lines = view.render(100);
-  assert.equal(lines.length, 2);
+  assert.equal(lines.length, 3);
   assert.match(lines[0]!, /^● main$/, "entry into the indicator selects the first row");
   assert.match(lines[1]!, /○ reviewer · running/);
   assert.ok(/6s · ↓ 3\.8k window · 4\.3k spent$/.test(lines[1]!), "elapsed and usage stay right-aligned at the row end");
@@ -50,7 +50,7 @@ test("the circle encodes selection only and only while the indicator has focus",
 test("a row leaves the indicator immediately when its run reaches a terminal status", () => {
   const { view } = fleet([snapshot("a", "succeeded"), snapshot("b", "running")], [vm("a", { status: "succeeded", name: "done" }), vm("b", { name: "active" })]);
   const text = view.render(100);
-  assert.equal(text.length, 2, "main plus the non-terminal agent");
+  assert.equal(text.length, 3, "main, non-terminal agent, and cancellation hint");
   assert.match(text[1]!, /active · running/);
   assert.doesNotMatch(text.join("\n"), /done|succeeded/);
 });
@@ -59,7 +59,7 @@ test("nested rows never appear in the indicator; they belong to overlay drill le
   const nested = vm("child", { parentAgentId: "a", name: "nested" });
   assert.deepEqual(indicatorRows([vm("a"), nested]).map(r => r.agentId), ["a"]);
   const { view } = fleet([snapshot("a")], [vm("a", { name: "top" }), nested]);
-  assert.equal(view.render(80).length, 2);
+  assert.equal(view.render(80).length, 3);
   assert.doesNotMatch(view.render(80).join("\n"), /nested/);
 });
 
@@ -109,7 +109,7 @@ test("long lists window around the selection", () => {
   state = transition(state, { type: "fleet", editorEmpty: true }).state;
   state = transition(state, { type: "fleet-select", agentId: "a14" }).state;
   const lines = new FleetView(() => state, { rows: () => rows, now: () => 6500 }).render(80);
-  assert.ok(lines.length <= 10, "the visible window is bounded");
+  assert.ok(lines.length <= 11, "the visible window has at most ten rows plus its hint");
   assert.ok(lines.some(line => line.includes("a14")), "the selected row stays visible");
   assert.match(lines.find(line => line.includes("a14"))!, /^●/);
 });

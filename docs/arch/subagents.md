@@ -214,6 +214,8 @@ interface TaskStopInput {
 - A queued run transitions directly to cancelled. A starting or running execution enters cancelling and stays there until settlement is observed.
 - A successful stop request does not promise rollback of file changes or immediate termination of a noncooperative extension tool.
 - An explicit later `SendMessage` can resume an eligible cancelled agent after it has settled. Cancellation never triggers automatic resumption.
+- The UI's internal `stopMany` operation validates every captured run ID as parent-owned before mutating any run. It commits the complete batch's cancellation states and durable receipt before notifying subscribers or invoking child abort callbacks. Captured queued runs cannot start between individual cancellation requests. Already terminal runs remain terminal, and noncooperative active runs remain cancelling until settlement. This operation does not add a public model-facing tool.
+- Installed fleet cancellation uses that batch operation. An alternate UI port may use stable per-run operation IDs and aggregate individual receipts, but that fallback does not provide the queue-admission barrier.
 
 ### 4.4 `TaskOutput`
 
@@ -289,7 +291,7 @@ Secretary configuration supplies an `agents.modelFallbackLists` object whose key
 
 A definition or invocation model value is interpreted as follows:
 
-1. The value `inherit` contributes the parent's model captured at launch.
+1. The value `inherit` contributes the active parent's model captured when the launch specification is resolved. This includes model changes after session startup; it does not mean the configured default for new pi sessions.
 2. A value that exactly matches a model available in the session forms a single-candidate chain. The available-model match takes precedence over a fallback list with the same name.
 3. Otherwise, the value names a model fallback list, and the list's members form the candidate chain in configured order.
 4. A value that matches neither an available model nor a configured list fails the launch with an error naming the unmatched value.
@@ -777,6 +779,9 @@ stateDiagram-v2
     [*] --> Closed
     Closed --> Composing: Open eligible message composer
     Closed --> Confirming: Request stop or cleanup
+    Closed --> ConfirmingAll: Request fleet cancellation
+    ConfirmingAll --> Submitting: Confirm captured executions
+    ConfirmingAll --> Closed: Decline or all captured targets become ineligible
     Composing --> Submitting: Submit valid guidance
     Composing --> Closed: Escape without sending
     Confirming --> Submitting: Confirm the identified operation
@@ -791,10 +796,11 @@ stateDiagram-v2
     Uncertain --> Composing: Establish message rejection
 ```
 
-- This machine describes messaging, stop confirmation, and cleanup confirmation. The action and target are shown explicitly; the diagram does not make the operations interchangeable.
+- This machine describes messaging, individual or fleet-wide stop confirmation, and cleanup confirmation. The action and target are shown explicitly; the diagram does not make the operations interchangeable.
 - The dialog remembers whether it was opened from the editor or inspector and returns focus there when dismissed. A direct stop or cleanup command does not need to open the inspector first.
 - `Composing` retains the selected recipient and draft. Empty submissions stay in this state with a validation message.
 - `Confirming` retains the exact run or worktree selected before the dialog opened. A newer run is not substituted automatically.
+- `ConfirmingAll` retains a fixed set of active top-level run identities from the current fleet. Later launches and replacement runs are not added. Confirmation operates only on captured runs that remain eligible. Nested work stops through the existing parent cancellation cascade; unrelated sessions are never included.
 - `Submitting` disables duplicate submission. It remains distinct from the agent's running or stopping state.
 - Dismissing a submitted request does not retract it, cancel the child, or authorize a retry. Its outcome remains available in the owning session.
 - `Uncertain` means the interface cannot yet establish whether the request was accepted. The text and target remain inspectable, and a new submission is disabled until the original request is resolved.
@@ -870,7 +876,8 @@ type InspectorState =
 type DialogState =
   | { kind: "closed" }
   | { kind: "composing"; agentId: string; draft: string; error?: string }
-  | { kind: "confirming"; action: ControlAction; target: ActionTarget }
+  | { kind: "confirming"; target: ActionTarget }
+  | { kind: "confirming-all"; targets: readonly StopTarget[] }
   | { kind: "submitting"; operation: PendingOperation }
   | { kind: "uncertain"; operation: PendingOperation; reason: string };
 
@@ -881,10 +888,10 @@ type TranscriptFollowMode = "following" | "paused";
 - The types are discriminated unions. `TranscriptView`, `ActionTarget`, and `PendingOperation` are internal records described below, not additional public tool parameters.
 - A transcript view retains its follow mode, stable message anchor, relative display offset, tool-expansion setting, and bounded rendered window.
 - An action target retains the parent session, agent ID, and the relevant run ID or worktree ID. It records the revision observed when confirmation opened, but the service evaluates actual identity and eligibility at execution.
-- A pending operation retains an operation ID, action, target, submitted text where applicable, and the view instance that originated it.
+- A pending operation retains an operation ID, action, target, submitted text where applicable, and the view instance that originated it. A `stop-all` operation retains its captured run targets rather than resolving the fleet again at submission or receipt reconciliation.
 - The enclosing UI state retains the parent session ID, activation epoch, view instance ID, originating focus, and a monotonically increasing state revision.
-- An inspector supports a dialog, but the fleet indicator does not. Opening a direct command's dialog from the editor retains the editor as its return location.
-- `inactive` requires a closed dialog and no bound terminal references. `composing` requires an inspector with a selected record. `confirming` supports either editor-originated commands or the inspector.
+- Confirmation is rendered in the inspector overlay, not inside the bottom indicator. Indicator shortcuts can open that confirmation surface. Opening a direct command's dialog from the editor retains the editor as its return location.
+- `inactive` requires a closed dialog and no bound terminal references. `composing` requires an inspector with a selected record. Both confirmation forms support editor-originated shortcuts or commands and the inspector.
 - These constraints are checked by the reducer. The Cartesian product of the unions is not a declaration that every combination is legal.
 - Renderer state never writes an `AgentRun` status. A submitted stop request and a cancelling agent remain different records with different state machines.
 
@@ -989,6 +996,8 @@ Usage labels follow the [interaction design](../ux/subagents.md#22-fleet-indicat
 - **Cumulative usage** is the accumulated input-plus-output total derived from persisted usage events.
 - Neither label is the goal-budget usage formula of Section 11.2. Goal charging continues to use the established formula on the same underlying usage events, and the widget labels must not be reused for it.
 
+While the indicator is visible, it also renders the selected-agent and fleet-wide stop hints defined in UX Section 2.2. The hints disappear with the last active row. Plain `x` is captured only with fleet or inspector focus, and Ctrl+X is captured only while the current fleet has active work and no modal or host prompt owns input. This intentionally overrides pi's default Ctrl+X message-copy action while that fleet is active; idle editing retains the host action.
+
 The fleet indicator maintains a bounded polling timer and a render key. The timer is unreferenced so it cannot keep the process alive, is disposed on deactivation, and a repaint is skipped when the render key is unchanged and no row is running.
 
 View models are served from the in-memory projection defined in §6.2. A paint or poll tick is a non-blocking, total operation: it performs no shared-store I/O and therefore cannot observe `SQLITE_BUSY`, and it must not throw out of the host's render path (goal architecture §13.6). Resolving the Section 12.6.5 UI options is part of this path, so that resolution is guarded against configuration failure as defined there. Storage reads belong to commit and recovery boundaries, where a failure is a genuine mutation failure that propagates to the caller rather than reaching the TUI.
@@ -1021,7 +1030,7 @@ The `agents` configuration object gains an optional `ui` object with validated k
 
 The removed `agents.ui.asyncWidget` key is recognized and ignored so that configurations written by earlier builds remain valid; it is not treated as an unknown key.
 
-The overlay-level actions are `close`, `scrollUp`, `scrollDown`, `selectUp`, `selectDown`, `selectFirst`, `selectLast`, `pageUp`, `pageDown`, `refresh`, `steer`, `stop`, `toggleTools`, `drillIn`, `drillOut`, and `toggleFinished`, matching the upstream action set minus the plugin and prompt-audit actions plus the drill-down and filter actions. Prompt interactions such as composer Enter and Escape keep fixed keys. Configuration follows the existing global and trusted-project precedence of Section 5.3; project configuration overrides global values, and the editor-activation keys are not configurable in this release.
+The overlay-level actions are `close`, `scrollUp`, `scrollDown`, `selectUp`, `selectDown`, `selectFirst`, `selectLast`, `pageUp`, `pageDown`, `refresh`, `steer`, `stop`, `stopAll`, `toggleTools`, `drillIn`, `drillOut`, and `toggleFinished`, matching the upstream action set minus the plugin and prompt-audit actions plus the drill-down and filter actions. Prompt interactions such as composer Enter and Escape keep fixed keys. Configuration follows the existing global and trusted-project precedence of Section 5.3; project configuration overrides global values, and the editor-activation keys are not configurable in this release.
 
 The `agents.ui` values are consumed on the display path: the widgets re-resolve them whenever a paint or poll refresh runs, so resolution failure handling is part of the display contract of Section 12.6.3. A configuration that fails validation — including a key written into the shared user-global file by a different Secretary build — degrades the surfaces to the documented defaults of this section and produces one diagnostic notification per distinct fault; the notification state re-arms after a successful resolution, so a fault that clears and recurs is reported again. Validation failure stays decisive at the file-loading and menu-write boundaries; on the paint and poll path it is never a process-fatal condition (goal architecture §13.6).
 

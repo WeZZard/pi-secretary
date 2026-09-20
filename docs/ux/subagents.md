@@ -23,6 +23,7 @@ Foreground detach, live prompt auditing, external job display, and external term
 ### 2.1 Inline tool display
 
 - Each `Agent` call displays the agent type, task description, execution mode, and available status.
+- A fresh agent with no model override in its launch or definition inherits the main session's active model, not the configured default for new pi sessions. An explicit definition model or fallback list takes precedence over inheritance, and an explicit launch model takes precedence over the definition. Resuming an existing agent retains its recorded model.
 - Two display modes are configurable. Rich mode is the default and allows expansion; summary mode keeps one static result row per call and ignores expansion.
 - A foreground call streams bounded recent activity until it settles. Its card shows the agent name and status glyph, a bounded task line, current activity, a live status line, the configured tool-expansion hint, and available token and duration statistics.
 - Interrupting a foreground `Agent` call requests cancellation of that child. The child's output remains inspectable if the foreground response is interrupted. Cancelling a `TaskOutput` wait stops only the wait.
@@ -33,7 +34,7 @@ Foreground detach, live prompt auditing, external job display, and external term
 
 ### 2.2 Fleet indicator
 
-- The fleet indicator is the single agent list below (or above) the editor. It replaces the former collapsed/expanded FleetView and the separate async widget. There is no summary or info bar; the list itself is the whole surface.
+- The fleet indicator is the single agent list below (or above) the editor. It replaces the former collapsed/expanded FleetView and the separate async widget. There is no summary or info bar; a compact cancellation-shortcut hint accompanies the active list.
 - The indicator is visible only while at least one top-level agent execution is non-terminal. When no agent is active, the surface below (or above) the editor renders nothing; the indicator does not occupy a permanent row.
 - When the indicator is visible, the main session is always the first row and cannot be collapsed. Top-level agents are appended in creation order while their execution is non-terminal (queued, starting, running, or cancelling).
 - A row is removed immediately when its execution reaches a terminal status. The completion remains visible through the inline completion entry in the transcript, and terminal agents remain inspectable in the fleet view overlay.
@@ -43,6 +44,7 @@ Foreground detach, live prompt auditing, external job display, and external term
 - Unknown usage is not displayed as zero. Rows whose source artifacts predate window data keep the token-total label without a window label.
 - Rows are themed and display width-aware. The layout truncates by terminal display width and realigns right-side information after resize.
 - When more rows exist than fit, the visible window follows the selection.
+- While the indicator is visible, it shows `X stop selected` and `Ctrl+X stop all`. The selected-agent shortcut applies only when the indicator or inspector has focus. Typing `x` in the editor remains ordinary text. Ctrl+X opens fleet-wide cancellation confirmation from the editor or fleet surfaces, except while another dialog or host prompt owns input. When the fleet is idle, Ctrl+X retains the host's normal behavior.
 - Pressing Down in an empty, focused editor moves focus into the list and selects the first row. Up and Down move the selection. Pressing Up on the first row or pressing Escape returns focus to the editor. Left no longer activates the indicator. Enter opens the fleet view overlay on the selected agent row. Enter on the main row returns focus to the prompt input instead; the main session's transcript is the session behind the editor, so there is no overlay destination for it.
 
 The following is a layout example with an active selection. Angle-bracket values are placeholders, not measurements:
@@ -51,6 +53,7 @@ The following is a layout example with an active selection. Angle-bracket values
 ○ main
 ● <agent name> · <status> · <elapsed> · <window> · <cumulative>
 ○ <agent name> · <status>
+X stop selected · Ctrl+X stop all
 ```
 
 ### 2.3 Async widget (removed)
@@ -261,10 +264,10 @@ Secretary initially exposes one guidance operation. Nicobailon's `steer`, `follo
 
 - **User intent:** The user wants selected work to stop while retaining its available output.
 - **Entry conditions:** The selected execution is queued, starting, running, or already stopping.
-- **User action:** The user presses `D` and confirms the identified execution. `/agents stop <id-or-name>` provides the same operation with confirmation in the TUI.
+- **User action:** The user presses `X` while the fleet indicator or inspector has an agent selected, then confirms the identified execution. `/agents stop <id-or-name>` provides the same operation with confirmation in the TUI. Ctrl+X opens confirmation for all active top-level executions in the current fleet; cancelling those executions also requests cancellation of their nested work.
 - **Observable outcome:** A queued execution is cancelled before starting. Active execution shows “Stopping” until termination is observed.
 - **Feedback:** The view distinguishes a pending stop request from a cancelled execution. It states that file changes are not rolled back.
-- **Failure and recovery:** If the selected execution finishes or is replaced before confirmation, the confirmation does not target the newer execution. If stopping cannot be confirmed, the view reports that uncertainty and does not offer a conflicting resume.
+- **Failure and recovery:** If the selected execution finishes or is replaced before confirmation, the confirmation does not target the newer execution. Fleet-wide confirmation captures a fixed set of run identities; later launches are not added to it. Escape dismisses confirmation without cancellation. If stopping cannot be confirmed, the view reports that uncertainty and does not offer a conflicting resume.
 
 ### 3.4 Exit, reload, or switch sessions
 
@@ -349,9 +352,10 @@ Secretary initially exposes one guidance operation. Nicobailon's `steer`, `follo
 | The inspector is open. | Home/End | The key selects the first or last agent. |
 | The inspector is open. | Page Up/Page Down | The key scrolls by the available transcript viewport. |
 | The inspector is open. | Shift+K/Shift+J | The key scrolls the transcript by one line. |
-| The inspector is open. | `x`, `X`, or the configured tool-expansion key | The key toggles tool details. |
+| The inspector is open. | `o` or the configured tool-expansion key | The key toggles tool details. |
 | The inspector is open. | `s` | The key opens the message composer. |
-| The inspector is open. | `D` | The key opens stop confirmation. |
+| The fleet indicator or inspector has an agent selected. | `x` or `X` | The key opens confirmation for that execution. Shift+D remains an inspector compatibility shortcut. |
+| The editor or a fleet surface has focus and the fleet has active work. | Ctrl+X | The key opens confirmation for the current fleet's active executions. Another dialog or host prompt prevents this shortcut from taking over. |
 | The inspector is open. | `r` or `R` | The key reloads the selected transcript. |
 | The inspector is open. | Escape | The key closes the inspector without stopping work. |
 | The composer is open. | Escape | The key cancels composition without sending a message. |
@@ -366,6 +370,7 @@ Secretary initially exposes one guidance operation. Nicobailon's `steer`, `follo
 | The model picker is open. | Printable characters | The characters filter the candidate models. |
 | The `/secretary` menu is open. | Escape | The key dismisses the entire menu from any level. A focused prompt, picker, or confirmation page cancels itself first. |
 
+- While active fleet work is visible, Ctrl+X takes precedence over pi's default message-copy shortcut. When no fleet work is active, the normal host shortcut remains available.
 - Inspector-level keys are configurable when a terminal intercepts them. Displayed hints always reflect the configured keys. Prompt interactions keep fixed keys such as Enter and Escape.
 - Printable navigation keys are captured only after focus enters FleetView or the inspector.
 - Normal editing, file completion, IME composition, and existing editor extensions continue to work.

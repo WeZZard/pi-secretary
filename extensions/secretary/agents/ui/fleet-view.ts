@@ -3,6 +3,7 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { TERMINAL_STATUSES, type AgentRowView, type RunStatus } from "../records.ts";
 import { fleetRows } from "./reducer.ts";
 import type { UiState } from "./state.ts";
+import { CANCELLATION_HINT } from "./keybindings.ts";
 import { clip } from "./transcript.ts";
 import { selectionCircle } from "./glyphs.ts";
 import { formatElapsed, formatUsageLabels } from "./usage-labels.ts";
@@ -72,7 +73,10 @@ export class FleetView implements Component {
       const left = `${circle} ${theme ? theme.bold(row.name ?? row.agentId) : row.name ?? row.agentId} · ${row.status}`;
       return right ? rightAlign(left, right, width) : clip(left, width);
     };
-    return ids.slice(start, start + MAX_VISIBLE_ROWS).map(id => width <= 0 ? "" : truncateToWidth(renderRow(id), width, ""));
+    const lines = ids.slice(start, start + MAX_VISIBLE_ROWS).map(id => width <= 0 ? "" : truncateToWidth(renderRow(id), width, ""));
+    lines.push(clip(CANCELLATION_HINT, width));
+    if (!focused) lines.push(clip("↓ in empty editor focuses list", width));
+    return lines;
   }
 }
 

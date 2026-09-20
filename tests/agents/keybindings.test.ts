@@ -17,12 +17,12 @@ function ready(): ReturnType<typeof initialState> {
   return transition(s, { type: "transcript", epoch: "e", viewId: "v1", agentId: "a", requestId: "r", events: [{ kind: "assistant", entryId: "e", text: "hello" }] }).state;
 }
 
-test("defaults match the ported upstream action set", () => {
+test("defaults preserve upstream actions with the requested cancellation mapping", () => {
   const resolved = resolveInspectorKeybindings();
   for (const action of INSPECTOR_ACTIONS) assert.ok(resolved[action].length > 0, action);
-  assert.deepEqual(resolved.stop, ["shift+d"]);
+  assert.deepEqual(resolved.stop, ["shift+x", "x", "shift+d"]);
   assert.deepEqual(resolved.refresh, ["r", "shift+r"]);
-  assert.deepEqual(resolved.toggleTools, ["x", "shift+x", "ctrl+o"]);
+  assert.deepEqual(resolved.toggleTools, ["o", "ctrl+o"]);
   assert.deepEqual(resolved.selectFirst, ["home"]);
   assert.deepEqual(resolved.selectLast, ["end"]);
 });
@@ -42,6 +42,8 @@ test("validation rejects unknown actions and malformed bindings", () => {
   assert.throws(() => validateInspectorKeybindings({ stop: [] }, "cfg"), /non-empty array/);
   assert.throws(() => validateInspectorKeybindings({ stop: ["D", ""] }, "cfg"), /non-empty/);
   assert.deepEqual(validateInspectorKeybindings({ stop: ["shift+t"] }, "cfg"), { stop: ["shift+t"] });
+  assert.throws(() => validateInspectorKeybindings({ toggleTools: ["x"] }, "cfg"), /reserved/);
+  assert.throws(() => validateInspectorKeybindings({ close: ["ctrl+x"] }, "cfg"), /reserved/);
 });
 
 test("labels reflect configured keys and rendered footers match input handling", () => {
