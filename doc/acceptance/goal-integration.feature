@@ -29,7 +29,7 @@ Feature: Integrate delegated work with the originating goal
 
   @ACC-SA-08-03 @proposed
   Scenario: Do not charge a replacement goal for old child work.
-    Given a child run was authorized by goal A.
+    Given a child run captured accounting attribution to active goal A.
     And goal A has been cleared and replaced by goal B.
     When a late usage event arrives from that child.
     Then goal B's usage is not increased by that event.
@@ -38,11 +38,12 @@ Feature: Integrate delegated work with the originating goal
 
   @ACC-SA-08-04 @proposed
   Scenario: Keep resource facts even when a goal is paused.
-    Given a child was authorized while its originating goal was active.
+    Given an automatic goal request launched a child while its originating goal was active.
     And the user then paused that same goal.
     When eligible late usage from already-started work arrives.
     Then the usage is attributed to that originating goal under the existing accounting rules.
-    And the usage event does not authorize new ordinary child work or resume the goal.
+    And the usage event does not authorize further automatic child work or resume the goal.
+    And a fresh user request can resume the finished child without resuming the paused goal.
 
   @ACC-SA-08-05 @proposed
   Scenario: Do not equate child completion with goal completion.
@@ -54,12 +55,13 @@ Feature: Integrate delegated work with the originating goal
 
   @ACC-SA-08-06 @proposed
   Scenario Outline: Respect newer intent when a background result arrives.
-    Given a child was launched under an earlier goal instruction.
+    Given an automatic goal request launched a child under an earlier goal instruction.
     And the user has since <decision>.
     When the child's result arrives.
     Then the result remains available as historical task evidence.
     And it does not undo the newer decision or authorize further work under the obsolete instruction.
     And it does not independently request automatic continuation of obsolete goal work.
+    And a fresh user request can give the finished child a new recovery assignment without undoing the newer decision.
 
     Examples:
       | decision                         |
@@ -78,10 +80,10 @@ Feature: Integrate delegated work with the originating goal
     And the user can still explicitly request unrelated parent work.
 
   @ACC-SA-08-08 @proposed
-  Scenario: Prevent further ordinary work after goal-budget exhaustion.
-    Given a child is executing under an active goal's authority.
+  Scenario: Prevent further automatic goal work after goal-budget exhaustion.
+    Given a child is executing solely under an automatic request for an active goal.
     When eligible usage exhausts that goal's token budget.
-    Then subsequent ordinary child actions under that authority are refused at the next supported model or tool boundary.
+    Then subsequent automatic child actions under that authority are refused at the next supported model or tool boundary.
     And available partial output is retained.
     And any permitted budget summary reports results without ordinary task tools.
     And already-started side effects are not described as rolled back.

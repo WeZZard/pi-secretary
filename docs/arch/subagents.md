@@ -4,6 +4,8 @@
 
 **Status:** Maintained architectural contract for the subagent subsystem. Verification results and known gaps are recorded separately in the [verification report](../testing/subagent-verification.md). Normative requirements in this document are not evidence that every host integration has been verified. Revised 2026-09-19: [Section 12](#12-tui-implementation-boundary) now specifies the unified fleet indicator and the split fleet view overlay in place of the former FleetView and async widget, and nested delegation is added to the runtime contract; both revisions are implemented.
 
+**Composition revision:** The subagent module must be independent of goal management, as specified in [Section 11](#11-subsystem-independence). Runtime decoupling is implemented in the working tree and verified with standalone and real-SDK composition tests. The [verification report](../testing/subagent-verification.md#2026-09-20-goal-independent-subagents-and-external-composition) records the checks and deployment limits.
+
 **Implementation baseline:** `01f851a`, tested with Pi 0.85.1. Claude Code 2.1.272 supplies the tool-contract reference; the [historical research](../research/subagent-system-comparison.md) records the original source revisions.
 
 **Related documents:** [Requirements](../user-stories/subagents.md), [interaction design](../ux/subagents.md), [research](../research/subagent-system-comparison.md), [goal architecture](architecture.md), and [documentation responsibilities](../README.md).
@@ -68,8 +70,8 @@ flowchart TB
     Delivery --> Parent[Parent session adapter]
     Service --> Views[Read-only view models]
     Views --> UI
-    Events --> Goals[Goal integration]
-    Goals --> GoalService[Existing GoalService]
+    Events --> Consumers[External event consumers]
+    Host[Host composition layer] --> Service
 ```
 
 ### 2.1 Responsibilities
@@ -83,12 +85,12 @@ flowchart TB
 | The workspace manager | It selects Git worktrees or directory snapshots, verifies ownership, and performs conservative cleanup. |
 | The repository layer | It stores agent, run, message, usage, and delivery records with schema migrations. |
 | The completion delivery component | It reconciles pending results with the correct parent session without treating uncertain delivery as success. |
-| The goal integration component | It attributes usage and validates whether further goal-related work remains authorized. |
+| The host composition layer, outside this subsystem | It consumes public events and invokes public operations to compose delegation with other capabilities. The subagent module does not know those capabilities. |
 | The TUI components | They render snapshots and submit actions through `AgentService`. They do not mutate runtime state directly. |
 
 ### 2.2 Module organization
 
-The implementation is organized as follows. Queue admission and completion delivery are coordinated by `service.ts`; tool registration and goal integration are composed by `installation.ts`.
+The existing file layout is shown below. Queue admission and completion delivery are coordinated by `service.ts`; tool registration belongs to `installation.ts`. Cross-subsystem composition is outside this module under `extensions/secretary/composition/`, as required by [Section 11](#11-subsystem-independence).
 
 ```text
 extensions/secretary/agents/
@@ -136,10 +138,10 @@ The existing extension entry point composes these modules alongside goal managem
 6. A background launch is not successful completion.
 7. No completion, usage, or messaging event changes ownership based on arrival time.
 8. Child tool access cannot exceed the parent's allowed tool access and applicable permission policy.
-9. Children cannot invoke delegation tools or goal-mutation tools in this release.
+9. Children can delegate within the configured nesting limit and host-supplied capability policy. The subagent module does not identify another subsystem's tools by name.
 10. A worktree is not removed while its runner or tools may still be executing.
-11. Usage is recorded once per source event and is never reassigned to a replacement goal.
-12. Model notifications are untrusted result data, not authorization to resume a paused goal.
+11. Usage is recorded once per source event and retains its originating run identity.
+12. Model notifications are untrusted result data, not permission to initiate new work.
 13. No agent starts automatically because a parent session was restored.
 
 ## 4. Model-Facing Tools
@@ -242,7 +244,7 @@ Successful launch and output handlers return bounded text plus the captured `Age
 - Input errors and rejected operations throw through pi's supported error path so `isError` is set correctly.
 - Accepted asynchronous work can later fail. Its launch result remains an accepted launch; its final failure is persisted and delivered separately.
 - User-visible text includes identity, status, failure reason, partial-output status, and relevant paths. These fields are not hidden solely in `details`.
-- Child output is delimited as untrusted task data. It cannot manufacture a tool result or goal instruction.
+- Child output is delimited as untrusted task data. It cannot manufacture a tool result or privileged instruction.
 - No compatibility claim is made about historical aliases or undocumented preprocessing beyond the explicitly listed cases.
 
 ## 5. Agent Definitions and Model Resolution
@@ -268,7 +270,7 @@ Discovery order, from highest to lowest precedence, is:
 
 ### 5.2 Packaged definitions
 
-- `general-purpose` receives the parent's authorized tool names after the runner removes its prohibited delegation, workflow, and goal-control tools. The runner rechecks permissions at execution boundaries. It does not infer whether an arbitrary third-party tool requires a UI; those tools must honor the headless contract in Section 8.3.
+- `general-purpose` receives the parent's authorized tool names subject to nesting limits and the host-supplied capability policy. The runner rechecks permissions at execution boundaries. It does not infer whether an arbitrary third-party tool requires a UI; those tools must honor the headless contract in Section 8.3.
 - `Explore` and `Plan` initially use `read`, `grep`, `find`, and `ls`. They do not receive unrestricted shell access under a read-only label.
 - Packaged `Explore` and `Plan` are one-shot and cannot be resumed, following the current documented Claude behavior. Their retained identifiers support inspection and output retrieval only.
 - A project override is a custom definition with its own recorded capabilities; it is not silently treated as the packaged read-only implementation.
@@ -382,7 +384,7 @@ This synthetic example shows contributor data only, not the generic envelope or 
 - `turn_start` and context preparation clear pending generation state. Tool settlement releases individual bindings; turn completion, agent completion, tree navigation, and shutdown clear remaining references. These lifecycle rules do not add a model-facing receipt field.
 - All sibling calls in a parallel batch use the same captured configuration even if files or menu values change during execution.
 - A raw transport retry retains its prepared context and receipt. A newly prepared request after recovery may capture newer state; neither path changes the meaning of a response already received.
-- The selected full definition is captured before queueing. File deletion after publication affects future requests, not an already advertised launch. Current trust, permissions, goal authorization, cancellation, and tool restrictions can still reject execution.
+- The selected full definition is captured before queueing. File deletion after publication affects future requests, not an already advertised launch. Current trust, permissions, cancellation, and tool restrictions can still reject execution. The subagent module does not consult goal state.
 - Resumption retains the saved agent's definition and recorded model under Section 7.5 rather than selecting by name from the current catalog.
 - Existing launch idempotency remains in force. A completed tool invocation is not launched again; an unaccepted historical call without its producing receipt is not interpreted using current files.
 - Receipts remain until associated dispatches settle, including delayed siblings. They are disposed on safe teardown and never cross session or branch activation boundaries as new execution authority.
@@ -427,7 +429,7 @@ These cases define verification obligations. `tests/agents/discovery.test.ts` an
 | `AgentRecord` | It stores `agentId`, parent session identity, parent agent identity for nested delegation, optional name and immutable admission name scope, definition snapshot, model, tool policy, session path, resumability, and optional worktree ID. |
 | `AgentRun` | It stores `runId`, `agentId`, status, launch origin, timestamps, output paths, partial-result metadata, and error or cancellation reason. |
 | `GuidanceRecord` | It stores an accepted guidance ID, target run, order, text, and delivery state. States distinguish pending, transport-accepted, consumed when provable, undelivered, and uncertain. |
-| `UsageRecord` | It stores a unique source event ID, run identity, normalized usage, and optional originating goal identity. |
+| `UsageRecord` | It stores a unique source event ID, run identity, and normalized usage. External accounting associations are owned by their consumers, not by this record. |
 | `CompletionRecord` | It stores run identity, destination parent, delivery ID, and pending/submitted/observed/uncertain state. |
 | `WorkspaceRecord` | It distinguishes a Git `WorktreeRecord` from a `DirectorySnapshotRecord`. Both retain source, path, identity, and cleanup state; only Git worktrees have a branch and base commit. |
 
@@ -435,7 +437,7 @@ An agent ID names a conversation. A run ID names one execution. A source tool-ca
 
 ### 6.2 Storage ownership
 
-- SQLite agent tables are added through additive migrations in the existing Secretary database. The agent repository does not repurpose `thread_goals` for agent state.
+- SQLite agent tables are added through additive migrations in the existing Secretary database. The agent repository owns only its own tables and does not read or write another subsystem's state.
 - `AgentService` is the single writer for its parent's agent tables: it runs only after acquiring the exclusive parent lock, and `recover()` executes before any display read. The service therefore maintains an in-memory projection of its parent's agents, runs, and usage events, loaded once at recovery and updated write-through in the same commit as every mutation. Snapshot and view-model reads (§12.6.3) serve this projection and never re-read storage; explicit lookups (target resolution, receipts, transcript parsing) remain authoritative storage reads and stay fail-fast.
 - pi `SessionManager` remains responsible for session JSONL history. Secretary stores references and its own execution metadata, not a competing conversation format.
 - Each run has a plain-text output artifact for model retrieval. The inspector reads the pi transcript and does not infer current status from output text.
@@ -499,7 +501,7 @@ The status vocabulary is internal. A new run is created for resumption; terminal
 
 ### 7.1 Admission and event handling
 
-- Queue admission checks ownership, shutdown state, capacity, current permissions, model availability, and applicable goal authorization.
+- Queue admission checks ownership, shutdown state, capacity, current permissions, model availability, request validity, and cancellation. It does not read goal state or invoke a goal-specific authorization callback.
 - The queue is FIFO among eligible work. Foreground work consumes the same execution capacity as background work.
 - A full queue rejects a launch before consuming provider resources.
 - SDK initialization and resource loading are abort-aware. Cancelling during startup prevents later prompt submission.
@@ -511,7 +513,7 @@ The status vocabulary is internal. A new run is created for resumption; terminal
 ### 7.2 Guidance settlement
 
 - Each accepted message remains attributable to one run. A later resume does not silently retarget it to another run.
-- Messages not submitted to the SDK when startup fails, cancellation settles, goal authority expires, or shutdown completes become undelivered with a reason.
+- Messages not submitted to the SDK when startup fails, cancellation settles, or shutdown completes become undelivered with a reason.
 - Messages accepted by the SDK are marked consumed only when a correlated event establishes consumption. Otherwise they become uncertain when the run settles.
 - Both undelivered and uncertain messages remain inspectable. Neither is automatically resubmitted or used to create a new run.
 - Resumption clears any residual SDK steering queue and submits only the new explicit message. Previously persisted conversation entries remain historical context, but unconsumed queue entries are not replayed as new instructions.
@@ -523,7 +525,7 @@ The status vocabulary is internal. A new run is created for resumption; terminal
 - A definition's `maxTurns` is a positive integer configuration value; it is not added to the `Agent` schema.
 - Reaching a turn limit stops further ordinary work and records available output as partial.
 - The implementation may request a bounded final summary before a hard stop, but it must not represent a missing summary as complete output.
-- Definition limits, queue bounds, nesting depth, and goal budgets have distinct purposes and are reported separately.
+- Definition limits, queue bounds, and nesting depth have distinct purposes and are reported separately. External budget policies are not implemented by this subsystem.
 - Nested delegation is bounded by a maximum depth below the main session, configured by `agents.maxNestingDepth` with a default of three levels. A child session below the maximum depth receives the delegation tools; at the maximum depth the delegation tools are not registered, and a direct launch attempt beyond it fails with an actionable error.
 
 ### 7.4 Shutdown and cancellation
@@ -575,7 +577,7 @@ sequenceDiagram
 
 - A child receives a fresh event bus unless an explicitly scoped bridge is required. Root extension events are not broadcast indiscriminately into children.
 - The selected resource loader retains applicable project instructions and trusted resources while preventing Secretary's root initialization in a child.
-- Delegation tools, workflow tools, and goal-mutation tools are removed from both discovery and execution paths.
+- The host-supplied capability policy is enforced in both discovery and execution paths. Delegation tools are available within the nesting limit. Restrictions owned by other subsystems are supplied by the host, not encoded as subsystem-specific tool names here.
 - The effective tool set is the intersection of parent-authorized tools and the definition's allowlist, minus explicit denials and child-incompatible operations.
 - Late-registered tools undergo the same checks. Descriptions or active-tool filtering alone are not sufficient enforcement.
 - Safety and permission hooks must not be dropped merely to simplify child startup.
@@ -663,8 +665,8 @@ Retaining even unchanged isolated workspaces until explicit cleanup differs from
 
 ### 10.2 Turn policy
 
-- A normal background result can request one parent follow-up turn in a live owning session.
-- A result associated with a paused, cleared, replaced, or otherwise non-active goal is retained and shown in the UI but does not automatically resume goal work.
+- A normal background result can request one parent follow-up turn from the host in a live owning session. The host owns scheduling policy; the subagent subsystem does not inspect goals to decide whether a turn may run.
+- Results remain available for display and inspection whether or not the host schedules a follow-up.
 - Restoring a parent session does not replay old automatic follow-up requests. Undelivered outcomes become available in its next context or explicit inspection.
 - A parent request receives one bounded current-agent snapshot listing relevant active runs and undelivered outcomes. Historical snapshots are replaced in the outgoing copy, not appended indefinitely.
 - Status refreshes do not start model turns, and rendered assistant claims do not change agent records.
@@ -674,46 +676,30 @@ Retaining even unchanged isolated workspaces until explicit cleanup differs from
 - The running-agent status projection and the definition catalog serve different purposes. The former reports instances and outcomes; the latter identifies types available for new delegation.
 - The [composition contract](request-context.md#4-composition-architecture) produces one new request-only envelope after Secretary's existing projections. It does not replace completion delivery or add automatic follow-up turns.
 - The [history and caching contract](request-context.md#8-history-diagnostics-and-caching) forbids append-then-delete mutation of saved user messages. A transient suffix limits stale-context accumulation but does not promise an append-only provider prefix or improved cache reuse.
-- Goal authorization remains governed by Section 11. An advertised definition, catalog update, or contributor snapshot is state rather than permission to resume a goal.
+- An advertised definition, catalog update, or contributor snapshot is state rather than execution authority. Section 11 defines the boundary with external consumers.
 
-## 11. Goal Integration
+## 11. Subsystem Independence
 
-### 11.1 Origin and ordering
+### 11.1 Dependency boundary
 
-- An agent launch inherits goal attribution from its producing parent request, not from an unqualified read of the currently focused goal at completion time.
-- Attribution stores the originating thread, goal ID, accepted intent sequence, control generation, and session epoch where available.
-- A launch unrelated to goal work has no goal attribution. Ambiguous attribution is not guessed.
-- The existing goal ordering and synchronization components remain authoritative for whether further goal-related actions are allowed.
-- Newer user intent can invalidate subsequent child work without reclassifying already incurred usage.
+- The subagent module must not depend on the goal subsystem. This includes its installation, tools, service, runner, child context, records, and persistence.
+- No agent API or record contains goal identities, goal statuses, goal intent sequences, or goal-specific authorization callbacks.
+- Delegation works without initializing a goal service or goal storage. A stored goal does not change subagent admission, guidance, or resumption semantics.
+- The host composes independent capabilities through public operations and events. The [goal and subagent composition contract](goal-agent-composition.md) owns cross-subsystem behavior outside this module.
 
-### 11.2 Usage accounting
+### 11.2 Public operations and events
 
-The existing **goal-budget token usage** formula remains:
+- Launch, guidance, resumption, inspection, and cancellation use session, request, operation, agent, and run identities.
+- Execution and usage events retain stable source identities and parent-child relationships so external consumers can correlate them without changing agent records.
+- Usage recording is independent of external consumers. A missing goal association or accounting consumer does not prevent execution.
+- Completion delivery reports outcomes and requests host scheduling without interpreting another subsystem's state. A host decision not to schedule a follow-up does not discard the result.
+- Generic cancellation and host-supplied capability restrictions apply at supported execution boundaries, including asynchronous admission and nested runs. The agent module does not interpret the external policy that caused them.
 
-```text
-goal-budget token usage =
-    max(inputTokens - cachedInputTokens, 0)
-  + max(outputTokens, 0)
-```
+### 11.3 Verification boundary
 
-- Usage from completed assistant messages and reported compaction operations is normalized to the existing `TokenUsage` representation.
-- Each source usage event is persisted with a unique identity. A transaction records its application to the originating goal or records why no live goal can receive it.
-- The goal update and usage-application marker must commit atomically in the shared database, through a new idempotent `GoalService` accounting operation. An in-memory counter followed by an unrelated database write is insufficient for crash recovery.
-- This new operation preserves existing budget precedence and publishes the normal goal change event after commit.
-- An event for a cleared or replaced goal remains in the run's usage history but cannot recreate that goal or charge its replacement.
-- Parent session usage reporting and goal-budget charging are separate consumers of the same usage event. A foreground tool's aggregated `usage` must not cause a second goal charge.
-- The existing unattributed descendant accumulator is not used as the sole integration interface. It cannot by itself distinguish executions belonging to different goal identities after replacement.
-- Execution duration, context-window usage, provider token totals, and goal-budget usage remain separate quantities with explicit labels.
-
-### 11.3 Continuation and limits
-
-- Completion messages cannot mark goals complete, blocked, or active. The parent must use the existing goal contract under current authorization.
-- At an idle boundary, one current continuation can tell the parent about outstanding attributed work and permit independent work. If the parent yields without new work while the same child set is outstanding, automatic goal continuation waits for a material child event or new user input instead of repeating the same wake-up.
-- A wait timeout alone is not a material child event and does not cause repeated delegation.
-- Parent work that is explicitly requested by the user is not blocked merely because a child exists.
-- Goal pause, clear, replacement, or budget exhaustion prevents new child actions authorized solely by the obsolete goal at the next supported model/tool boundary. Already-started tool side effects are not rolled back.
-- An attributed child that cannot continue under current goal authority ends with available partial output. A reporting-only budget summary may be requested under the existing goal policy, but ordinary tools remain unavailable for that summary.
-- A later explicit resume captures new authorization for the new run. Its prior conversation is context, not continuing permission to pursue an old goal.
+- Standalone tests exercise the subagent lifecycle without the goal subsystem, and dependency checks reject goal-specific dependencies in the agent module.
+- Cross-subsystem request ordering, goal accounting, and blocked-goal recovery are verified in composition tests rather than encoded as agent admission rules.
+- Standalone, dependency, and real-SDK composition tests have passed for the working-tree implementation. Live deployment and production-data migration are separate from this verification.
 
 ## 12. TUI Implementation Boundary
 
@@ -994,7 +980,7 @@ Usage labels follow the [interaction design](../ux/subagents.md#22-fleet-indicat
 
 - **Context-window usage** is the latest assistant turn's input plus cache-read tokens. It requires per-turn reporting; when the host does not report it, the label is omitted rather than shown as zero.
 - **Cumulative usage** is the accumulated input-plus-output total derived from persisted usage events.
-- Neither label is the goal-budget usage formula of Section 11.2. Goal charging continues to use the established formula on the same underlying usage events, and the widget labels must not be reused for it.
+- Neither label is an external budget quantity. The [composition accounting contract](goal-agent-composition.md#4-usage-and-goal-accounting) defines goal charging as a separate consumer of usage events; widget labels must not be reused for it.
 
 While the indicator is visible, it prepends exactly one clipped hint line to the bounded row window. Fleet navigation selects the cancellation hint; editor focus selects the empty-editor Down-arrow hint defined in UX Section 2.2. Both occupy the same single row, and the hint disappears with the last active agent. Plain `x` is captured only with fleet or inspector focus, and Ctrl+X is captured only while the current fleet has active work and no modal or host prompt owns input. This intentionally overrides pi's default Ctrl+X message-copy action while that fleet is active; idle editing retains the host action.
 
@@ -1013,8 +999,6 @@ The fleet view overlay adds presentation-layer components that upstream implemen
 - The list viewport scrolls to retain the selected row when the roster exceeds its height. Agent selection and changes in label length do not move the divider.
 - Selection circles per row so the filled circle marks the selected row and the hollow circle marks the rest. List rows carry only the circle and the agent name; run status, stats, and activity render in the transcript pane's status header. The former status-glyph alphabet is not used on these rows, and color is never the only channel.
 - The navigation list presents exactly one drill level at a time, derived from the `InspectorLevel` of Section 12.1.6, and renders the bounded breadcrumb for that level.
-`agents.ui.inlineToolDisplay` is retired. Pi's `expanded` rendering state alone selects compact (`false`) or full (`true`) presentation; there is no replacement mode setting. Known legacy values are validated and ignored rather than copied into `AgentUiConfiguration`, allowing existing files to load without preserving old rendering behavior. Unknown values remain validation errors.
-
 - The transcript viewport, scrolling, and follow behavior of Sections 12.1.3 and 12.4 render the structured events of Section 12.6.2. A fixed status header renders above the viewport: name, status label, and stats on the first line, current activity on the second, and a single divider between the header and the viewport. The header is not part of the scroll anchor or the follow state. Tool-detail expansion toggles the bounded argument and output blocks. In the mouse-enabled alternate-screen host, SGR wheel events over the transcript pane scroll the transcript and wheel events over the list move the selection; both reuse the existing state machines and add no states. Dialogs return a handled result for wheel events so the host cannot forward the raw mouse sequence into the text input. Main-screen mode retains terminal-owned wheel scrolling; keyboard scrolling remains available in both modes.
 - The footer enumerates only the actions available for the selected record and reflects configured keybindings. It prioritizes page-scroll and close hints when the width cannot accommodate every action.
 
@@ -1029,6 +1013,8 @@ The `agents` configuration object gains an optional `ui` object with validated k
 | `agents.ui.fleetViewPlacement` | `"belowEditor"` or `"aboveEditor"` | `"belowEditor"` |
 | `agents.ui.fleetKeybindings` | Overlay-level action-to-key-list overrides | Upstream defaults |
 
+`agents.ui.inlineToolDisplay` is retired. Pi's `expanded` rendering state alone selects compact (`false`) or full (`true`) presentation; there is no replacement mode setting. Known legacy values are validated and ignored rather than copied into `AgentUiConfiguration`, allowing existing files to load without preserving old rendering behavior. Unknown values remain validation errors.
+
 The removed `agents.ui.asyncWidget` key is recognized and ignored so that configurations written by earlier builds remain valid; it is not treated as an unknown key.
 
 The overlay-level actions are `close`, `scrollUp`, `scrollDown`, `selectUp`, `selectDown`, `selectFirst`, `selectLast`, `pageUp`, `pageDown`, `refresh`, `steer`, `stop`, `stopAll`, `toggleTools`, `drillIn`, `drillOut`, and `toggleFinished`, matching the upstream action set minus the plugin and prompt-audit actions plus the drill-down and filter actions. Prompt interactions such as composer Enter and Escape keep fixed keys. Configuration follows the existing global and trusted-project precedence of Section 5.3; project configuration overrides global values, and the editor-activation keys are not configurable in this release.
@@ -1038,6 +1024,20 @@ The `agents.ui` values are consumed on the display path: the widgets re-resolve 
 The `/secretary` configuration menu edits the user-global `secretary.json`. Each menu mutation validates the resulting `agents` object against the same rules as file loading, including unknown-key rejection, before writing it; a failed validation or write leaves the previous configuration in effect. Project-level overrides are not edited through the menu in this release. Menu navigation and editing keys are fixed and are specified in the [interaction design's navigation table](../ux/subagents.md#4-navigation-and-accessibility).
 
 #### 12.6.6 Excluded surfaces
+
+The following upstream surfaces are not ported because they require runtime features outside Section 1.1. No placeholder or disabled control is shown for them.
+
+| Upstream surface | Blocking runtime feature |
+| --- | --- |
+| Foreground detach hint and `foregroundDetachShortcut` | Detaching a foreground run into a background run |
+| Prompt Audit and redo-with-guidance | Live prompt snapshots and replay |
+| External job rows and project panes | External job providers and Herdr integration |
+| Enter/H external inspector action | Ghostty and Herdr inspector plugins |
+| Steering delivery modes (`steer`, `follow_up`, `auto`) | A second messaging contract beyond the selected Claude Code behavior |
+| Workflow, chain, mission, and schedule rows | Orchestration and scheduling runtimes |
+
+If a future release adds one of these runtime features, its surface is designed in the owning document first and this table is updated.
+
 #### 12.6.7 Inline compact/full rendering contract
 
 **Status:** This is the implemented technical boundary for the revised [UX Section 2.1](../ux/subagents.md#21-inline-tool-display). Verification evidence and its limits are recorded separately in the testing report.
@@ -1058,20 +1058,6 @@ The `/secretary` configuration menu edits the user-global `secretary.json`. Each
 - The call-hook component reads shared row state at paint time, after the result hook has published the current snapshot. This prevents a first-paint stale header without scheduling a second repaint. The result hook renders only the body. Neither hook reads configuration on the display path, since there is no inline display selector.
 - Tool schemas, model-facing text, headless output, runtime state transitions, and `TaskStop`/`TaskOutput` behavior remain unchanged by the layout revision. Compatibility work must preserve existing result-detail consumers and saved sessions.
 - Verification must exercise registered hooks through the real host tool-row component, including first result paint, later updates, compact/full toggling, and replay. Component checks do not replace a keyboard-driven TUI walkthrough or human approval.
-
-
-The following upstream surfaces are not ported because they require runtime features outside Section 1.1. No placeholder or disabled control is shown for them.
-
-| Upstream surface | Blocking runtime feature |
-| --- | --- |
-| Foreground detach hint and `foregroundDetachShortcut` | Detaching a foreground run into a background run |
-| Prompt Audit and redo-with-guidance | Live prompt snapshots and replay |
-| External job rows and project panes | External job providers and Herdr integration |
-| Enter/H external inspector action | Ghostty and Herdr inspector plugins |
-| Steering delivery modes (`steer`, `follow_up`, `auto`) | A second messaging contract beyond the selected Claude Code behavior |
-| Workflow, chain, mission, and schedule rows | Orchestration and scheduling runtimes |
-
-If a future release adds one of these runtime features, its surface is designed in the owning document first and this table is updated.
 
 ## 13. Failure Handling and Security
 
@@ -1094,7 +1080,7 @@ If a future release adds one of these runtime features, its surface is designed 
 - Generated artifact paths cannot escape the storage root through traversal or symlinks.
 - Tool restrictions are enforced at execution time and are not described as host isolation.
 - Child sessions do not receive broader credentials or tools merely because a definition requests them.
-- The host cannot undo commands already executed by an agent. Cancellation and goal invalidation do not promise rollback.
+- The host cannot undo commands already executed by an agent. Cancellation does not promise rollback.
 
 ## 14. Verification and Traceability
 
@@ -1107,7 +1093,7 @@ If a future release adds one of these runtime features, its surface is designed 
 | SA-05 | Crash recovery, ownership locking, reload, session replacement, missing files, and no-auto-resume tests cover persistence. |
 | SA-06 | Disposable Git and non-Git projects cover shared-directory defaults, captured-HEAD worktrees, unborn and non-Git snapshots, copy bounds, ownership checks, retained changes, and conservative cleanup. |
 | SA-07 | Registry precedence, project trust, fallback-list resolution, missing and empty lists, candidate ordering, availability-cache behavior, and late tool registration tests cover configuration. |
-| SA-08 | Atomic usage application, event replay, goal replacement, stopped goals, and continuation waiting tests cover goal integration. |
+| SA-08 | Standalone lifecycle and dependency tests cover subsystem independence. Separate composition tests cover blocked-goal recovery, request ordering, and accounting. The verification report records executed boundary coverage and limits. |
 | SA-09 | SDK and adapter tests cover host-mode restrictions and child UI lifecycles. Real-provider CLI tests separately exercise print-mode spawning and interactive-parent spawning with widget extensions. These do not establish every RPC client or extension combination. |
 | SA-10 | Structured-transcript parsing tests cover tool pairing, guidance notices, truncation bounds, and sanitization. View-model tests cover usage-label derivation, the no-zero-for-unknown rule, indicator row filtering, and overlay level grouping. Render-key tests cover deduplication and timer disposal. Keybinding-configuration tests cover validation, precedence, and hint consistency. Border and layout snapshot tests cover minimum width, narrow and wide panes, the split layout's 20–40-column navigation bounds and transcript minimum, constant frame height through selection and loading, and resize. Real main-screen and alternate-screen TUI composition tests inspect the resulting terminal cells for complete borders and stable coordinates. The recorded UI walkthrough additionally covers the fleet indicator and both display modes. |
 | SA-12 | Launch tests cover delegation-tool registration by depth, the maximum-depth rejection, parent-agent recording, and tree-wide shutdown. Reducer and layout tests cover drill-in, drill-out, selection restoration, and the terminal-agent filter. |

@@ -7,14 +7,8 @@
  * turns), and produces progress snapshots charged to the active goal.
  */
 
-export interface TokenUsage {
-  inputTokens: number;
-  cachedInputTokens: number;
-  cacheWriteInputTokens: number;
-  outputTokens: number;
-  reasoningOutputTokens: number;
-  totalTokens: number;
-}
+import type { TokenUsage } from "../usage.ts";
+export type { TokenUsage } from "../usage.ts";
 
 export function goalTokenDeltaForUsage(usage: TokenUsage): number {
   return Math.max(usage.inputTokens - usage.cachedInputTokens, 0) + Math.max(usage.outputTokens, 0);

@@ -1,4 +1,4 @@
-import type { TokenUsage } from "../goal/accounting.ts";
+import type { TokenUsage } from "../usage.ts";
 
 export type RunStatus = "queued" | "starting" | "running" | "cancelling" | "succeeded" | "partial" | "failed" | "cancelled" | "interrupted";
 export const TERMINAL_STATUSES: ReadonlySet<RunStatus> = new Set(["succeeded", "partial", "failed", "cancelled", "interrupted"]);
@@ -15,13 +15,6 @@ export interface AgentDefinition {
   background?: boolean;
   isolation?: "none" | "worktree";
   resumable: boolean;
-}
-export interface GoalOrigin {
-  threadId: string;
-  sessionEpoch: string;
-  goalId: string;
-  intentSeq: number;
-  controlGeneration: number;
 }
 export interface WorktreeRecord {
   kind?: "git-worktree";
@@ -93,7 +86,7 @@ export interface AgentRun {
   outputPath: string;
   output: string;
   error?: string;
-  goal?: GoalOrigin;
+  requestId?: string;
   toolCount: number;
   turnCount: number;
   activity?: string;
@@ -117,7 +110,6 @@ export interface UsageRecord {
   id: string;
   runId: string;
   usage: TokenUsage;
-  goal?: GoalOrigin;
 }
 export interface AgentSnapshot { agent: AgentRecord; run?: AgentRun }
 /**
@@ -144,8 +136,8 @@ export interface RunnerHooks {
   activity(name: string): void;
   turn(): void;
   usage(eventId: string, usage: TokenUsage): void;
-  /** Called before each new model/tool action. Throw to refuse obsolete work. */
-  authorize(): void;
+  /** Checks cancellation before each new model/tool action. */
+  assertRunning(): void;
   /** Records an availability failure for a candidate, with an absolute reset time when the provider reported one. */
   availability?(id: string, resetAt?: number): void;
   /** Commits the model that actually executed when the chain advanced past the recorded model. */

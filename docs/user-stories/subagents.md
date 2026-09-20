@@ -6,6 +6,8 @@
 
 **Related documents:** [Research](../research/subagent-system-comparison.md), [interaction design](../ux/subagents.md), and [technical design](../arch/subagents.md).
 
+**Composition revision:** Goal management and subagents are independent subsystems. The revised SA-08 and dependency boundary are implemented in the working tree, with executed checks and deployment limits in the [verification report](../testing/subagent-verification.md#2026-09-20-goal-independent-subagents-and-external-composition).
+
 ## 1. Purpose and Confirmed Constraints
 
 Secretary will let a parent agent delegate work to child agents while the user can observe and control that work.
@@ -15,6 +17,7 @@ The following constraints were confirmed during design discussion:
 - Claude Code provides the reference for tool names and input schemas.
 - nicobailon/pi-subagents provides the reference for the TUI. Its inline display, fleet navigation, and inspector surfaces are ported onto Secretary's runtime. The ported FleetView summary and async widget are superseded by a single unified fleet indicator; the inspector becomes a split fleet view overlay. Surfaces that depend on out-of-scope runtime features are excluded explicitly in the [interaction design](../ux/subagents.md#8-ported-surface-exclusions).
 - tintinweb/pi-subagents provides an implementation reference for pi integration.
+- The subagent module must not know the goal system. Secretary composes these independent capabilities outside the subagent module.
 - Child execution stops when pi exits. Saved conversations may be resumed explicitly later.
 - Model selection uses named model fallback lists maintained in Secretary configuration. A definition or invocation model value first matches an exact model available in the session, then names a fallback list whose models are tried in configured order, and `inherit` selects the parent's model. The tool input exposes only configured list names.
 - The initial scope includes core delegation, custom agent definitions, worktree isolation, output retrieval, and agent inspection.
@@ -105,16 +108,21 @@ As a user, I want reusable agent definitions with predictable tool and model sel
 - Omitting a model override supports inheritance from the parent when the definition supplies no model.
 - Agent definitions cannot bypass the parent's tool or permission restrictions.
 
-### SA-08: Account for delegated goal work
+### SA-08: Compose delegation with goals
 
-As a user with an active goal, I want delegated usage included without changing the meaning of my goal budget.
+As a user, I want goal management and delegation to remain independent capabilities so that a stopped goal cannot prevent me from getting help, including work beyond its objective to resolve a blocker.
 
-- Descendant usage uses the existing goal-budget formula.
-- Usage is attributed to the goal that authorized the execution, not whichever goal happens to exist when a result arrives.
-- Duplicate callbacks and restoration do not charge the same usage twice.
-- Finishing a child does not complete or resume a goal automatically.
-- Old child results cannot override a newer pause, objective change, clear, or replacement goal.
+- Delegation works without enabling or initializing goal management.
+- A blocked goal does not prevent a new user request from launching an agent, guiding a running agent, or assigning work to a finished resumable agent.
+- Recovery requires neither a goal resume command nor a decision about whether the requested task belongs to the goal.
+- User-directed work does not implicitly resume the goal or restart automatic continuation. Ordinary permissions, cancellation, session ownership, and branch rules remain in effect.
+- The subagent module does not read goal state, own goal attribution, or enforce goal-specific execution policies.
+- When the capabilities are composed, delegated usage can be included through the existing goal-budget formula without turning accounting association into permission to execute.
+- Duplicate callbacks and restoration do not charge the same usage twice. Late usage is not reassigned to whichever goal exists when the result arrives.
+- Finishing a child does not complete or resume a goal automatically, and old results cannot override newer goal decisions.
 - Background children do not cause repeated automatic delegation while the parent is waiting for their results.
+
+The [composition contract](../arch/goal-agent-composition.md) owns the interaction between the independent subsystems. Its deterministic standalone, composition, migration, and acceptance checks have passed; this does not claim deployment into an already running session.
 
 ### SA-09: Use tools without a terminal
 
@@ -152,7 +160,7 @@ As a parent agent, I want a delegated agent to decompose its task further so tha
 
 - A running agent can launch its own child agents through the same delegation contract, within the tool and permission restrictions it inherited.
 - A nested agent is recorded with its parent agent, and the fleet view overlay presents each agent's children as a drill-down level. The fleet indicator lists top-level agents only.
-- Nested usage is attributed under the existing goal-budget formula, and finishing a nested agent does not complete or resume a goal automatically.
+- Nested usage retains its originating run identity for external accounting consumers. When composed with goals, the SA-08 accounting and completion rules apply outside the subagent module.
 - Stopping an agent stops its nested children; exiting the session stops the whole tree.
 - Nesting is bounded by a documented maximum depth, and a launch beyond that depth fails with an actionable error.
 - The fleet indicator and the fleet view overlay present the agent hierarchy correctly in sessions where no agent has children.

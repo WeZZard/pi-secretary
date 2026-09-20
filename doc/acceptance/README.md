@@ -38,7 +38,8 @@
 | [worktree-isolation.feature](worktree-isolation.feature) | SA-06. | The scenarios cover worktree allocation, retained changes, cleanup, and resumption races. Shared-directory defaults and non-Git directory snapshots are covered by the E2E matrix rather than this feature file. |
 | [agent-inspection.feature](agent-inspection.feature) | SA-02. | The scenarios cover FleetView, transcript inspection, focus, scrolling, and accessible status presentation. |
 | [ui-state-machine.feature](ui-state-machine.feature) | SA-02 through SA-06. | The scenarios cover modal transitions, stable targets, duplicate submission, uncertain acknowledgment, and stale responses. |
-| [goal-integration.feature](goal-integration.feature) | SA-08. | The scenarios cover attributed usage, current goal authority, completion, and continuation. |
+| [goal-integration.feature](goal-integration.feature) | SA-08. | The scenarios cover attributed usage, automatic goal authority, completion, and continuation. |
+| [goal-agent-composition.feature](goal-agent-composition.feature) | SA-08. | The scenarios cover fresh delegated recovery while a goal remains blocked and standalone delegation without goal management. |
 | [output-and-headless.feature](output-and-headless.feature) | SA-01, SA-02, and SA-09. | The scenarios cover output retrieval, truncation, waiting, and behavior without a terminal. |
 
 ## 4. Scenario Conventions
@@ -85,11 +86,12 @@
 
 ## 7. Automation and Review
 
-- Each scenario identifier is bound by `tests/acceptance/runtime.test.ts`, `configuration-goals.test.ts`, `discovery.test.ts`, `ui.test.ts`, or `worktrees.test.ts`. The shared runner uses the official Gherkin compiler to expand Examples rows.
+- Each scenario identifier is bound by `tests/acceptance/runtime.test.ts`, `configuration-goals.test.ts`, `composition.test.ts`, `discovery.test.ts`, `ui.test.ts`, or `worktrees.test.ts`. The shared runner uses the official Gherkin compiler to expand Examples rows.
 - The [terminal recording procedure](tui-recording.md) supplements UI adapter tests with actual terminal input and output. Human approval remains a separate review. Real-provider spawning scenarios are described in the [E2E testing guide](../../docs/testing/subagent-e2e.md) and are not part of this Gherkin suite.
 - Keep generated run output under ignored `test-results/` or in CI artifact storage, as specified in the [test artifact policy](../../docs/testing/test-artifacts.md). This directory contains versioned specifications and instructions, not generated evidence archives.
 - The configuration-precedence fixture uses the real packaged `general-purpose` definition. Its former `reviewer` name incorrectly assumed a packaged agent that the design does not include; the behavioral precedence requirement is unchanged.
 - Automated checks should distinguish schema validation, service integration, real pi host integration, and TUI interaction tests.
+- The blocked-recovery binding in `tests/acceptance/composition.test.ts` uses an adapter parent and real SDK children. The separate `tests/integration/goal-agent-composition.test.ts` regression exercises real parent SDK ingress, registered tools, and child completion. The standalone acceptance binding uses real parent and child SDK sessions without installing goal management. These checks do not establish human approval.
 - UI review should follow the project's recording procedure when an implementation is available. The review must distinguish recording completeness, execution outcome, and human approval.
 - A scenario that exposes a new product decision must update the owning requirements or design document before implementation.
 - Deliberate deviations from Claude Code must remain documented in the technical design and must not be hidden in test fixtures.

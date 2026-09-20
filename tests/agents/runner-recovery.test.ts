@@ -93,7 +93,7 @@ async function fixture(t: TestContext, responses: Response[], holdSummary = fals
   const usage: Array<{ id: string; value: Parameters<RunnerHooks["usage"]>[1] }> = [];
   let path = "";
   const hooks: RunnerHooks = { session(value) { path = value; }, text() {}, activity() {}, turn() {},
-    usage(id, value) { usage.push({ id, value }); }, authorize() {} };
+    usage(id, value) { usage.push({ id, value }); }, assertRunning() {} };
   const controller = new AbortController();
   child = await createChildRunner({ agent, run, ctx: { modelRegistry: registry, model, scopedModels: [],
     isProjectTrusted: () => true } as unknown as ExtensionContext, signal: controller.signal, hooks,

@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 export interface ChildSessionContext {
   /** The agent record this child session executes. */
   agentId: string;
+  runId?: string;
   /** Levels below the main session; a top-level child is 1. */
   depth: number;
 }

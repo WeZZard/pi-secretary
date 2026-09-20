@@ -65,7 +65,7 @@ export async function agentHarness(t: TestContext, options: { mode?: string; col
       assert.ok(tools.has(name), `${name} is registered`);
       {
         // Adapter tests simulate host ordering; discovery.test.ts separately proves it in the real SDK.
-        if (name === "Agent") await emit("context", { messages: [] });
+        await emit("context", { messages: [] });
         await emit("message_end", { message: { role: "assistant", stopReason: "toolUse",
           usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
           content: [{ type: "toolCall", id, name, arguments: args }] } });

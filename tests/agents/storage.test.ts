@@ -64,6 +64,19 @@ test("usage deduplication and receipts survive reopening the shared database", a
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test("request identity is durable and immutable without a goal schema", () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    const repo = new AgentRepository(db);
+    repo.putAgent(agent);
+    repo.putRun({ ...run, requestId: "request-one" });
+    assert.equal(repo.getRun(run.runId)!.requestId, "request-one");
+    assert.throws(() => repo.putRun({ ...run, requestId: "request-two" }), /identity cannot change/);
+    assert.throws(() => repo.putRun(run), /identity cannot change/);
+    assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE name = 'secretary_goals'").get(), undefined);
+  } finally { db.close(); }
+});
+
 test("future schema versions fail safely", () => {
   const db = new DatabaseSync(":memory:");
   try { db.exec("CREATE TABLE secretary_agent_schema(version INTEGER); INSERT INTO secretary_agent_schema VALUES(3)"); assert.throws(() => new AgentRepository(db), /schema version/); }

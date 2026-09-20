@@ -18,6 +18,7 @@
 | Document | Boundary |
 | --- | --- |
 | [Request-time context injection](arch/request-context.md) | It specifies generic contributor registration, deterministic composition, request lifecycle, message placement, and history preservation. Contributing subsystems own their data and execution policies. |
+| [Goal and subagent composition](arch/goal-agent-composition.md) | It specifies coordination outside the independent goal and subagent modules. The subagent module has no goal dependencies. The verification report records executed standalone and composition checks, separately from deployment. |
 
 ## Subagent documents
 
@@ -25,7 +26,7 @@
 | --- | --- |
 | [Requirements](user-stories/subagents.md) | They define the required outcomes and confirmed constraints for the implemented subsystem, including the ported-presentation requirement SA-10. |
 | [Interaction design](ux/subagents.md) | It defines FleetView, the async widget, inspection, messaging, cancellation, recovery, and the ported-surface exclusions from the user's perspective. |
-| [Architecture](arch/subagents.md) | It is the maintained contract for tools, runtime, persistence, workspaces, goal integration, and the TUI port mapping in Section 12.6. |
+| [Architecture](arch/subagents.md) | It is the maintained contract for tools, runtime, persistence, workspaces, subsystem independence, and the TUI port mapping in Section 12.6. |
 | [Definition discovery](arch/subagents.md#54-request-scoped-definition-catalog) | It specifies automatic discovery, selection metadata, catalog publication, and launch consistency using the shared request-context mechanism. The verification report records implemented coverage and remaining limits. |
 | [BDD acceptance specifications](../doc/acceptance/README.md) | They describe observable behavior in Gherkin with stable scenario identities and executable bindings. |
 | [Testing guide](testing/README.md) | It selects test commands, prerequisites, and result interpretation. |

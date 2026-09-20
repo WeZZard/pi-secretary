@@ -643,3 +643,17 @@ flowchart TD
 - Signal-based cancellation classification is retained because Pi may report authentication-setup cancellation as `stopReason: "error"`; that is not a project impasse.
 - The former requirement to suppress every obsolete provider invocation is superseded. The [old handoff](../../.handoff/pi-host-automatic-goal-admission.md) remains historical; the earlier cancellation tests remain evidence against blanket abort, not a release blocker.
 - Initialization handlers and epoch isolation are verified independently of a full interactive terminal replacement workflow. Expanded dashboard and keyboard behavior remain outside this synchronization change.
+
+## 14. Composition with Subagents
+
+**Status:** Implemented in the working tree with deterministic standalone and composition verification. The [verification report](../testing/subagent-verification.md#2026-09-20-goal-independent-subagents-and-external-composition) records executed checks and deployment limits.
+
+- Goal management and subagent execution are independent subsystems. Cross-subsystem coordination belongs to the Secretary composition layer, not to either subsystem's internal implementation.
+- The [goal and subagent composition contract](goal-agent-composition.md) owns external association storage, usage consumption, request provenance, automatic dispatch control, and the required integration tests.
+- The subagent module must not import goal types, read goal state, persist goal attribution, or enforce goal-specific admission or child execution policies.
+- Goal status and goal budgets govern goal-driven automatic work, not ordinary user-directed access to delegation. A blocked goal must not prevent work needed to resolve its blocker, including work outside its objective.
+- Receiving or completing user-directed work does not itself resume the goal. Goal state changes retain their existing explicit decision contract.
+- Descendant accounting preserves the parent runtime's active-at-capture boundary: a resolved producing request captures an active goal once, while a fresh request against a stopped goal starts without goal attribution. The [composition accounting contract](goal-agent-composition.md#4-usage-and-goal-accounting) defines durable mappings, late usage, and replay. This accounting rule never gates user-directed execution.
+- The intent-ordering rules in Section 13 apply to automatic goal requests and goal mutations. They must not be implemented as a session-wide delegation gate based on the presence of a stored goal.
+- The composition layer preserves stale-automatic-work protection through request provenance and ordinary execution controls. The subagent module applies generic cancellation, permissions, and branch ownership without knowing the goal-related reason.
+- Existing verification in Section 13.8 is historical evidence for goal ordering, not proof that the revised composition boundary is implemented.

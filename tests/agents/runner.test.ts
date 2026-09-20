@@ -61,7 +61,7 @@ async function fixture(t: TestContext, responses: Array<string | { tool: string;
   const run: AgentRun = { runId: "r", agentId: "a", parentId: "parent", launchKey: "k", prompt: "Task sentinel", description: "task", status: "starting", background: false, createdAt: 1, outputPath: join(root, "output"), output: "", toolCount: 0, turnCount: 0, revision: 0 };
   const usage: Array<{ id: string; value: Parameters<RunnerHooks["usage"]>[1] }> = [];
   let path = "";
-  const hooks: RunnerHooks = { session(value) { path = value; }, text() {}, activity() {}, turn() {}, usage(id, value) { usage.push({ id, value }); }, authorize() {} };
+  const hooks: RunnerHooks = { session(value) { path = value; }, text() {}, activity() {}, turn() {}, usage(id, value) { usage.push({ id, value }); }, assertRunning() {} };
   const controller = new AbortController();
   const start = async (overrides: { allowDelegation?: boolean } = {}) => { const child = await createChildRunner({ agent, run, ctx, signal: controller.signal, hooks, sessionDir: join(root, "sessions"), ...overrides }); t.after(() => child.dispose()); return child; };
   return { root, agent, run, ctx, hooks, controller, calls, usage, start, setGate(fn: () => Promise<void>) { gate = fn; }, get path() { return path; } };
@@ -417,7 +417,7 @@ test("authorization revoked at tool boundary blocks filesystem side effects and 
   const f = await fixture(t, [{ tool: "write", args: { path: "forbidden.txt", content: "oops" } }]);
   f.agent.tools = ["write"];
   let permitted = true;
-  f.hooks.authorize = () => { if (!permitted) throw new Error("obsolete goal"); };
+  f.hooks.assertRunning = () => { if (!permitted) throw new Error("Execution is stopping"); };
   f.setGate(async () => { permitted = false; });
   const child = await f.start();
   assert.equal((await child.result).status, "partial");

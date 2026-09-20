@@ -12,13 +12,8 @@ import { childDelegationAuthorized, runInChildSession } from "./child-context.ts
 /** Delegation tools (SA-12): issued to a child session only when it may delegate further. */
 export const DELEGATION_TOOL_NAMES = ["Agent", "SendMessage", "TaskStop", "TaskOutput"];
 
-const forbidden = new Set([
-  "SubagentWorkflow", "get_subagent_result", "steer_subagent", "get_goal", "create_goal", "update_goal", "clear_goal",
-]);
-
 function usageRecord(usage: Usage) {
   // Intentionally identical to the parent normalization (including cache semantics).
-  // goalTokenDeltaForUsage owns the unchanged goal-budget formula.
   return { inputTokens: usage.input, cachedInputTokens: usage.cacheRead,
     cacheWriteInputTokens: usage.cacheWrite, outputTokens: usage.output,
     reasoningOutputTokens: 0, totalTokens: usage.totalTokens };
@@ -47,11 +42,11 @@ export async function createChildRunner(options: {
   allowDelegation?: boolean;
 }): Promise<RunningChild> {
   // Records predate the depth field are top-level children of the main session.
-  return runInChildSession({ agentId: options.agent.agentId, depth: options.agent.depth ?? 1 }, async () => {
+  return runInChildSession({ agentId: options.agent.agentId, runId: options.run.runId, depth: options.agent.depth ?? 1 }, async () => {
     const { agent, run, ctx, signal, hooks, sessionDir } = options;
     const allowDelegation = options.allowDelegation === true;
     signal.throwIfAborted();
-    hooks.authorize();
+    hooks.assertRunning();
     await access(agent.cwd);
     if (agent.sessionPath) await access(agent.sessionPath);
 
@@ -61,8 +56,7 @@ export async function createChildRunner(options: {
     let resultPromise: RunningChild["result"] | undefined;
     let outerCleanup: Promise<void> | undefined;
 
-    const allowed = () => agent.tools.filter((name) => !forbidden.has(name)
-      && (allowDelegation || !DELEGATION_TOOL_NAMES.includes(name))
+    const allowed = () => agent.tools.filter((name) => (allowDelegation || !DELEGATION_TOOL_NAMES.includes(name))
       && (!hooks.allowedTools || hooks.allowedTools().includes(name))
       && (!agent.definition.tools || agent.definition.tools.includes(name))
       && !agent.definition.disallowedTools?.includes(name));
@@ -116,7 +110,7 @@ export async function createChildRunner(options: {
             if (enforceProviderIdentity && runtime.getRegisteredNativeProvider(parentAuthAdapter.id) !== parentAuthAdapter) {
               throw new Error(`Child parent-authentication adapter was replaced: ${parentAuthAdapter.id}`);
             }
-            hooks.authorize();
+            hooks.assertRunning();
           } catch (error) { attempt.partial = String(error); throw error; }
         },
         dispose: () => cleanup ??= (async () => {

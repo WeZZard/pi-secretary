@@ -8,7 +8,7 @@ import { WorkspaceManager } from "./workspaces.ts";
 import { resolveIsolation } from "./configuration.ts";
 import { createChildRunner } from "./runner.ts";
 import { guidanceNotice, parseTranscriptEvents, type TranscriptEvent } from "./ui/transcript-events.ts";
-import { TERMINAL_STATUSES, type AgentDefinition, type AgentRecord, type AgentRowView, type AgentRun, type AgentSnapshot, type GoalOrigin, type RunningChild, type RunnerHooks, type UsageRecord } from "./records.ts";
+import { TERMINAL_STATUSES, type AgentDefinition, type AgentRecord, type AgentRowView, type AgentRun, type AgentSnapshot, type RunningChild, type RunnerHooks, type UsageRecord } from "./records.ts";
 import { deriveUsageLabels } from "./ui/usage-labels.ts";
 import { liveChildService } from "./live-services.ts";
 
@@ -28,10 +28,17 @@ export interface LaunchSpec {
   parentAgentId?: string;
   background: boolean;
   isolation?: "none" | "worktree";
-  goal?: GoalOrigin;
+  requestId?: string;
+  signal?: AbortSignal;
   /** Recheck caller cancellation and live authority across asynchronous admission boundaries. */
   assertAdmission?: () => void;
 }
+export interface MessageOptions {
+  parentEntryId?: string;
+  requestId?: string;
+  signal?: AbortSignal;
+}
+export type ServiceEvent = { type: "admitted"; run: AgentRun } | { type: "usage"; usage: UsageRecord };
 export interface ServiceOptions {
   parentId: string;
   root: string;
@@ -39,11 +46,9 @@ export interface ServiceOptions {
   config: AgentConfiguration;
   repository: AgentRepository;
   runner?: typeof createChildRunner;
-  authorize?: (run: AgentRun) => void;
-  account?: (usage: UsageRecord) => void;
+  events?: (event: ServiceEvent) => void;
   completion?: (run: AgentRun) => void;
   currentTools?: () => readonly string[];
-  resumeOrigin?: (previous: AgentRun) => GoalOrigin;
   validateResume?: (agent: AgentRecord) => Promise<void>;
   /** Nesting depth of the session this service serves; the main session is 0. */
   depth?: number;
@@ -70,6 +75,7 @@ export class AgentService {
   private readonly projectionRuns = new Map<string, AgentRun[]>();
   private readonly projectionUsage = new Map<string, UsageRecord[]>();
   private readonly active = new Map<string, Active>();
+  private readonly abortListeners = new Map<string, Set<() => void>>();
   private readonly cleanups = new Set<Promise<unknown>>();
   private readonly messages = new Map<string, Promise<AgentRun>>();
   private readonly listeners = new Set<() => void>();
@@ -276,13 +282,33 @@ export class AgentService {
     if (agent.parentId === this.options.parentId || !agent.parentAgentId) return undefined;
     return liveChildService(agent.parentAgentId);
   }
-  private saveRun(run: AgentRun): void { run.revision++; this.repo.putRun(run); this.projectRun(run); this.changed(); }
+  private notify(event: ServiceEvent): void {
+    try { this.options.events?.(event); } catch (error) { this.diagnose(error); }
+  }
+  private diagnose(error: unknown): void {
+    try { this.options.diagnostic?.(error); } catch { /* Diagnostics cannot affect execution. */ }
+  }
+  private releaseAbortListeners(runId: string): void {
+    for (const remove of this.abortListeners.get(runId) ?? []) remove();
+    this.abortListeners.delete(runId);
+  }
+  private bindAbort(run: AgentRun, signal?: AbortSignal): void {
+    if (!signal || TERMINAL_STATUSES.has(this.run(run.runId).status)) return;
+    const abort = () => { void this.stop(run.runId, `signal:${randomUUID()}`).catch(error => this.diagnose(error)); };
+    const listeners = this.abortListeners.get(run.runId) ?? new Set<() => void>();
+    listeners.add(() => signal.removeEventListener("abort", abort));
+    this.abortListeners.set(run.runId, listeners);
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+  }
+  private saveRun(run: AgentRun): void { run.revision++; this.repo.putRun(run); this.projectRun(run); if (TERMINAL_STATUSES.has(run.status)) this.releaseAbortListeners(run.runId); this.changed(); }
   private capacity(): void {
     if (this.closed) throw rejected("This agent controller is shutting down.");
     const pending = this.repo.runs(this.options.parentId).filter(r => !TERMINAL_STATUSES.has(r.status)).length;
     if (pending >= this.options.config.maxConcurrent + this.options.config.maxQueued) throw rejected("Agent execution capacity and pending queue are full.");
   }
   async launch(spec: LaunchSpec): Promise<AgentSnapshot> {
+    spec.signal?.throwIfAborted();
     const existing = this.repo.findLaunch(this.options.parentId, spec.launchKey);
     if (existing) return { agent: this.resolve(existing.agentId), run: existing };
     spec.assertAdmission?.();
@@ -297,6 +323,7 @@ export class AgentService {
     const requestedWorktree = isolation === "worktree" ? await this.worktrees.captureBase(this.options.ctx.cwd) : undefined;
     spec.assertAdmission?.();
     this.capacity();
+    spec.signal?.throwIfAborted();
     const duplicate = this.repo.findLaunch(this.options.parentId, spec.launchKey);
     if (duplicate) return { agent: this.resolve(duplicate.agentId), run: duplicate };
     const agentId = `agent_${randomUUID()}`;
@@ -309,17 +336,18 @@ export class AgentService {
       cwd: this.options.ctx.cwd, configCwd: this.options.ctx.cwd,
       resumable: spec.definition.resumable, requestedWorktree, createdAt: Date.now(),
     };
-    const run = this.newRun(agent, spec.prompt, spec.description, spec.background, spec.launchKey, spec.goal, spec.parentEntryId);
-    this.options.authorize?.(run);
+    const run = this.newRun(agent, spec.prompt, spec.description, spec.background, spec.launchKey, spec.requestId, spec.parentEntryId);
     this.repo.transaction(() => {
       if (spec.name && this.list().some(s => s.agent.name === spec.name)) throw new Error(`Agent name already exists: ${spec.name}`);
       this.repo.putAgent(agent); this.repo.putRun(run);
     });
     this.projectAgent(agent); this.projectRun(run);
+    this.bindAbort(run, spec.signal);
+    this.notify({ type: "admitted", run: structuredClone(run) });
     this.changed(); this.drain();
     return { agent, run };
   }
-  private newRun(agent: AgentRecord, prompt: string, description: string, background: boolean, launchKey: string, goal?: GoalOrigin, parentEntryId?: string): AgentRun {
+  private newRun(agent: AgentRecord, prompt: string, description: string, background: boolean, launchKey: string, requestId?: string, parentEntryId?: string): AgentRun {
     const runId = `run_${randomUUID()}`;
     const dir = join(this.options.root, "runs", runId);
     mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -327,7 +355,7 @@ export class AgentService {
     writeFileSync(outputPath, "", { mode: 0o600 });
     return { runId, agentId: agent.agentId, parentId: agent.parentId, launchKey, prompt, description,
       ...(parentEntryId ? { parentEntryId } : {}),
-      status: "queued", background, createdAt: Date.now(), outputPath, output: "", goal,
+      status: "queued", background, createdAt: Date.now(), outputPath, output: "", ...(requestId !== undefined ? { requestId } : {}),
       toolCount: 0, turnCount: 0, revision: 0 };
   }
   private drain(): void {
@@ -352,7 +380,6 @@ export class AgentService {
     let run = this.run(runId);
     let output = "";
     try {
-      this.options.authorize?.(run);
       if (entry.controller.signal.aborted) throw new Error("Execution cancelled before startup.");
       run.status = "starting"; run.startedAt = Date.now(); this.saveRun(run);
       let agent = this.resolve(run.agentId);
@@ -380,14 +407,14 @@ export class AgentService {
         activity: name => update(r => { r.activity = name; r.toolCount++; }),
         turn: () => update(r => { r.turnCount++; }),
         usage: (id, usage) => {
-          const record: UsageRecord = { id: `${runId}:${id}`, runId, usage, goal: run.goal };
-          // Goal integration commits its own durable idempotency marker atomically.
-          this.options.account?.(record);
-          if (this.repo.recordUsage(record)) this.projectUsage(record);
+          const record: UsageRecord = { id: `${runId}:${id}`, runId, usage };
+          if (this.repo.recordUsage(record)) {
+            this.projectUsage(record);
+            this.notify({ type: "usage", usage: structuredClone(record) });
+          }
         },
-        authorize: () => {
+        assertRunning: () => {
           if (entry.controller.signal.aborted || this.closed) throw new Error("Child execution is stopping.");
-          this.options.authorize?.(this.run(runId));
         },
         availability: (id, resetAt) => { this.options.availability?.(id, resetAt); },
         model: id => {
@@ -423,6 +450,7 @@ export class AgentService {
         this.repo.putCompletion({ id: `completion:${runId}`, runId, parentId: run.parentId, state: "pending", trigger: run.background });
         this.projectRun(run);
       });
+      this.releaseAbortListeners(runId);
       this.changed();
       try { this.options.completion?.(run); } catch (e) { this.options.diagnostic?.(e); }
     }
@@ -442,24 +470,50 @@ export class AgentService {
       });
     }
   }
-  message(ref: string, text: string, operationId: string, goal?: GoalOrigin, admissionEntryId?: string): Promise<AgentRun> {
+  message(ref: string, text: string, operationId: string, options: MessageOptions = {}): Promise<AgentRun> {
+    return this.routeMessage(ref, text, operationId, options);
+  }
+  private routeMessage(ref: string, text: string, operationId: string, options: MessageOptions, assertCaller?: () => void): Promise<AgentRun> {
     let agent: AgentRecord;
-    try { agent = this.resolve(ref); } catch (error) { return Promise.reject(error); }
+    try { options.signal?.throwIfAborted(); agent = this.resolve(ref); } catch (error) { return Promise.reject(error); }
     const owner = this.liveOwner(agent);
-    // Guidance for a live nested run is delivered by the session that owns it (SA-12).
-    if (owner) return owner.message(agent.agentId, text, operationId, goal);
+    const parentEntryId = options.parentEntryId ?? this.options.admissionEntry?.();
+    const assertAdmission = () => {
+      assertCaller?.();
+      options.signal?.throwIfAborted();
+      if (this.closed) throw rejected("Agent controller is shutting down.");
+      if (!owner) return;
+      let ancestor: AgentRecord | undefined = agent;
+      const visited = new Set<string>();
+      while (ancestor && ancestor.parentId !== this.options.parentId && !visited.has(ancestor.agentId)) {
+        visited.add(ancestor.agentId);
+        ancestor = ancestor.parentAgentId ? this.repo.getAgent(ancestor.parentAgentId) : undefined;
+      }
+      if (!ancestor || ancestor.parentId !== this.options.parentId) throw rejected("The nested agent has no ancestor in this parent session.");
+      const previous = this.run(ancestor.agentId);
+      if (!this.isVisible(previous) || (parentEntryId && !this.isVisible({ ...previous, parentEntryId }))) {
+        throw rejected("The delegating agent or this operation belongs to another branch. Return to that branch or launch a fresh agent.");
+      }
+    };
+    // Session entry IDs are local: retain caller checks, but capture the owner's own admission entry.
+    if (owner) {
+      try { assertAdmission(); } catch (error) { return Promise.reject(error); }
+      return owner.routeMessage(agent.agentId, text, operationId, { ...options, parentEntryId: undefined }, assertAdmission);
+    }
     if (agent.parentId !== this.options.parentId && this.repo.activeRun(agent.agentId)) {
       return Promise.reject(rejected("The owning child session is unavailable; wait for the run to settle or stop its delegating agent."));
     }
     const id = agent.agentId;
-    const parentEntryId = admissionEntryId ?? this.options.admissionEntry?.();
     const prior = this.messages.get(id) ?? Promise.resolve();
-    const operation = prior.catch(() => {}).then(() => this.acceptMessage(id, text, operationId, goal, parentEntryId));
+    const operation = prior.catch(() => {}).then(() => this.acceptMessage(id, text, operationId, { ...options, parentEntryId }, assertAdmission));
     this.messages.set(id, operation);
     void operation.finally(() => { if (this.messages.get(id) === operation) this.messages.delete(id); }).catch(() => {});
     return operation;
   }
-  private async acceptMessage(ref: string, text: string, operationId: string, goal?: GoalOrigin, parentEntryId?: string): Promise<AgentRun> {
+  private async acceptMessage(ref: string, text: string, operationId: string, options: MessageOptions, assertAdmission: () => void): Promise<AgentRun> {
+    assertAdmission();
+    const { parentEntryId, requestId, signal } = options;
+    signal?.throwIfAborted();
     if (!text.trim()) throw rejected("Message must be nonempty.");
     if (this.closed) throw rejected("Agent controller is shutting down.");
     const receipt = this.repo.receipt(this.options.parentId, operationId) as { runId: string } | undefined;
@@ -480,28 +534,29 @@ export class AgentService {
         await this.options.validateResume?.(agent);
         if (agent.worktree) await this.worktrees.verify(agent.worktree);
       } catch (error) { throw rejected(`Recorded model or worktree is unavailable: ${String(error)}`); }
+      signal?.throwIfAborted();
       this.capacity();
       const latest = this.resolve(agent.agentId);
       if (latest.worktree && latest.worktree.state !== "allocated") throw rejected("Worktree cleanup prevents resumption.");
     }
+    assertAdmission();
     const previous = this.run(agent.agentId);
     if (agent.parentId === this.options.parentId && (!this.isVisible(previous)
       || (parentEntryId && !this.isVisible({ ...previous, parentEntryId })))) {
       throw rejected("The agent's saved conversation or this operation belongs to another branch. Return to that branch or launch a fresh agent.");
     }
-    if (!active && previous.goal && !goal) {
-      if (!this.options.resumeOrigin) throw rejected("Resuming goal-attributed work requires current goal authorization.");
-      try { goal = this.options.resumeOrigin(previous); }
-      catch (error) { throw rejected(String(error)); }
-    }
-    const run = active ?? this.newRun(agent, text, `Resume ${agent.name ?? agent.definition.name}`, true, `message:${operationId}`, goal, parentEntryId);
-    try { this.options.authorize?.(run); } catch (error) { throw rejected(String(error)); }
+    signal?.throwIfAborted();
+    const run = active ?? this.newRun(agent, text, `Resume ${agent.name ?? agent.definition.name}`, true, `message:${operationId}`, requestId, parentEntryId);
     this.repo.transaction(() => {
       if (!active) this.repo.putRun(run);
       else this.repo.putGuidance({ id: operationId, runId: run.runId, text, state: "pending" });
       this.repo.putReceipt(this.options.parentId, operationId, { runId: run.runId });
     });
     if (!active) this.projectRun(run);
+    if (!active) {
+      this.bindAbort(run, signal);
+      this.notify({ type: "admitted", run: structuredClone(run) });
+    }
     this.changed(); if (active) this.flushGuidance(run.runId); else this.drain();
     return run;
   }
@@ -535,7 +590,10 @@ export class AgentService {
     });
     // Publish only after the complete transaction. No callback sees a partially
     // cancelled queue, and no await separates target transitions.
-    for (const run of runs) this.projectRun(run);
+    for (const run of runs) {
+      this.projectRun(run);
+      if (TERMINAL_STATUSES.has(run.status)) this.releaseAbortListeners(run.runId);
+    }
     this.changed();
     for (const run of runs) {
       if (TERMINAL_STATUSES.has(run.status)) continue;

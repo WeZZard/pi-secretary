@@ -618,6 +618,19 @@ sequenceDiagram
 - **Feedback:** Unfinished abandoned work receives a cancellation request. A stop request does not claim that tools have already settled. Abandoned completions do not start a new parent turn after navigation. Explicit inspection by a retained run ID identifies an off-branch result as historical work.
 - **Failure and recovery:** Navigation does not roll back output files, token usage, or changes to the filesystem. A child conversation that advanced on an abandoned branch cannot be resumed from an earlier state; the inspector shows its retained earlier output with an explanation and omits the advanced descendant roster. The user can launch a fresh agent instead. Legacy records without provable launch ancestry are excluded from current work but are not automatically cancelled; explicit owned identifiers remain available for inspection and cleanup.
 
+### 5.3 Work while a goal is blocked
+
+**Status:** Implemented in the working tree with deterministic real-SDK and acceptance coverage. See the [verification report](../testing/subagent-verification.md#2026-09-20-goal-independent-subagents-and-external-composition) for deployment and review limits.
+
+- **User intent:** The user needs help resolving a blocker, including investigation or repair beyond the original goal.
+- **Entry conditions:** A goal is blocked, and the ordinary delegation capability is available.
+- **User action:** The user requests work in the same conversation, sends guidance to a running agent, or assigns new work to a finished resumable agent.
+- **Observable outcome:** Delegation remains available without resuming the goal. The user does not need to decide whether the work belongs to the goal. The goal stays blocked, and its automatic continuation remains disabled.
+- **Feedback:** The ordinary launch, guidance, and resumption acknowledgments apply. They do not claim that the goal resumed or that human acceptance occurred.
+- **Failure and recovery:** Ordinary permission, configuration, history, branch, cancellation, and host-mode restrictions still apply. A stopping run must settle before resumption. Goal status alone is not a delegation error, and the user is not told to resume the goal as a prerequisite for getting help.
+
+This interaction implements [SA-08](../user-stories/subagents.md#sa-08-compose-delegation-with-goals). The subagent module remains independent of goals; the [composition architecture](../arch/goal-agent-composition.md) owns cross-subsystem behavior.
+
 ## 6. Notifications and Non-TUI Behavior
 
 - Successful completion updates inline history and FleetView without an extra success toast.

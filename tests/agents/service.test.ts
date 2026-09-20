@@ -5,13 +5,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { AgentService, type LaunchSpec } from "../../extensions/secretary/agents/service.ts";
+import { AgentService, type LaunchSpec, type ServiceOptions } from "../../extensions/secretary/agents/service.ts";
 import { defaultAgentUi } from "../../extensions/secretary/agents/configuration.ts";
 import { AgentRepository } from "../../extensions/secretary/agents/storage/agent-repository.ts";
+import { WorkspaceManager } from "../../extensions/secretary/agents/workspaces.ts";
 import { WorktreeManager } from "../../extensions/secretary/agents/worktrees.ts";
 import type { AgentRun, RunningChild, RunnerHooks } from "../../extensions/secretary/agents/records.ts";
 
-function harness(mode = "tui", concurrent = 1, branchDisposition?: (run: AgentRun) => "visible" | "outside" | "unknown") {
+function harness(mode = "tui", concurrent = 1, branchDisposition?: (run: AgentRun) => "visible" | "outside" | "unknown", extra: Partial<ServiceOptions> = {}) {
   const root = mkdtempSync(join(tmpdir(), "secretary-service-"));
   const db = new DatabaseSync(":memory:");
   const repository = new AgentRepository(db);
@@ -20,6 +21,7 @@ function harness(mode = "tui", concurrent = 1, branchDisposition?: (run: AgentRu
   const service = new AgentService({ parentId: "parent", root, repository, branchDisposition,
     ctx: { cwd: root, mode } as ExtensionContext,
     config: { modelFallbackLists: {}, ui: defaultAgentUi(), maxConcurrent: concurrent, maxQueued: 2, shutdownTimeoutMs: 1000, maxNestingDepth: 3 },
+    ...extra,
     runner: async options => {
       starts++;
       const sessionPath = join(root, `${options.agent.agentId}.jsonl`);
@@ -38,13 +40,124 @@ function harness(mode = "tui", concurrent = 1, branchDisposition?: (run: AgentRu
     async close() { await service.shutdown(); db.close(); rmSync(root, { recursive: true, force: true }); } };
 }
 
+test("admission and usage observers run after persistence and cannot fail execution", async () => {
+  const events: string[] = [];
+  const errors: unknown[] = [];
+  const h = harness("tui", 1, undefined, {
+    events(event) {
+      events.push(event.type);
+      if (event.type === "admitted") {
+        assert.ok(h.repository.getRun(event.run.runId));
+        assert.equal(h.children.has(event.run.runId), false);
+      } else assert.equal(h.repository.usage(event.usage.runId).length, 1);
+      throw new Error("observer failed");
+    },
+    diagnostic(error) { errors.push(error); },
+  });
+  try {
+    const a = await h.service.launch(h.spec("one")); await h.tick();
+    const child = h.children.get(a.run!.runId)!;
+    const usage = { inputTokens: 10, cachedInputTokens: 2, cacheWriteInputTokens: 0, outputTokens: 3, reasoningOutputTokens: 0, totalTokens: 13 };
+    child.hooks.usage("event", usage); child.hooks.usage("event", usage);
+    assert.deepEqual(events, ["admitted", "usage"]);
+    assert.equal(errors.length, 2);
+    child.finish(); await h.tick();
+    await h.service.message(a.agent.agentId, "continue", "resume");
+    assert.deepEqual(events, ["admitted", "usage", "admitted"]);
+  } finally { await h.close(); }
+});
+
+test("usage persistence failure never notifies external consumers", async () => {
+  const events: string[] = [];
+  const h = harness("tui", 1, undefined, { events: event => { events.push(event.type); } });
+  try {
+    const a = await h.service.launch(h.spec("one")); await h.tick();
+    h.repository.recordUsage = () => { throw new Error("storage unavailable"); };
+    assert.throws(() => h.children.get(a.run!.runId)!.hooks.usage("event", {
+      inputTokens: 1, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 1, reasoningOutputTokens: 0, totalTokens: 2,
+    }), /storage unavailable/);
+    assert.deepEqual(events, ["admitted"]);
+  } finally { await h.close(); }
+});
+
+test("abort during asynchronous launch preparation prevents durable admission", async () => {
+  const original = WorkspaceManager.prototype.captureBase;
+  let release!: () => void;
+  WorkspaceManager.prototype.captureBase = async () => {
+    await new Promise<void>(resolve => { release = resolve; });
+    return { kind: "directory-snapshot", repo: "unused", reason: "no-git" };
+  };
+  const h = harness();
+  try {
+    const controller = new AbortController();
+    const launch = h.service.launch({ ...h.spec("one"), isolation: "worktree", signal: controller.signal });
+    controller.abort(); release();
+    await assert.rejects(launch);
+    assert.deepEqual(h.repository.runs("parent"), []);
+    assert.equal(h.starts(), 0);
+  } finally { WorkspaceManager.prototype.captureBase = original; await h.close(); }
+});
+
+test("queued signal cancellation records completion without starting the child", async () => {
+  const h = harness();
+  try {
+    await h.service.launch(h.spec("one")); await h.tick();
+    const controller = new AbortController();
+    const queued = await h.service.launch({ ...h.spec("two"), signal: controller.signal });
+    controller.abort(); await h.tick();
+    assert.equal(h.service.run(queued.run!.runId).status, "cancelled");
+    assert.equal(h.starts(), 1);
+    assert.ok(h.repository.completions("parent").some(item => item.runId === queued.run!.runId));
+  } finally { await h.close(); }
+});
+
+test("operation signals cancel admitted runs and detach on terminal settlement", async () => {
+  const h = harness();
+  try {
+    const controller = new AbortController();
+    const { getEventListeners } = await import("node:events");
+    const a = await h.service.launch({ ...h.spec("one"), signal: controller.signal }); await h.tick();
+    assert.equal(h.service.run(a.run!.runId).status, "running");
+    assert.equal(getEventListeners(controller.signal, "abort").length, 1);
+    controller.abort(); await h.tick();
+    assert.equal(h.service.run(a.run!.runId).status, "cancelled");
+    assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+    const next = new AbortController();
+    const resumed = await h.service.message(a.agent.agentId, "continue", "resume", { signal: next.signal }); await h.tick();
+    h.children.get(resumed.runId)!.finish(); await h.tick();
+    assert.equal(getEventListeners(next.signal, "abort").length, 0);
+    next.abort();
+    assert.equal(h.service.run(resumed.runId).status, "succeeded");
+    await assert.rejects(h.service.launch({ ...h.spec("aborted"), signal: controller.signal }));
+    assert.equal(h.repository.runs("parent").length, 2);
+  } finally { await h.close(); }
+});
+
+test("cancellation survives asynchronous resume validation and serialized message queues", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const h = harness("tui", 1, undefined, { validateResume: () => gate });
+  try {
+    const a = await h.service.launch(h.spec("one")); await h.tick();
+    h.children.get(a.run!.runId)!.finish(); await h.tick();
+    const first = new AbortController(); const second = new AbortController();
+    const p1 = h.service.message(a.agent.agentId, "first", "first", { signal: first.signal });
+    const p2 = h.service.message(a.agent.agentId, "second", "second", { signal: second.signal });
+    const rejected = Promise.all([assert.rejects(p1), assert.rejects(p2)]);
+    await h.tick(); first.abort(); second.abort(); release(); await rejected;
+    assert.equal(h.repository.runs("parent").length, 1);
+    assert.equal(h.service.receipt("first"), undefined);
+    assert.equal(h.service.receipt("second"), undefined);
+  } finally { release(); await h.close(); }
+});
+
 test("historical branch inspection never exposes an advanced transcript or descendant roster", async () => {
   const visible = new Set(["initial", "later"]);
   const h = harness("tui", 1, run => visible.has(run.parentEntryId!) ? "visible" : "outside");
   try {
     const a = await h.service.launch({ ...h.spec("one"), name: "reader", parentEntryId: "initial" }); await h.tick();
     h.children.get(a.run!.runId)!.finish("Retained initial output."); await h.tick();
-    const later = await h.service.message("reader", "follow up", "resume", undefined, "later"); await h.tick();
+    const later = await h.service.message("reader", "follow up", "resume", { parentEntryId: "later" }); await h.tick();
     h.children.get(later.runId)!.finish("Future output."); await h.tick();
     h.repository.putAgent({ ...a.agent, agentId: "future-child", parentAgentId: a.agent.agentId, parentId: "child-session", name: "future" });
     h.repository.putRun({ ...later, runId: "future-child-run", agentId: "future-child", parentId: "child-session", status: "succeeded" });
@@ -151,13 +264,15 @@ test("streamed output is retained when the runner reports only its last message"
   } finally { await h.close(); }
 });
 
-test("inspector-style resume cannot silently discard prior goal attribution", async () => {
+test("resumption uses the new request identity without inheriting prior provenance", async () => {
   const h = harness();
   try {
-    const a = await h.service.launch({ ...h.spec("goal-work"), goal: { threadId: "parent", goalId: "goal", sessionEpoch: "epoch", intentSeq: 1, controlGeneration: 1 } });
+    const a = await h.service.launch({ ...h.spec("work"), requestId: "initial-request" });
     await h.tick(); h.children.get(a.run!.runId)!.finish(); await h.tick();
-    await assert.rejects(h.service.message(a.agent.agentId, "continue", "resume"), /current goal authorization/);
-    assert.equal(h.repository.runs("parent").length, 1);
+    const resumed = await h.service.message(a.agent.agentId, "continue", "resume", { requestId: "new-request" });
+    assert.equal(resumed.requestId, "new-request");
+    assert.equal(h.repository.getRun(a.run!.runId)!.requestId, "initial-request");
+    assert.equal(h.repository.runs("parent").length, 2);
   } finally { await h.close(); }
 });
 

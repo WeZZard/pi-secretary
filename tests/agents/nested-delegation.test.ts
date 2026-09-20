@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { AgentService, type LaunchSpec } from "../../extensions/secretary/agents/service.ts";
+import { AgentService, type LaunchSpec, type ServiceOptions } from "../../extensions/secretary/agents/service.ts";
 import { defaultAgentUi, type AgentConfiguration } from "../../extensions/secretary/agents/configuration.ts";
 import { AgentRepository } from "../../extensions/secretary/agents/storage/agent-repository.ts";
 import { registerLiveChildService } from "../../extensions/secretary/agents/live-services.ts";
@@ -22,13 +22,13 @@ type Runner = NonNullable<ConstructorParameters<typeof AgentService>[0]["runner"
  * production shutdown path: cancelling the parent shuts down the child session's service
  * (session_shutdown) before the parent run settles.
  */
-async function harness(t: TestContext) {
+async function harness(t: TestContext, options: { root?: Partial<ServiceOptions>; child?: Partial<ServiceOptions> } = {}) {
   const root = mkdtempSync(join(tmpdir(), "secretary-nested-"));
   const db = new DatabaseSync(":memory:");
   const repository = new AgentRepository(db);
   const ctx = { cwd: root, mode: "tui" } as ExtensionContext;
   const childServices = new Map<string, AgentService>();
-  const children = new Map<string, { finish: (out?: string) => void }>();
+  const children = new Map<string, { finish: (out?: string) => void; messages: string[] }>();
 
   const simpleRunner: Runner = async options => {
     const sessionPath = join(root, `${options.agent.agentId}.jsonl`);
@@ -36,10 +36,12 @@ async function harness(t: TestContext) {
     options.hooks.session(sessionPath);
     let resolve!: (value: Awaited<RunningChild["result"]>) => void;
     const result = new Promise<Awaited<RunningChild["result"]>>(r => { resolve = r; });
-    children.set(options.run.runId, { finish: (out = "done") => resolve({ status: "succeeded", output: out }) });
-    return { result, steer: async () => {}, abort: async () => { resolve({ status: "cancelled", output: "" }); }, dispose: async () => {} };
+    const messages: string[] = [];
+    children.set(options.run.runId, { finish: (out = "done") => resolve({ status: "succeeded", output: out }), messages });
+    return { result, steer: async text => { messages.push(text); }, abort: async () => { resolve({ status: "cancelled", output: "" }); }, dispose: async () => {} };
   };
 
+  const childOptions = options.child;
   const rootRunner: Runner = async options => {
     if (options.agent.definition.name !== "delegator") return simpleRunner(options);
     const sessionPath = join(root, `${options.agent.agentId}.jsonl`);
@@ -47,7 +49,7 @@ async function harness(t: TestContext) {
     options.hooks.session(sessionPath);
     // The delegated agent's session installs its own agent support and registers it live.
     const child = new AgentService({ parentId: `session-${options.agent.agentId}`, root: join(root, `child-${options.agent.agentId}`),
-      ctx, config, repository, depth: options.agent.depth, runner: simpleRunner });
+      ctx, config, repository, depth: options.agent.depth, runner: simpleRunner, ...childOptions });
     const unregister = registerLiveChildService(options.agent.agentId, child);
     childServices.set(options.agent.agentId, child);
     let resolve!: (value: Awaited<RunningChild["result"]>) => void;
@@ -58,12 +60,69 @@ async function harness(t: TestContext) {
       dispose: shutdown };
   };
 
-  const service = new AgentService({ parentId: "main", root, ctx, config, repository, runner: rootRunner });
+  const service = new AgentService({ parentId: "main", root, ctx, config, repository, runner: rootRunner, ...options.root });
   const spec = (key: string, name = "worker"): LaunchSpec => ({ launchKey: key,
     definition: { name, description: name, prompt: "Work", source: "test", hash: "hash", resumable: true },
     model: "test/model", tools: ["read"], prompt: "Do the task", description: `Task ${key}`, background: true });
   t.after(async () => { await service.shutdown(); db.close(); rmSync(root, { recursive: true, force: true }); });
   return { service, repository, spec, children, childServices, tick };
+}
+
+test("root guidance and resumption use owner-local admission entries without losing caller branch checks", async t => {
+  const rootVisible = new Set(["root-launch", "root-message"]);
+  const childVisible = new Set(["child-launch", "child-message"]);
+  const h = await harness(t, {
+    root: { branchDisposition: run => rootVisible.has(run.parentEntryId!) ? "visible" : "outside" },
+    child: { admissionEntry: () => "child-message", branchDisposition: run => childVisible.has(run.parentEntryId!) ? "visible" : "outside" },
+  });
+  const parent = await h.service.launch({ ...h.spec("parent", "delegator"), parentEntryId: "root-launch" }); await h.tick();
+  const owner = h.childServices.get(parent.agent.agentId)!;
+  const nested = await owner.launch({ ...h.spec("nested"), parentAgentId: parent.agent.agentId, parentEntryId: "child-launch" }); await h.tick();
+  const guided = await h.service.message(nested.agent.agentId, "root guidance", "guidance", { parentEntryId: "root-message", requestId: "root-request" });
+  assert.equal(guided.runId, nested.run!.runId);
+  assert.deepEqual(h.children.get(guided.runId)!.messages, ["root guidance"]);
+  h.children.get(guided.runId)!.finish(); await h.tick();
+  const resumed = await h.service.message(nested.agent.agentId, "root resumption", "resume", { parentEntryId: "root-message", requestId: "next-root-request" });
+  assert.equal(resumed.parentEntryId, "child-message");
+  assert.equal(resumed.requestId, "next-root-request");
+  assert.equal(resumed.parentId, nested.run!.parentId);
+  rootVisible.delete("root-message");
+  await assert.rejects(h.service.message(nested.agent.agentId, "abandoned", "off-branch", { parentEntryId: "root-message" }), /another branch/);
+  rootVisible.add("root-message"); rootVisible.delete("root-launch");
+  await assert.rejects(h.service.message(nested.agent.agentId, "abandoned ancestor", "off-ancestor", { parentEntryId: "root-message" }), /another branch/);
+  assert.equal(h.repository.receipt(nested.run!.parentId, "off-branch"), undefined);
+  assert.equal(h.repository.receipt(nested.run!.parentId, "off-ancestor"), undefined);
+});
+
+for (const invalidation of ["caller-operation", "caller-ancestor", "owner-operation", "owner-conversation", "signal"] as const) {
+  test(`nested resumption rechecks ${invalidation} after delayed owner validation`, async t => {
+    const rootVisible = new Set(["root-launch", "root-message"]);
+    const childVisible = new Set(["child-launch", "child-message"]);
+    let release!: () => void;
+    let validating = false;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const h = await harness(t, {
+      root: { branchDisposition: run => rootVisible.has(run.parentEntryId!) ? "visible" : "outside" },
+      child: { admissionEntry: () => "child-message", branchDisposition: run => childVisible.has(run.parentEntryId!) ? "visible" : "outside",
+        validateResume: async () => { validating = true; await gate; } },
+    });
+    const parent = await h.service.launch({ ...h.spec("parent", "delegator"), parentEntryId: "root-launch" }); await h.tick();
+    const owner = h.childServices.get(parent.agent.agentId)!;
+    const nested = await owner.launch({ ...h.spec("nested"), parentAgentId: parent.agent.agentId, parentEntryId: "child-launch" }); await h.tick();
+    h.children.get(nested.run!.runId)!.finish(); await h.tick();
+    const controller = new AbortController();
+    const resumed = h.service.message(nested.agent.agentId, "pending resume", "pending", { parentEntryId: "root-message", signal: controller.signal });
+    const rejection = assert.rejects(resumed, invalidation === "signal" ? /abort/i : /another branch/);
+    await h.tick(); assert.equal(validating, true);
+    if (invalidation === "caller-operation") rootVisible.delete("root-message");
+    else if (invalidation === "caller-ancestor") rootVisible.delete("root-launch");
+    else if (invalidation === "owner-operation") childVisible.delete("child-message");
+    else if (invalidation === "owner-conversation") childVisible.delete("child-launch");
+    else controller.abort();
+    release(); await rejection;
+    assert.equal(h.repository.runs(nested.run!.parentId).length, 1);
+    assert.equal(h.repository.receipt(nested.run!.parentId, "pending"), undefined);
+  });
 }
 
 test("nested agents join the tree with recorded parentage while the indicator set stays top-level", async (t) => {

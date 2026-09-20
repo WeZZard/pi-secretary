@@ -178,7 +178,8 @@ const bindings: ScenarioBindings = {
     });
   },
   "ACC-SA-02-10": () => {
-    const record = snapshot(); record.run!.goal = { threadId: "p", goalId: "g", sessionEpoch: "e", intentSeq: 1, controlGeneration: 1 };
+    const record = snapshot();
+    assert.equal(Object.hasOwn(record.run!, "goal"), false, "Goal attribution belongs to composition, not UI snapshots");
     const h = new UIHarness([record]).ready(); const inspector = h.render();
     h.send({ type: "escape" }); h.send({ type: "fleet", editorEmpty: true });
     for (const surface of [inspector, plain(h.fleet.render(140))]) {

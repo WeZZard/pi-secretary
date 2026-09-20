@@ -128,13 +128,13 @@ export async function publicHarness(t: TestContext, options: { mode?: string; co
     const definition = tools.get(name);
     if (!Value.Check(definition.parameters, args)) throw new Error(`Invalid ${name} input`);
     if (!stopped) {
-      if (name === "Agent") await emit("context", { messages: [] });
+      await emit("context", { messages: [] });
       const message = { role: "assistant", stopReason: "toolUse", content: [{ type: "toolCall", id, name, arguments: args }],
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 } };
       if (!entries.some(entry => entry.type === "message" && Array.isArray(entry.message.content) && entry.message.content.some((part: any) => part.type === "toolCall" && part.id === id))) {
         entries.push({ id: `assistant-${++entrySequence}`, parentId: entries.at(-1)?.id ?? null, type: "message", message });
       }
-      if (name === "Agent") await emit("message_end", { message });
+      await emit("message_end", { message });
     }
     try { return await definition.execute(id, args, signal, update, ctx); }
     finally { await emit("tool_execution_end", { toolCallId: id, toolName: name }); }

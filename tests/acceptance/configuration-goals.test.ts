@@ -5,9 +5,32 @@ import { discoverAgents } from "../../extensions/secretary/agents/registry.ts";
 import { loadAgentConfiguration } from "../../extensions/secretary/agents/configuration.ts";
 import { GoalService } from "../../extensions/secretary/goal/goal-service.ts";
 import { goalTokenDeltaForUsage } from "../../extensions/secretary/goal/accounting.ts";
+import { AgentAssociationStore } from "../../extensions/secretary/composition/association-store.ts";
 import { AUTOMATIC_TYPE } from "../../extensions/secretary/goal/synchronization.ts";
 import { configurationHarness, eventually } from "./configuration-harness.ts";
 import { runFeatures, deferred, tick, type ScenarioBindings } from "./support.ts";
+
+async function automaticLaunch(h: Awaited<ReturnType<typeof configurationHarness>>, args: Record<string, unknown> = {}) {
+  h.sync.settled(); h.setIdle(true); h.sync.requestAutomatic(); await tick();
+  const automatic = h.sent.filter(s => s.message.customType === AUTOMATIC_TYPE).at(-1);
+  assert.ok(automatic, "The fixture dispatches a real automatic continuation");
+  h.setIdle(false); await h.emit("agent_end", { messages: [] }); await h.emit("turn_start");
+  const message = { role: "custom", timestamp: Date.now(), ...automatic.message };
+  await h.emit("message_start", { message });
+  await h.emit("context", { messages: [message] });
+  const id = `automatic-launch-${h.sent.length}`, resumeId = `${id}-resume`;
+  const input = { description: "Automatic goal task", prompt: "Inspect the fixture", ...args };
+  await h.emit("message_end", { message: { role: "assistant", stopReason: "toolUse",
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, content: [
+    { type: "toolCall", id, name: "Agent", arguments: input },
+    { type: "toolCall", id: resumeId, name: "SendMessage", arguments: {} },
+  ] } });
+  const result = await h.tools.get("Agent").execute(id, input, undefined, undefined, h.ctx);
+  const association = new AgentAssociationStore(h.engine.db.connection).run(result.details.runId);
+  assert.equal(association?.authority, "automatic");
+  return { result, staleResume: () => h.tools.get("SendMessage").execute(resumeId,
+    { to: result.details.agentId, message: "Follow obsolete automatic instruction" }, undefined, undefined, h.ctx) };
+}
 
 const bindings: ScenarioBindings = {
   "ACC-SA-07-01": async ({ t }) => {
@@ -205,7 +228,7 @@ const bindings: ScenarioBindings = {
     h.replies.push({ input, cached, output });
     const result = await h.launch({ run_in_background: false });
     const event = h.usage()[0]!;
-    assert.equal(event.goal!.goalId, goal.goalId);
+    assert.equal(new AgentAssociationStore(h.engine.db.connection).run(event.runId)?.goal?.goalId, goal.goalId);
     assert.deepEqual([event.usage.inputTokens, event.usage.cachedInputTokens, event.usage.outputTokens], [input, cached, output]);
     assert.equal(goalTokenDeltaForUsage(event.usage), expected);
     assert.equal(h.engine.service.getGoal("parent")!.tokensUsed, expected, "goal-budget token usage = max(inputTokens - cachedInputTokens, 0) + max(outputTokens, 0)");
@@ -232,7 +255,7 @@ const bindings: ScenarioBindings = {
     h.engine.service.clearGoal("parent", "user");
     const replacement = h.engine.service.createGoal("parent", "Replacement objective", 1000, "user").goal!;
     gate.resolve(); await h.finish(launch.details.runId);
-    const events = h.usage(); assert.equal(events.length, 1); assert.equal(events[0]!.goal!.goalId, goal.goalId);
+    const events = h.usage(); assert.equal(events.length, 1); assert.equal(new AgentAssociationStore(h.engine.db.connection).run(events[0]!.runId)?.goal?.goalId, goal.goalId);
     assert.equal(goalTokenDeltaForUsage(events[0]!.usage), 80);
     assert.equal(h.engine.service.getGoal("parent")!.goalId, replacement.goalId);
     assert.equal(h.engine.service.getGoal("parent")!.tokensUsed, 0);
@@ -243,15 +266,21 @@ const bindings: ScenarioBindings = {
     const activeTools = h.pi.getActiveTools; h.pi.getActiveTools = () => [...activeTools(), "write"];
     const sideEffect = join(h.root, "paused-write.txt");
     const gate = deferred<void>(); h.replies.push({ gate, tool: { name: "write", arguments: { path: sideEffect, content: "Forbidden" } } });
-    const launch = await h.launch(); await eventually(() => h.calls.length === 1, "Work starts before pause");
+    const { result: launch, staleResume } = await automaticLaunch(h); await eventually(() => h.calls.length === 1, "Automatic work starts before pause");
     h.engine.service.requestTerminalUpdate("parent", "paused", "user"); gate.resolve();
+    await h.begin("Inspect the stopped automatic execution without resuming its goal.");
     const outcome = await h.finish(launch.details.runId);
     assert.equal(h.engine.service.getGoal("parent")!.goalId, goal.goalId);
     assert.equal(h.engine.service.getGoal("parent")!.tokensUsed, goalTokenDeltaForUsage(h.usage()[0]!.usage));
     assert.equal(h.engine.service.getGoal("parent")!.status, "paused");
-    assert.equal(outcome.details.status, "partial"); assert.match(outcome.details.error, /superseded|budget/); assert.equal(h.calls.length, 1);
+    assert.equal(outcome.details.status, "cancelled"); assert.equal(h.calls.length, 1);
     await assert.rejects(access(sideEffect), { code: "ENOENT" });
-    await assert.rejects(h.tool("SendMessage", { to: launch.details.agentId, message: "Unauthorized resumption" }), /superseded|paused|authorize/);
+    await assert.rejects(staleResume(), /superseded|expired/);
+    await h.begin("Resume the child to investigate recovery without resuming the goal.");
+    const resumed = await h.tool("SendMessage", { to: launch.details.agentId, message: "Investigate recovery" });
+    assert.equal((await h.finish(resumed.details.runId)).details.status, "succeeded");
+    assert.equal(h.engine.service.getGoal("parent")!.status, "paused");
+    assert.equal(new AgentAssociationStore(h.engine.db.connection).run(resumed.details.runId)?.goal, undefined);
   },
   "ACC-SA-08-05": async ({ t }) => {
     const h = await configurationHarness(t); await h.start(); const goal = await h.goal();
@@ -262,7 +291,7 @@ const bindings: ScenarioBindings = {
     const context = await h.emit("context", { messages: [] });
     assert.match(JSON.stringify(context), /complete|objective|completion/);
     h.engine.service.requestTerminalUpdate("parent", "paused", "user");
-    await assert.rejects(h.tool("update_goal", { status: "complete" }), /superseded|newer/);
+    await assert.rejects(h.tools.get("update_goal").execute("stale-complete", { status: "complete" }, undefined, undefined, h.ctx), /superseded|newer/);
     assert.equal(h.engine.service.getGoal("parent")!.status, "paused");
   },
   "ACC-SA-08-06": async ({ t, text }) => {
@@ -270,7 +299,7 @@ const bindings: ScenarioBindings = {
     const activeTools = h.pi.getActiveTools; h.pi.getActiveTools = () => [...activeTools(), "write"];
     const sideEffect = join(h.root, "obsolete-write.txt");
     const gate = deferred<void>(); h.replies.push({ gate, tool: { name: "write", arguments: { path: sideEffect, content: "Forbidden" } } });
-    const launch = await h.launch(); await eventually(() => h.calls.length === 1, "Old provider request starts before newer intent");
+    const { result: launch, staleResume } = await automaticLaunch(h); await eventually(() => h.calls.length === 1, "Old automatic provider request starts before newer intent");
     if (text.includes("paused the goal")) h.engine.service.requestTerminalUpdate("parent", "paused", "user");
     else if (text.includes("changed the goal objective")) h.engine.service.setGoal("parent", { objective: "Newer objective" }, "user");
     else {
@@ -278,9 +307,11 @@ const bindings: ScenarioBindings = {
       if (text.includes("replaced the goal")) h.engine.service.createGoal("parent", "Replacement objective", 1000, "user");
     }
     const newer = h.engine.service.getGoal("parent");
-    const start = h.sent.length; gate.resolve(); const result = await h.finish(launch.details.runId);
+    const start = h.sent.length; gate.resolve();
+    await h.begin("Inspect the old execution without following its obsolete instructions.");
+    const result = await h.finish(launch.details.runId);
     assert.match(result.content[0].text, /Historical child evidence/);
-    assert.equal(result.details.status, "partial"); assert.match(result.details.error, /superseded|budget/); assert.equal(h.calls.length, 1);
+    assert.equal(result.details.status, "cancelled"); assert.equal(h.calls.length, 1);
     await assert.rejects(access(sideEffect), { code: "ENOENT" });
     const current = h.engine.service.getGoal("parent");
     assert.equal(current?.goalId, newer?.goalId); assert.equal(current?.objective, newer?.objective); assert.equal(current?.status, newer?.status);
@@ -288,8 +319,13 @@ const bindings: ScenarioBindings = {
     assert.ok(completion, "Historical result is delivered");
     assert.deepEqual(completion.delivery, { deliverAs: "nextTurn" });
     assert.equal(h.sent.slice(start).filter(s => s.delivery?.triggerTurn).length, 0);
-    assert.equal(h.usage()[0]!.goal!.goalId, original.goalId);
-    await assert.rejects(h.tool("SendMessage", { to: launch.details.agentId, message: "Follow obsolete instruction" }), /superseded|paused|replaced|authorize/);
+    assert.equal(new AgentAssociationStore(h.engine.db.connection).run(h.usage()[0]!.runId)?.goal?.goalId, original.goalId);
+    await assert.rejects(staleResume(), /superseded|expired/);
+    await h.begin("Please give the finished child a new recovery assignment.");
+    const resumed = await h.tool("SendMessage", { to: launch.details.agentId, message: "Investigate recovery beyond the old objective" });
+    assert.equal((await h.finish(resumed.details.runId)).details.status, "succeeded");
+    assert.equal(new AgentAssociationStore(h.engine.db.connection).run(resumed.details.runId)?.authority, "user");
+    assert.equal(h.engine.service.getGoal("parent")?.status, newer?.status);
   },
   "ACC-SA-08-07": async ({ t }) => {
     const h = await configurationHarness(t); await h.start(); await h.goal();
@@ -317,19 +353,25 @@ const bindings: ScenarioBindings = {
       { input: 0, cached: 0, output: 40, text: "First action", tool: { name: "write", arguments: { path: committed, content: "Already completed side effect" } } },
       { input: 0, cached: 0, output: 40, text: "Partial result retained", tool: { name: "write", arguments: { path: forbidden, content: "Must not execute" } } },
     );
-    const result = await h.launch({ run_in_background: false });
+    const { result: launched } = await automaticLaunch(h, { run_in_background: true });
+    await h.begin("Inspect the captured execution without extending its budget.");
+    const result = await h.finish(launched.details.runId);
     assert.equal(h.engine.service.getGoal("parent")!.status, "budget_limited");
     assert.equal(h.engine.service.getGoal("parent")!.tokensUsed, 80, "goal-budget token usage = max(inputTokens - cachedInputTokens, 0) + max(outputTokens, 0)");
-    assert.equal(result.details.status, "partial"); assert.match(result.content[0].text, /Partial result retained/);
-    assert.equal(h.calls.length, 2); assert.match(result.details.error, /superseded|budget/);
+    assert.equal(result.details.status, "cancelled"); assert.match(result.content[0].text, /Partial result retained/);
+    assert.equal(h.calls.length, 2);
     assert.equal(await readFile(committed, "utf8"), "Already completed side effect");
     await assert.rejects(access(forbidden), { code: "ENOENT" });
     h.sync.settled(); h.setIdle(true); h.sync.requestAutomatic(); await tick();
     const summary = h.sent.find(s => s.message.details?.kind === "budget_wrap_up"); assert.ok(summary);
-    h.setIdle(false); await h.emit("turn_start");
-    const context = await h.emit("context", { messages: [{ role: "custom", timestamp: Date.now(), ...summary.message }] });
+    h.setIdle(false); await h.emit("agent_end", { messages: [] }); await h.emit("turn_start");
+    const summaryMessage = { role: "custom", timestamp: Date.now(), ...summary.message };
+    await h.emit("message_start", { message: summaryMessage });
+    const context = await h.emit("context", { messages: [summaryMessage] });
     assert.match(JSON.stringify(context), /summary|summari|budget/i);
-    assert.equal((await h.emit("tool_call", { toolName: "write", input: { path: forbidden, content: "summary may not write" } })).block, true);
+    const input = { path: forbidden, content: "summary may not write" };
+    await h.emit("message_end", { message: { role: "assistant", stopReason: "toolUse", usage: { input: 0, output: 0 }, content: [{ type: "toolCall", id: "wrap-write", name: "write", arguments: input }] } });
+    assert.equal((await h.emit("tool_call", { toolCallId: "wrap-write", toolName: "write", input })).block, true);
     assert.notEqual((await h.emit("tool_call", { toolName: "get_goal", input: {} }))?.block, true);
     assert.doesNotMatch(result.content[0].text, /(?:changes|effects|files) (?:were |are )?rolled back/i);
   },
@@ -337,14 +379,18 @@ const bindings: ScenarioBindings = {
     const h = await configurationHarness(t); await h.start(); await h.begin("Please delegate this task without creating a goal.");
     assert.equal(h.engine.service.getGoal("parent"), null);
     const result = await h.launch({ run_in_background: false });
-    assert.equal(result.details.status, "succeeded"); assert.equal(result.details.goal, undefined);
+    assert.equal(result.details.status, "succeeded");
+    assert.equal(new AgentAssociationStore(h.engine.db.connection).run(result.details.runId)?.goal, undefined);
+    assert.equal(Object.hasOwn(result.details, "goal"), false);
     assert.equal(h.engine.service.getGoal("parent"), null);
-    const event = h.usage()[0]!; assert.equal(event.goal, undefined); assert.equal(goalTokenDeltaForUsage(event.usage), 80);
+    const event = h.usage()[0]!;
+    assert.equal(new AgentAssociationStore(h.engine.db.connection).run(event.runId)?.goal, undefined);
+    assert.equal(Object.hasOwn(event, "goal"), false); assert.equal(goalTokenDeltaForUsage(event.usage), 80);
     assert.equal(h.engine.db.connection.prepare("SELECT COUNT(*) AS n FROM secretary_agent_goal_usage").get()!.n, 0);
   },
 };
 
 runFeatures(["agent-configuration", "goal-integration"], bindings, {
   "agent-configuration": "aef0656d9235d35d9a7e44324c851007f5daa843c711e113d277131aacb306eb",
-  "goal-integration": "2a1badb878287c3d944eb8919e710c267461692dc210df7165d9f3e6273b84b3",
+  "goal-integration": "e1cc4916ae65639b28a5caa77799c80be3e46b8371859501c0bfc551f63b2370",
 });

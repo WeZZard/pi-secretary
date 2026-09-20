@@ -361,7 +361,9 @@ const bindings: ScenarioBindings = {
   },
   "ACC-SA-09-02": async ({ t }) => {
     const h = await publicHarness(t); await h.start(); const a = await h.tool("Agent", { ...task, run_in_background: true }); await h.call();
-    t.mock.timers.enable({ apis: ["setTimeout"] }); const waiting = h.tool("TaskOutput", { task_id: a.details.runId, block: true, timeout: 25 }); t.mock.timers.tick(25); const result = await waiting; t.mock.timers.reset();
+    t.mock.timers.enable({ apis: ["setTimeout"] }); const waiting = h.tool("TaskOutput", { task_id: a.details.runId, block: true, timeout: 25 });
+    // The adapter now prepares every producing request before executing its tool.
+    await turn(); t.mock.timers.tick(25); const result = await waiting; t.mock.timers.reset();
     assert.equal(result.details.status, "running"); assert.equal(h.repository.getRun(a.details.runId)!.status, "running");
     assert.match(textOf(result), /timed? ?out|timeout|wait expired/i, "TaskOutput must distinguish an expired wait from a nonblocking snapshot");
   },

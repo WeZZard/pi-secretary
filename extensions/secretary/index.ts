@@ -11,6 +11,7 @@ import { GoalSynchronization, threadIdFor, type WorkBasis } from "./goal/synchro
 import { formatGoalSnapshot } from "./goal/steering.ts";
 import { installAgentSupport } from "./agents/installation.ts";
 import { RequestContextComposer } from "./context/index.ts";
+import { composeGoalAgents } from "./composition/goal-agents.ts";
 
 export default function secretaryExtension(pi: ExtensionAPI): void {
   // Child sessions install too (SA-12): the delegation tools are gated by nesting depth at
@@ -24,6 +25,7 @@ export default function secretaryExtension(pi: ExtensionAPI): void {
 export function installSecretary(pi: ExtensionAPI, engine: GoalEngine, options: { agentsRoot?: string } = {}): GoalSynchronization {
   const ui = registerGoalUI(pi, engine);
   const sync = new GoalSynchronization(pi, engine, ui);
+  let composition: ReturnType<typeof composeGoalAgents> | undefined;
   registerGoalTools(pi, engine, sync);
   wireRuntime(pi, engine, sync);
   pi.on("session_start", (event, ctx) => {
@@ -39,6 +41,9 @@ export function installSecretary(pi: ExtensionAPI, engine: GoalEngine, options: 
   pi.on("before_agent_start", (event) => { sync.expandedInput(event.prompt); });
   pi.on("message_start", (event) => { sync.observeUserMessage(event.message); });
   pi.on("tool_call", (event) => {
+    // With delegation installed, composition owns actual request provenance,
+    // including result notifications which are not goal synchronization inputs.
+    if (composition) return;
     const work = sync.work();
     if (event.toolName !== "get_goal" && work && (work.automatic || work.unresolvedAutomatic) && !sync.isCurrent(work)) {
       return { block: true, reason: "This automatic work was superseded. Use current goal state; do not execute actions from its old intent.", terminate: true };
@@ -48,7 +53,12 @@ export function installSecretary(pi: ExtensionAPI, engine: GoalEngine, options: 
     }
   });
   const composer = new RequestContextComposer();
-  const agents = options.agentsRoot ? installAgentSupport(pi, engine, sync, options.agentsRoot, composer) : undefined;
+  composition = options.agentsRoot ? composeGoalAgents(pi, engine, sync) : undefined;
+  const agents = options.agentsRoot && composition ? installAgentSupport(composition.api, {
+    root: options.agentsRoot, composer, repository: composition.repository,
+    childTools: composition.childTools, events: composition.events,
+  }) : undefined;
+  if (agents) composition!.attach(agents.service);
   let activationEpoch = 0;
   let requestSequence = 0;
   pi.on("session_tree", () => { activationEpoch++; composer.invalidate(); });
@@ -62,6 +72,7 @@ export function installSecretary(pi: ExtensionAPI, engine: GoalEngine, options: 
   });
   pi.on("session_shutdown", async () => {
     activationEpoch++; composer.dispose();
+    composition?.dispose();
     sync.dispose();
     if (agents && !await agents.shutdown()) return; // Do not close storage under a live child.
     engine.dispose();
