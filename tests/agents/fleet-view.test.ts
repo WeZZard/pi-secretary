@@ -31,18 +31,18 @@ test("agent rows show the selection circle, name, status label, and right-aligne
   const { view } = fleet([snapshot("a", "running")], [vm("a", { name: "reviewer", windowTokens: 3800, cumulativeTokens: 4250 })]);
   const lines = view.render(100);
   assert.equal(lines.length, 3);
-  assert.match(lines[0]!, /^● main$/, "entry into the indicator selects the first row");
-  assert.match(lines[1]!, /○ reviewer · running/);
-  assert.ok(/6s · ↓ 3\.8k window · 4\.3k spent$/.test(lines[1]!), "elapsed and usage stay right-aligned at the row end");
+  assert.match(lines[1]!, /^● main$/, "entry into the indicator selects the first row");
+  assert.match(lines[2]!, /○ reviewer · running/);
+  assert.ok(/6s · ↓ 3\.8k window · 4\.3k spent$/.test(lines[2]!), "elapsed and usage stay right-aligned at the row end");
 });
 
 test("the circle encodes selection only and only while the indicator has focus", () => {
   const focused = fleet([snapshot("a")], [vm("a", { name: "reviewer" })]);
-  assert.match(focused.view.render(80)[0]!, /^● main$/, "the first row is selected on entry");
+  assert.match(focused.view.render(80)[1]!, /^● main$/, "the first row is selected on entry");
   const moved = transition(focused.state(), { type: "fleet-select", agentId: "a" }).state;
   const lines = new FleetView(() => moved, { rows: () => [vm("a", { name: "reviewer" })], now: () => 6500 }).render(80);
-  assert.match(lines[0]!, /^○ main$/);
-  assert.match(lines[1]!, /^● reviewer/);
+  assert.match(lines[1]!, /^○ main$/);
+  assert.match(lines[2]!, /^● reviewer/);
   const unfocused = fleet([snapshot("a")], [vm("a", { name: "reviewer" })], 6500, "editor");
   for (const line of unfocused.view.render(80)) assert.doesNotMatch(line, /^●/, "an unfocused indicator fills no circle");
 });
@@ -51,7 +51,7 @@ test("a row leaves the indicator immediately when its run reaches a terminal sta
   const { view } = fleet([snapshot("a", "succeeded"), snapshot("b", "running")], [vm("a", { status: "succeeded", name: "done" }), vm("b", { name: "active" })]);
   const text = view.render(100);
   assert.equal(text.length, 3, "main, non-terminal agent, and cancellation hint");
-  assert.match(text[1]!, /active · running/);
+  assert.match(text[2]!, /active · running/);
   assert.doesNotMatch(text.join("\n"), /done|succeeded/);
 });
 
@@ -90,7 +90,7 @@ test("wide CJK names truncate by display width within bounds", () => {
   for (const width of [20, 40, 60, 100]) {
     const lines = view.render(width);
     if (width >= 60) assert.ok(lines.some(line => line.includes("界")), "the agent row remains visible");
-    assert.equal(lines[0]!, "○ main");
+    assert.equal(lines[1]!, "○ main");
     for (const line of lines) assert.ok(visibleWidth(line) <= width, `width ${width}: [${line}]`);
   }
 });

@@ -996,7 +996,7 @@ Usage labels follow the [interaction design](../ux/subagents.md#22-fleet-indicat
 - **Cumulative usage** is the accumulated input-plus-output total derived from persisted usage events.
 - Neither label is the goal-budget usage formula of Section 11.2. Goal charging continues to use the established formula on the same underlying usage events, and the widget labels must not be reused for it.
 
-While the indicator is visible, it also renders the selected-agent and fleet-wide stop hints defined in UX Section 2.2. The hints disappear with the last active row. Plain `x` is captured only with fleet or inspector focus, and Ctrl+X is captured only while the current fleet has active work and no modal or host prompt owns input. This intentionally overrides pi's default Ctrl+X message-copy action while that fleet is active; idle editing retains the host action.
+While the indicator is visible, it prepends exactly one clipped hint line to the bounded row window. Fleet navigation selects the cancellation hint; editor focus selects the empty-editor Down-arrow hint defined in UX Section 2.2. Both occupy the same single row, and the hint disappears with the last active agent. Plain `x` is captured only with fleet or inspector focus, and Ctrl+X is captured only while the current fleet has active work and no modal or host prompt owns input. This intentionally overrides pi's default Ctrl+X message-copy action while that fleet is active; idle editing retains the host action.
 
 The fleet indicator maintains a bounded polling timer and a render key. The timer is unreferenced so it cannot keep the process alive, is disposed on deactivation, and a repaint is skipped when the render key is unchanged and no row is running.
 

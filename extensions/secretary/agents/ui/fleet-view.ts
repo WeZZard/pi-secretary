@@ -74,8 +74,7 @@ export class FleetView implements Component {
       return right ? rightAlign(left, right, width) : clip(left, width);
     };
     const lines = ids.slice(start, start + MAX_VISIBLE_ROWS).map(id => width <= 0 ? "" : truncateToWidth(renderRow(id), width, ""));
-    lines.push(clip(CANCELLATION_HINT, width));
-    if (!focused) lines.push(clip("↓ in empty editor focuses list", width));
+    lines.unshift(clip(focused ? CANCELLATION_HINT : "↓ in empty editor focuses list", width));
     return lines;
   }
 }

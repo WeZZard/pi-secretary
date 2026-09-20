@@ -157,7 +157,11 @@ Feature: Keep interaction state consistent during asynchronous agent activity
   @ACC-SA-UI-18 @proposed @SA-04
   Scenario: Stop the selected agent from the focused fleet list.
     Given the bottom fleet list contains active agents.
-    Then the list shows X for stopping the selected agent and Ctrl+X for stopping all agents.
+    Then one hint line above the main row explains that Down in an empty editor focuses the list.
+    When the user focuses the fleet list.
+    Then the same hint line shows X for stopping the selected agent and Ctrl+X for stopping all agents.
+    When the user returns focus to the editor.
+    Then the hint switches back without changing the list height.
     When the user types X in the main editor.
     Then the editor retains the input and no cancellation is requested.
     When the user focuses an agent in the list and presses X.

@@ -81,8 +81,9 @@ const bindings: ScenarioBindings = {
     assert.equal(h.input("\x1b[B"), undefined, "Down stays in the editor while the indicator is hidden");
     snapshots.push(snapshot("a")); for (const listener of listeners) listener(); await tick();
     const rows = h.fleet().split("\n");
-    assert.equal(rows[0], "○ main", "the appearing indicator shows the main session row first");
-    assert.match(rows[1]!, /○ a · running/);
+    assert.equal(rows[0], "↓ in empty editor focuses list");
+    assert.equal(rows[1], "○ main", "the main session is the first agent row below the hint");
+    assert.match(rows[2]!, /○ a · running/);
   },
   "ACC-SA-02-02c": async ({ t }) => {
     const service = await durableService(t), id = service.service.list()[0]!.agent.agentId;
@@ -411,7 +412,7 @@ const bindings: ScenarioBindings = {
     assert.equal(rows.filter(r => r.background && r.status === "running").length, 2, "both launched runs are active background executions");
     const h = new UIHarness(service.service.list()); h.send({ type: "fleet", editorEmpty: true });
     const rendered = plain(h.fleet.render(140));
-    assert.match(rendered.split("\n")[0]!, /● main/, "the first row is the main session");
+    assert.match(rendered.split("\n")[1]!, /● main/, "the first agent row below the hint is the main session");
     for (const row of rows) assert.match(rendered, new RegExp(`○ ${row.agentId} · running`), "each active execution lists a status label");
     const finished = snapshot("done"); finished.run!.status = "succeeded";
     const withFinished = transition(h.state, { type: "snapshot", epoch: "e" }, [...h.state.snapshots, finished]).state;
@@ -453,9 +454,20 @@ const bindings: ScenarioBindings = {
   "ACC-SA-UI-18": async ({ t }) => {
     const stopped: string[] = [];
     const h = adapter(t, port({ stop: async id => { stopped.push(id); } }));
-    assert.match(h.fleet(), /X stop selected/); assert.match(h.fleet(), /Ctrl\+X stop all/);
+    assert.match(h.fleet(), /^↓ in empty editor focuses list\n○ main/);
+    assert.doesNotMatch(h.fleet(), /X stop selected/);
+    const initialHeight = h.fleet().split("\n").length;
+    h.input("\x1b[B");
+    assert.match(h.fleet(), /^X stop selected · Ctrl\+X stop all\n● main/);
+    assert.equal(h.fleet().split("\n").length, initialHeight);
+    h.input("\x1b");
+    assert.match(h.fleet(), /^↓ in empty editor focuses list\n○ main/);
+    assert.equal(h.fleet().split("\n").length, initialHeight);
     assert.equal(h.input("X"), undefined, "the editor receives X unchanged");
-    h.input("\x1b[B"); h.input("\x1b[B"); h.input("X"); await tick();
+    h.input("\x1b[B");
+    assert.match(h.fleet(), /^X stop selected · Ctrl\+X stop all\n● main/);
+    assert.doesNotMatch(h.fleet(), /focuses list/);
+    h.input("\x1b[B"); h.input("X"); await tick();
     assert.match(h.render(), /Confirm stop: a/); assert.match(h.render(), /a-run/);
     h.inspector!.handleInput("\x1b"); await tick();
     assert.equal(h.inspector, undefined); assert.match(h.fleet(), /● a/); assert.deepEqual(stopped, []);
@@ -501,5 +513,5 @@ const bindings: ScenarioBindings = {
 };
 runFeatures(["agent-inspection", "ui-state-machine"], bindings, {
   "agent-inspection": "1ac61f8c5d98c2ae6ada2489fe15e91f361400ce46645f242be33380641889c8",
-  "ui-state-machine": "0fd236b79c0f2a3faaea5f690ce1ab5271a25c545d8f2a47ceb12172360c87bd",
+  "ui-state-machine": "c0873ced4c4b5ac72feac4ba0d4d6a66412e267f37d2caeb1b70a3e8cac33113",
 });

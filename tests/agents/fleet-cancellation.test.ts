@@ -115,6 +115,25 @@ test("unresolved batch blocks duplicate selected and fleet cancellation after di
 });
 
 for (const mode of ["main", "alternate"] as const) {
+  test(`real ${mode} routing: one hint above main switches with editor and list focus`, async () => {
+    const h = harness(mode);
+    try {
+      const initial = h.widget().split("\n");
+      assert.equal(initial[0], "↓ in empty editor focuses list");
+      assert.match(initial[1]!, /○ main/);
+      assert.doesNotMatch(h.widget(), /X stop selected/);
+      h.input("\x1b[B"); await h.paint();
+      const focused = h.widget().split("\n");
+      assert.equal(focused[0], "X stop selected · Ctrl+X stop all");
+      assert.match(focused[1]!, /● main/);
+      assert.equal(focused.length, initial.length);
+      assert.doesNotMatch(h.widget(), /focuses list/);
+      h.input("\x1b[B"); await h.paint();
+      assert.equal(h.widget().split("\n")[0], focused[0]);
+      h.input("\x1b"); await h.paint();
+      assert.equal(h.widget().split("\n")[0], initial[0]);
+    } finally { h.close(); }
+  });
   test(`real ${mode} routing: X confirms selected cancellation without intercepting editor text`, async () => {
     const h = harness(mode);
     try {
@@ -150,9 +169,10 @@ for (const mode of ["main", "alternate"] as const) {
       h.input("\x1b"); await h.paint(); assert.deepEqual(h.stopped, []);
     } finally { h.close(); }
   });
-  test(`real ${mode} rendering: active bottom list always advertises cancellation and idle stays hidden`, async () => {
+  test(`real ${mode} rendering: focused bottom list advertises cancellation and idle stays hidden`, async () => {
     const h = harness(mode);
     try {
+      h.input("\x1b[B");
       const screen = await h.paint();
       assert.match(screen, /X.*selected/); assert.match(screen, /Ctrl\+X.*all/);
       h.update([]); await h.paint(); assert.equal(h.widget(), "");

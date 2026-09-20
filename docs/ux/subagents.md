@@ -44,16 +44,16 @@ Foreground detach, live prompt auditing, external job display, and external term
 - Unknown usage is not displayed as zero. Rows whose source artifacts predate window data keep the token-total label without a window label.
 - Rows are themed and display width-aware. The layout truncates by terminal display width and realigns right-side information after resize.
 - When more rows exist than fit, the visible window follows the selection.
-- While the indicator is visible, it shows `X stop selected` and `Ctrl+X stop all`. The selected-agent shortcut applies only when the indicator or inspector has focus. Typing `x` in the editor remains ordinary text. Ctrl+X opens fleet-wide cancellation confirmation from the editor or fleet surfaces, except while another dialog or host prompt owns input. When the fleet is idle, Ctrl+X retains the host's normal behavior.
+- While the indicator is visible, exactly one hint line appears above the agent rows, before the main row when it is in view. With the editor focused, it reads `↓ in empty editor focuses list`. With the fleet list focused, that same line changes to `X stop selected · Ctrl+X stop all`. Moving focus does not add another line or change the list height. The hint clips rather than wraps on narrow terminals. The selected-agent shortcut applies only when the indicator or inspector has focus. Typing `x` in the editor remains ordinary text. Ctrl+X opens fleet-wide cancellation confirmation from the editor or fleet surfaces, except while another dialog or host prompt owns input. When the fleet is idle, Ctrl+X retains the host's normal behavior.
 - Pressing Down in an empty, focused editor moves focus into the list and selects the first row. Up and Down move the selection. Pressing Up on the first row or pressing Escape returns focus to the editor. Left no longer activates the indicator. Enter opens the fleet view overlay on the selected agent row. Enter on the main row returns focus to the prompt input instead; the main session's transcript is the session behind the editor, so there is no overlay destination for it.
 
 The following is a layout example with an active selection. Angle-bracket values are placeholders, not measurements:
 
 ```text
+X stop selected · Ctrl+X stop all
 ○ main
 ● <agent name> · <status> · <elapsed> · <window> · <cumulative>
 ○ <agent name> · <status>
-X stop selected · Ctrl+X stop all
 ```
 
 ### 2.3 Async widget (removed)
