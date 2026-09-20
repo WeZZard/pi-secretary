@@ -16,7 +16,7 @@
 - Nicobailon's implementation defines the TUI reference. Its inline display, fleet navigation, and inspector surfaces are ported onto Secretary's runtime. The ported FleetView summary and async widget are superseded by a single unified fleet indicator, and the inspector becomes a split fleet view overlay. Surfaces that depend on out-of-scope runtime features are excluded; [Section 12.6](#126-ported-surfaces-and-mapping) defines the mapping and the exclusions.
 - Tintinweb's implementation is a reference for pi SDK integration, not a dependency or API authority.
 - Child execution stops when the parent pi process exits. Conversation persistence supports explicit resumption, not continued execution after exit.
-- `Agent.model` first matches the value against the models available in the session and then against the configured model fallback lists. The advertised enum includes the configured list names. With no lists configured, the field remains exposed without an enum constraint. `inherit` is also valid in agent definitions.
+- `Agent.model` first matches the value against the models available in the session and then against the configured model fallback lists. The field has a stable string schema; configured list names are published through the [request-scoped catalog](#542-stable-delegation-schema) rather than an enum. `inherit` is also valid in agent definitions.
 - The scope includes delegation, foreground/background execution, nested delegation, messaging, cancellation, output retrieval, custom agent definitions, worktrees, and inspection.
 - Conversation forks, agent teams, remote execution, scheduling, and workflow orchestration are excluded.
 
@@ -153,7 +153,7 @@ interface AgentInput {
   description: string;
   prompt: string;
   subagent_type?: string;
-  model?: string; // advertised enum: configured model fallback-list names
+  model?: string; // configured fallback-list names are published in runtime context
   run_in_background?: boolean;
   name?: string;
   isolation?: "none" | "worktree";
@@ -169,7 +169,7 @@ interface AgentInput {
 - Type matching is exact. The implementation does not silently convert an unknown specialist into a general-purpose agent.
 - An explicit isolation field takes precedence over the definition's isolation. If neither specifies isolation, execution uses the parent's working directory. Requested worktree isolation is never silently downgraded.
 - The `manual` permission-mode compatibility spelling is normalized to `default` before validation, but the field remains ignored.
-- The model enum has no schema default. Only configured fallback-list names are advertised; runtime validation matches the value against the models available in the session before consulting fallback lists. Definition selection and inheritance follow Section 5.
+- The model string has no schema default or enum. Configured fallback-list names are advertised through request context; runtime validation rejects unknown models and lists. Definition selection and inheritance follow Section 5.
 - The boolean background field does not acquire a schema default. A definition with `background: true` requires background execution even if the caller supplies false, following the researched Claude behavior. Otherwise the explicit invocation value wins, followed by the host-mode default in Section 1.2. A definition with `background: false` does not force foreground execution. Host restrictions are checked after resolution and reject unsupported background execution.
 - Launch validates configuration, ownership, capacity, trust, and model availability before allocating a worktree or contacting a provider.
 
@@ -314,6 +314,107 @@ Each candidate is checked in order against the model registry, the parent's scop
 - Resumption retains the recorded model and does not re-evaluate the chain. A missing credential or unavailable model on resumption requires an explicit configuration correction, not a different model selected silently.
 - The child inherits the parent's thinking level unless a supported future definition field explicitly changes it. The initial public tool has no `thinking` parameter.
 - Provider registrations and credentials must be obtained through supported pi facilities. Access to an undocumented model-registry backing field is not an accepted permanent integration strategy.
+
+### 5.4 Request-scoped definition catalog
+
+**Status:** Implemented for [SA-13](../user-stories/subagents.md#sa-13-discover-agent-definitions-without-filesystem-probing), with deterministic SDK integration tests. The [verification report](../testing/subagent-verification.md#2026-09-20-request-context-composition-and-agent-discovery) records coverage and unexecuted live-provider checks.
+
+**Boundary:** This section owns subagent discovery, selection metadata, catalog lifecycle, and consistency between advertisement and launch. [Request-Time Context Injection](request-context.md) supplies only the generic contributor and composition mechanism. It does not know agent definitions or decide whether a launch is allowed.
+
+- Before this change, `agents/installation.ts` discovered definitions inside `Agent.execute` without publishing the inventory. The separate `secretary:agents-state` projection still reports instances and outcomes, not selectable definitions.
+- The catalog publishes identifiers and descriptions before the first delegation decision, without model-issued filesystem discovery. Full role prompts remain child instructions.
+- The subagent session owner registers `secretary.agent-catalog` with the request-context composer. Capture delegates to the catalog owner; pure projection returns only selection metadata. The generic request interface contains no catalog field.
+- The subagent integration retains the captured full definitions and checks the associated composition outcome before admitting launches. It does not rely on the composer to enforce delegation policy.
+- This change adds no discovery tool, editor, filesystem watcher, automatic child launch, or goal resumption. Existing status projection and completion delivery remain separate.
+
+#### 5.4.1 Selection metadata
+
+- Each entry publishes the exact definition name as `type`, the resolved description, and the model policy with an omitted definition model normalized to `inherit`.
+- The catalog publishes `defaultType: "general-purpose"`. If that definition is unavailable, omission fails explicitly rather than substituting a different type.
+- Model policies distinguish exact identifiers, fallback-list references, and inheritance. They do not claim provider health or report a fallback candidate as already selected.
+- Configured fallback-list names are published for `Agent.model`. Ordered chain contents stay in the captured execution configuration rather than being duplicated in the prompt.
+- Entries use the resolved override's metadata. A custom replacement of a packaged name must not be advertised with the packaged description.
+- Definition bodies, credentials, source contents, complete filesystem paths, and execution artifacts are excluded. Source identity and definition hashes remain internal provenance.
+- Entries and fallback-list names are sorted by exact identifier before projection. Execution chains retain their configured order.
+- A ready catalog is complete for its authorized scope. Ready-empty, disabled delegation, and unavailable discovery are distinct domain states inside contributor data; the generic composition status does not replace them.
+- An instance name is not a definition type. A label such as `Explore` is not a runtime read-only guarantee; actual tool enforcement remains in the runner.
+
+This synthetic example shows contributor data only, not the generic envelope or a captured request. Its descriptions do not redefine packaged agents:
+
+```json
+{
+  "status": "ready",
+  "defaultType": "general-purpose",
+  "definitions": [
+    {"type": "Explore", "description": "Find files and symbols using read-only tools.", "modelPolicy": "inherit"},
+    {"type": "Plan", "description": "Develop an implementation plan.", "modelPolicy": "inherit"},
+    {"type": "general-purpose", "description": "Handle research and implementation tasks.", "modelPolicy": "superior"}
+  ],
+  "modelFallbackLists": ["superior"]
+}
+```
+
+#### 5.4.2 Stable delegation schema
+
+- `Agent.subagent_type` remains an optional string. Its fixed description directs the model to the current catalog and states the default. Catalog edits do not regenerate an enum.
+- `Agent.model` is an optional string with a fixed description rather than an enum of configured list names. Existing runtime matching of available models and configured list names remains unchanged. Only the advertised-enum policy is superseded.
+- The model should omit `Agent.model` unless the user requests an override. Publishing model policy does not authorize overriding a definition.
+- Runtime validation still rejects unknown types, unknown lists, and unsupported parameters. A stable schema does not authorize guessing values.
+- Unknown-type errors name the requested identifier and bounded valid alternatives from that request's catalog. A missing request receipt produces a correlation error, not a new filesystem lookup.
+- Stable tool instructions explain how to use `secretary.agent-catalog` as selection data. Arbitrary definition descriptions cannot override higher-priority instructions or runtime checks.
+
+#### 5.4.3 Request-boundary discovery and refresh
+
+- Discovery retains Section 5.1 precedence: trusted `<project>/.pi/agents/`, then `<getAgentDir()>/agents/`, then packaged definitions. It does not add a project-local `.pi/agent/agents/` directory.
+- The first ordinary model request receives a prepared catalog even if no child exists. At each later request boundary, the catalog owner checks definition files and relevant fallback-list configuration for changes.
+- Discovery is plugin-side work, not a model filesystem tool call. Added, edited, renamed, and removed definitions become visible together in the next successfully prepared request, without requiring a watcher or restart.
+- Refresh builds an immutable candidate without mutating the active snapshot. Changed file contents or directory membership during reading cause unstable refresh to fail; the implementation does not claim an atomic filesystem transaction.
+- Invalid YAML, unreadable sources, duplicate names within a scope, and invalid configuration produce an unavailable catalog and prevent fresh launch admission. Previous snapshots may remain for existing receipts or diagnostics, but are not advertised as current.
+- Correcting the sources permits recovery on the next request. The catalog does not silently omit invalid entries and label the remaining inventory complete.
+- Fallback-list menu edits remain durable immediately, but model-originated launches use the configuration captured for their producing request. This refines the earlier phrase "subsequent launches" without changing an already issued response's selected policy.
+
+#### 5.4.4 Request receipts and launch consistency
+
+- Each generation captures a subagent-owned receipt containing session identity, activation epoch, immutable definitions, fallback-list configuration, catalog fingerprint, and the associated generic preparation outcome. The receipt is not a model-facing tool argument.
+- The subagent adapter correlates returned assistant tool-call identifiers with their producing receipt at assistant `message_end`, which the supported Pi host processes before tool execution. Only that generation's pending receipt is used; `Agent.execute` looks up the exact call binding, not a mutable latest catalog.
+- `turn_start` and context preparation clear pending generation state. Tool settlement releases individual bindings; turn completion, agent completion, tree navigation, and shutdown clear remaining references. These lifecycle rules do not add a model-facing receipt field.
+- All sibling calls in a parallel batch use the same captured configuration even if files or menu values change during execution.
+- A raw transport retry retains its prepared context and receipt. A newly prepared request after recovery may capture newer state; neither path changes the meaning of a response already received.
+- The selected full definition is captured before queueing. File deletion after publication affects future requests, not an already advertised launch. Current trust, permissions, goal authorization, cancellation, and tool restrictions can still reject execution.
+- Resumption retains the saved agent's definition and recorded model under Section 7.5 rather than selecting by name from the current catalog.
+- Existing launch idempotency remains in force. A completed tool invocation is not launched again; an unaccepted historical call without its producing receipt is not interpreted using current files.
+- Receipts remain until associated dispatches settle, including delayed siblings. They are disposed on safe teardown and never cross session or branch activation boundaries as new execution authority.
+- Receipt diagnostics may include definition fingerprints. Such metadata does not reconstruct an unavailable original request or authorize its replay.
+
+#### 5.4.5 Admission failures and nested delegation
+
+- Fresh launch admission requires a ready catalog and a valid producing receipt whose contribution was successfully composed. Unavailable contribution, envelope overflow, whole-composition failure, or missing outcome rejects new launches rather than silently using stale definitions.
+- Throwing from the context hook is not sufficient because Pi may report the exception and continue. The subagent admission guard independently checks the receipt and preparation outcome.
+- Cancellation, current trust, tool availability, and nesting authorization are rechecked after asynchronous model resolution and after asynchronous workspace admission before a new run is committed. A background launch must not escape a cancellation received while resolving credentials.
+- Invalid startup configuration initializes inspection with default service limits, but discovery remains unavailable and blocks fresh launches until the source is corrected. Definitions and fallback lists recover at the next request; service concurrency limits remain session-initialized.
+- A child allowed to delegate receives an independent catalog and receipt lifecycle rooted in its authorized scope. It does not share a mutable parent receipt through process-global state.
+- At maximum nesting depth, or when `Agent` is unavailable because of policy or a tool collision, the contributor reports disabled delegation without advertising callable definitions.
+- Discovery failure does not terminate unrelated parent work or existing children. Inspection and cancellation retain their existing semantics.
+- Trusted discovery does not make description text privileged instruction. Runtime enforcement remains independent of whether the model obeys the catalog.
+
+#### 5.4.6 Discovery verification
+
+These cases define verification obligations. `tests/agents/discovery.test.ts` and `tests/acceptance/discovery.test.ts` exercise the new discovery path; the verification report identifies remaining checks. Generic composition coverage belongs to [request-context verification](request-context.md#9-verification-contract).
+
+| Case | Required evidence |
+| --- | --- |
+| SA-DISC-01 | The first real Pi request advertises packaged, user, and trusted-project definitions with exact precedence and descriptions, before any model filesystem-discovery call. |
+| SA-DISC-02 | An edit while a model response is held does not change the definition used by that response's parallel launches; the next request sees the edit. |
+| SA-DISC-03 | Addition, removal, renaming, model-policy changes, fallback-list edits, malformed sources, unstable reads, and recovery obey the discovery publication policy. |
+| SA-DISC-04 | Untrusted project sources, revoked permissions, tool collisions, nesting limits, and child-session isolation cannot expand advertised execution authority. |
+| SA-DISC-05 | Missing receipts, unavailable contributions, envelope overflow, and composition-hook failures cannot admit stale or uncorrelated launches. |
+| SA-DISC-06 | Definition snapshots survive queueing and resumption; reload and session replacement retain the existing shutdown contract and discard old request authority. |
+| SA-DISC-07 | A real-provider request delegates to a configured custom agent without parent filesystem discovery and observes the final child result, not just launch acknowledgment. |
+
+- Tests exercise the real Pi context hook, registered `Agent` handler, registry, runner, and provider serialization boundary. A direct registry unit test does not establish model-visible discovery.
+- A deterministic provider holds responses to exercise configuration races without mocking the registry or runner. This establishes runtime integration, not real-model selection quality.
+- The incident-shaped integration case launches ten read-only child tasks after the initial request exposes the custom definition. External quota failures remain distinct from discovery failures.
+- `doc/acceptance/agent-discovery.feature` has executable bindings and a reviewed source hash. Its cases cover first-request visibility, edited-definition consistency, and recovery. Existing registry and runner tests supplement rather than replace this request-boundary evidence.
 
 ## 6. Data Model and Persistence
 
@@ -552,6 +653,13 @@ Retaining even unchanged isolated workspaces until explicit cleanup differs from
 - Restoring a parent session does not replay old automatic follow-up requests. Undelivered outcomes become available in its next context or explicit inspection.
 - A parent request receives one bounded current-agent snapshot listing relevant active runs and undelivered outcomes. Historical snapshots are replaced in the outgoing copy, not appended indefinitely.
 - Status refreshes do not start model turns, and rendered assistant claims do not change agent records.
+
+### 10.3 Transient definition metadata
+
+- The running-agent status projection and the definition catalog serve different purposes. The former reports instances and outcomes; the latter identifies types available for new delegation.
+- The [composition contract](request-context.md#4-composition-architecture) produces one new request-only envelope after Secretary's existing projections. It does not replace completion delivery or add automatic follow-up turns.
+- The [history and caching contract](request-context.md#8-history-diagnostics-and-caching) forbids append-then-delete mutation of saved user messages. A transient suffix limits stale-context accumulation but does not promise an append-only provider prefix or improved cache reuse.
+- Goal authorization remains governed by Section 11. An advertised definition, catalog update, or contributor snapshot is state rather than permission to resume a goal.
 
 ## 11. Goal Integration
 

@@ -310,6 +310,28 @@ Secretary initially exposes one guidance operation. Nicobailon's `steer`, `follo
 - **Feedback:** The picker excludes models already present in the list. Each change is reported in a status line.
 - **Failure and recovery:** If persisting a change fails, the menu reports the failure and the previous list contents remain in effect. An empty list is valid configuration; a launch that references it fails with an actionable error until the list contains at least one model.
 
+### 3.9 Delegate using available definitions
+
+**Status:** Implemented for [SA-13](../user-stories/subagents.md#sa-13-discover-agent-definitions-without-filesystem-probing), with deterministic SDK verification. This does not establish live-model selection quality or human approval.
+
+- **User intent:** The user wants a predefined or custom agent to handle a task without first teaching the parent where its definition lives.
+- **Entry conditions:** Delegation is enabled, and any required custom definition is installed in an authorized configuration scope.
+- **User action:** The user asks the parent to delegate a task, optionally naming a definition such as `Explore` or a custom type.
+- **Observable outcome:** The parent can select an available definition without first listing directories or reading agent files through tools. The selected child appears through the existing launch and inspection surfaces.
+- **Feedback:** Normal launch feedback distinguishes the selected definition from the instance name. An unknown type or unavailable catalog returns an actionable error instead of appearing to launch successfully.
+- **Failure and recovery:** The user can correct the definition or request an available type. The request-boundary update policy makes corrected configuration available on the next model request. Existing child work is not silently replaced or restarted.
+
+### 3.10 Continue after changing definitions
+
+**Status:** Implemented request-boundary update policy for SA-13, with deterministic edit-during-generation and recovery tests.
+
+- **User intent:** The user wants configuration changes to take effect predictably without altering work already requested.
+- **Entry conditions:** The user has edited a definition file or a model fallback list while the session is open.
+- **User action:** The user continues the conversation after saving the change. No new refresh command or editing wizard is introduced.
+- **Observable outcome:** The next model request uses the updated available definitions. Calls from a response already being generated keep the definition that response was given; running agents are not reconfigured by the edit.
+- **Feedback:** Invalid configuration prevents new delegation with an actionable error. The application does not insert reminder text into the saved human message or display each refresh as a new chat message.
+- **Failure and recovery:** The user corrects the configuration and continues. Configuration editing alone does not trigger a model response, grant permission to resume a goal, or cancel existing agents.
+
 ## 4. Navigation and Accessibility
 
 | Context | Key | Behavior |

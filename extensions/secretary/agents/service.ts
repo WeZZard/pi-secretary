@@ -28,6 +28,8 @@ export interface LaunchSpec {
   background: boolean;
   isolation?: "none" | "worktree";
   goal?: GoalOrigin;
+  /** Recheck caller cancellation and live authority across asynchronous admission boundaries. */
+  assertAdmission?: () => void;
 }
 export interface ServiceOptions {
   parentId: string;
@@ -254,6 +256,7 @@ export class AgentService {
   async launch(spec: LaunchSpec): Promise<AgentSnapshot> {
     const existing = this.repo.findLaunch(this.options.parentId, spec.launchKey);
     if (existing) return { agent: this.resolve(existing.agentId), run: existing };
+    spec.assertAdmission?.();
     const depth = this.options.depth ?? 0;
     if (depth >= this.options.config.maxNestingDepth) {
       throw rejected(`Nested delegation is limited to ${this.options.config.maxNestingDepth} level(s) below the main session; this session is at the maximum depth and cannot launch agents.`);
@@ -263,6 +266,7 @@ export class AgentService {
     if (spec.name && (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(spec.name) || /^(main|team-lead)$/i.test(spec.name) || /^(agent|run)_/.test(spec.name))) throw new Error("Invalid or reserved agent name.");
     const isolation = resolveIsolation(spec.isolation, spec.definition.isolation);
     const requestedWorktree = isolation === "worktree" ? await this.worktrees.captureBase(this.options.ctx.cwd) : undefined;
+    spec.assertAdmission?.();
     this.capacity();
     const duplicate = this.repo.findLaunch(this.options.parentId, spec.launchKey);
     if (duplicate) return { agent: this.resolve(duplicate.agentId), run: duplicate };
@@ -564,6 +568,7 @@ export class AgentService {
     } finally { this.changed(); }
   }
   receipt(id: string): unknown { return this.repo.receipt(this.options.parentId, id); }
+  findLaunch(id: string): AgentRun | undefined { return this.repo.findLaunch(this.options.parentId, id); }
   pendingCompletions() { return this.repo.completions(this.options.parentId).filter(c => c.state !== "observed"); }
   recordDelivery(id: string, state: "submitted" | "observed" | "uncertain"): void {
     const d = this.repo.completions(this.options.parentId).find(c => c.id === id);

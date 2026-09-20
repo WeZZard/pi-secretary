@@ -8,6 +8,25 @@
 
 **Related documents:** [Architecture](../arch/subagents.md), [requirements](../user-stories/subagents.md), [interaction design](../ux/subagents.md), [testing guide](README.md), and [delivery record](../../.plans/2026-09-17-subagent-support.md).
 
+## 2026-09-20: Request-context composition and agent discovery
+
+**Reviewed implementation:** The working tree based on `30c24e6`, implementing the [cited plan](../../.plans/2026-09-20-request-context-injection.md). The generic mechanism and subagent discovery have separate owners in [request-context architecture](../arch/request-context.md) and [subagent architecture Section 5.4](../arch/subagents.md#54-request-scoped-definition-catalog).
+
+| Check | Observed result | Verification limit |
+| --- | --- | --- |
+| First-request reproducer | Before implementation, `tests/agents/discovery.test.ts` failed because the real parent SDK provider received only the user prompt at the request tail, without a catalog. The same assertion now passes. | The provider is deterministic and local; this does not measure real-model selection quality. |
+| Generic composition | `tests/context/` passed independent tests for ordering, escaping, size bounds, omitted and failed contributors, cancellation, activation replacement, immutable captures, and owned-envelope replacement. | Contributors use synthetic state, not agent definitions. |
+| Real Pi context integration | The generic SDK test passed image preservation, tool-result ordering, later-hook coexistence, transport-error recovery, and saved-JSONL checks. | It inspects the converted provider context, not hosted HTTP serialization, every provider adapter, or injection-specific compaction. |
+| Subagent discovery integration | Real parent and child SDK tests passed first-request precedence, edits and removal during generation, parallel call binding, fallback-list snapshot consistency, malformed and oversized catalogs, startup recovery, and trust revocation. | Configuration races are controlled through a deterministic provider; a true concurrent-filesystem mutation stress test remains unexecuted. |
+| Admission and incident-shaped execution | Missing and old-branch receipts were rejected. Cancellation while credential resolution was suspended admitted no child. Ten read-only children completed through the real runner without parent definition-file reads. | The ten-child case does not reproduce hosted quota conditions. The post-workspace admission guard was source-reviewed, but its asynchronous race was not independently exercised here. |
+| Acceptance coverage | New ACC-SA-13-01 through ACC-SA-13-03 bindings passed through real SDK sessions. ACC-SA-07-01 now verifies a stable string schema and fallback-list publication in runtime context. | Approval tags retain their design-review meaning; passing bindings do not establish human approval. |
+| Routine development gate | `npm run verify` passed TypeScript checking, all 623 test cases, Mermaid validation, and acceptance syntax validation. | This command excludes paid-provider E2E tests. |
+
+- Reproduce the focused checks with `node --experimental-strip-types --test --test-concurrency=1 tests/context/*.test.ts tests/agents/discovery.test.ts tests/acceptance/discovery.test.ts`.
+- Each local run used a fresh ignored directory under `test-results/`; request-context SDK captures also use fresh directories under `test-results/context/`. These generated files are not versioned baselines.
+- The implementation does not rewrite persisted user content or append then delete reminders. It does not migrate goal-state or running-agent projections into the new envelope.
+- SA-DISC-07 live-provider selection and RC-08 hosted cache evaluation were not run. No cache benefit, universal provider compatibility, package deployment, or human visual approval is claimed.
+
 ## 2026-09-20: Idle-hidden indicator and main-row focus return
 
 **Reviewed implementation:** the working tree amending the unified fleet indicator so it renders nothing while no top-level execution is non-terminal, and so Enter on the main session row returns focus to the prompt input instead of opening the fleet view overlay. **Execution date:** 2026-09-20.
@@ -89,7 +108,7 @@ Earlier implementation work recorded a successful deterministic terminal walkthr
 | Responsibility | Implementation | Verification source |
 | --- | --- | --- |
 | Tool registration, parent lifecycle, and goal integration. | `installation.ts` and `service.ts` compose the subsystem. | `tests/agents/installation.test.ts`, `service.test.ts`, and `goal-integration.test.ts` exercise the boundaries. |
-| Definitions, trust, and model resolution. | `configuration.ts`, `registry.ts`, and `tools/schemas.ts` define the contracts. | Configuration and schema tests cover precedence, metadata-only definitions, and configured-only aliases. |
+| Definitions, trust, and model resolution. | `configuration.ts`, `registry.ts`, and `tools/schemas.ts` define the contracts. | Configuration and schema tests cover precedence, metadata-only definitions, stable string schemas, and runtime fallback-list validation. |
 | Child execution and authentication. | `runner.ts` delegates authentication and composes SDK execution hooks. | Runner tests cover provider-registration ordering, later replacement rejection, permissions, guidance, limits, and resumption. |
 | Workspace allocation and cleanup. | `workspaces.ts` selects directory snapshots or `worktrees.ts` Git allocation. | `tests/agents/workspaces.test.ts` and `worktrees.test.ts` cover bounds, ownership, preserved changes, and conservative cleanup. |
 | Persistence and ownership. | `storage/` implements additive records, transactions, receipts, and parent locking. | Storage, service, and recovery tests cover ownership and interruption handling. |

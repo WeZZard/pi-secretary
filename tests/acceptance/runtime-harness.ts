@@ -109,7 +109,15 @@ export async function publicHarness(t: TestContext, options: { mode?: string; co
     ui: { setStatus() {}, setWidget: (...args: any[]) => widgets.push(args), notify: (text: string) => notices.push(text), confirm: () => { throw new Error("Unexpected interactive confirmation"); }, custom: () => { throw new Error("Unexpected terminal component"); } } };
   const pi: any = { on: (name: string, fn: any) => hooks.set(name, [...(hooks.get(name) ?? []), fn]), registerTool: (tool: any) => tools.set(tool.name, tool), registerCommand: (name: string, command: any) => commands.set(name, command), getAllTools: () => [...tools.values()], getActiveTools: () => ["read", ...tools.keys(), "SubagentWorkflow"], getSessionName: () => "Fixture", setSessionName() {}, appendEntry: (customType: string, data: any) => entries.push({ type: "custom", customType, data }), sendMessage: (message: any, delivery: any) => sent.push({ message, delivery }) };
   const sync = installSecretary(pi, engine, { agentsRoot: root });
-  const emit = async (name: string, event: any = {}) => { let result: any; for (const fn of hooks.get(name) ?? []) result = await fn(event, ctx) ?? result; if (name === "session_shutdown") stopped = true; return result; };
+  const emit = async (name: string, event: any = {}) => {
+    let result: any;
+    for (const fn of hooks.get(name) ?? []) {
+      result = await fn(event, ctx) ?? result;
+      if (name === "context" && result?.messages) event = { ...event, messages: result.messages };
+    }
+    if (name === "session_shutdown") stopped = true;
+    return result;
+  };
   t.after(async () => {
     try { if (!stopped) await emit("session_shutdown", { reason: "quit" }); }
     finally { if (prior === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = prior; rmSync(root, { recursive: true, force: true }); }
@@ -119,7 +127,14 @@ export async function publicHarness(t: TestContext, options: { mode?: string; co
     assert.ok(tools.has(name), `${name} is registered`);
     const definition = tools.get(name);
     if (!Value.Check(definition.parameters, args)) throw new Error(`Invalid ${name} input`);
-    return definition.execute(id, args, signal, update, ctx);
+    if (name === "Agent" && !stopped) {
+      await emit("context", { messages: [] });
+      await emit("message_end", { message: { role: "assistant", stopReason: "toolUse",
+        content: [{ type: "toolCall", id, name, arguments: args }],
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 } } });
+    }
+    try { return await definition.execute(id, args, signal, update, ctx); }
+    finally { await emit("tool_execution_end", { toolCallId: id, toolName: name }); }
   };
   return { root, engine, repository, sync, ctx, pi, tools, commands, calls, streams, call, notices, sent, entries, widgets, emit, tool,
     setParent(id: string) { parentId = id; },

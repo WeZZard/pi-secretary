@@ -27,6 +27,16 @@ The default `npm test` and `npm run verify` commands do not include the paid-pro
 - Follow the [test artifact policy](test-artifacts.md) when recording, sharing, retaining, or deleting generated output.
 - Read the [verification report](subagent-verification.md) for the tested implementation baseline and known gaps.
 
+## Request-context verification
+
+- The [request-context mechanism, Section 9](../arch/request-context.md#9-verification-contract), defines RC-01 through RC-08 for composition, transport, lifecycle, history preservation, and cache evaluation. These tests use synthetic contributors and require no subagent definitions.
+- The [subagent discovery contract, Section 5.4.6](../arch/subagents.md#546-discovery-verification), defines SA-DISC-01 through SA-DISC-07 for catalog visibility, discovery changes, request-to-launch consistency, and delegation admission.
+- These replace the earlier mixed CTX-01 through CTX-11 checklist. Run `node --experimental-strip-types --test --test-concurrency=1 tests/context/*.test.ts tests/agents/discovery.test.ts tests/acceptance/discovery.test.ts` for the focused deterministic checks.
+- The first-request regression reproduced missing catalog visibility before implementation and now passes through a real Pi parent request. The discovery tests also run real child SDK sessions with isolated definitions and a deterministic provider.
+- The [verification report](subagent-verification.md#2026-09-20-request-context-composition-and-agent-discovery) records executed coverage and gaps. Generic tests establish composition independently; live-provider selection, HTTP payload compatibility, and hosted cache behavior remain separate.
+- Add new Gherkin specifications with their executable bindings and reviewed source hashes, rather than adding unbound scenarios to the current suite.
+- Keep request captures and test output under ignored `test-results/`, using a fresh directory per run. Record concise executed results and remaining limits in the verification report only after those checks run.
+
 ## Interpret results correctly
 
 - Type checking and syntax linting do not establish that a runtime scenario executed.

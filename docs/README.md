@@ -13,6 +13,12 @@
 | [Research](research/) | Readers evaluate evidence, comparisons, and unresolved questions. | Include observations, sources, uncertainty, and recommendations. | Do not present an observation about current code as an approved product requirement. |
 | [Testing](testing/README.md) | Maintainers choose verification layers and interpret results. | Include test procedures, environment prerequisites, artifact policies, and dated verification reports. | Do not duplicate acceptance scenario definitions or record per-run output here. |
 
+## Shared technical mechanisms
+
+| Document | Boundary |
+| --- | --- |
+| [Request-time context injection](arch/request-context.md) | It specifies generic contributor registration, deterministic composition, request lifecycle, message placement, and history preservation. Contributing subsystems own their data and execution policies. |
+
 ## Subagent documents
 
 | Document | Current role |
@@ -20,6 +26,7 @@
 | [Requirements](user-stories/subagents.md) | They define the required outcomes and confirmed constraints for the implemented subsystem, including the ported-presentation requirement SA-10. |
 | [Interaction design](ux/subagents.md) | It defines FleetView, the async widget, inspection, messaging, cancellation, recovery, and the ported-surface exclusions from the user's perspective. |
 | [Architecture](arch/subagents.md) | It is the maintained contract for tools, runtime, persistence, workspaces, goal integration, and the TUI port mapping in Section 12.6. |
+| [Definition discovery](arch/subagents.md#54-request-scoped-definition-catalog) | It specifies automatic discovery, selection metadata, catalog publication, and launch consistency using the shared request-context mechanism. The verification report records implemented coverage and remaining limits. |
 | [BDD acceptance specifications](../doc/acceptance/README.md) | They describe observable behavior in Gherkin with stable scenario identities and executable bindings. |
 | [Testing guide](testing/README.md) | It selects test commands, prerequisites, and result interpretation. |
 | [E2E procedures](testing/subagent-e2e.md) | They describe the real-provider headless and interactive test environments. |

@@ -76,8 +76,10 @@ function applyAgentsConfiguration(agents: Record<string, unknown>, path: string,
   }
 }
 
+export const defaultAgentConfiguration = (): AgentConfiguration => ({ modelFallbackLists: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, maxNestingDepth: 3, ui: defaultAgentUi() });
+
 export function loadAgentConfiguration(cwd: string, agentDir: string, trusted: boolean): AgentConfiguration {
-  const result: AgentConfiguration = { modelFallbackLists: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, maxNestingDepth: 3, ui: defaultAgentUi() };
+  const result = defaultAgentConfiguration();
   const paths = [join(agentDir, "secretary.json")];
   if (trusted) paths.push(join(cwd, CONFIG_DIR_NAME, "secretary.json"));
   for (const path of paths) {

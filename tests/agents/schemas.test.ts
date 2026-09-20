@@ -25,11 +25,14 @@ test("Agent exposes a free-form model field when no fallback lists are configure
   assert.equal(Object.hasOwn(agentSchema.properties, "model"), true, "The baseline schema is not mutated");
 });
 
-test("Agent advertises only configured fallback list names", () => {
+test("Agent schemas stay stable while runtime context publishes fallback list names", () => {
   const schema = createAgentSchema({ fast: ["test/configured-model"] });
-  assert.deepEqual(Reflect.get(schema.properties.model, "enum"), ["fast"]);
+  assert.deepEqual(schema, createAgentSchema({ renamed: ["test/different"] }));
+  assert.equal(Reflect.get(schema.properties.model, "enum"), undefined);
+  assert.match(Reflect.get(schema.properties.model, "description"), /secretary\.agent-catalog/);
+  assert.match(Reflect.get(schema.properties.subagent_type, "description"), /general-purpose/);
   assert.equal(Value.Check(schema, { prompt: "Do work", description: "Task", model: "fast" }), true);
-  assert.equal(Value.Check(schema, { prompt: "Do work", description: "Task", model: "other" }), false);
+  assert.equal(Value.Check(schema, { prompt: "Do work", description: "Task", model: "other" }), true, "Unknown strings are rejected at runtime, not through a stale enum");
 });
 
 test("SendMessage enforces string-only profile and display bounds", () => {

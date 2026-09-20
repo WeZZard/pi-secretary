@@ -10,6 +10,7 @@ import type { ThreadGoal } from "./goal/goal-record.ts";
 import { GoalSynchronization, threadIdFor, type WorkBasis } from "./goal/synchronization.ts";
 import { formatGoalSnapshot } from "./goal/steering.ts";
 import { installAgentSupport } from "./agents/installation.ts";
+import { RequestContextComposer } from "./context/index.ts";
 
 export default function secretaryExtension(pi: ExtensionAPI): void {
   // Child sessions install too (SA-12): the delegation tools are gated by nesting depth at
@@ -46,8 +47,21 @@ export function installSecretary(pi: ExtensionAPI, engine: GoalEngine, options: 
       return { block: true, reason: "Budget wrap-up authorizes reporting and read-only evidence, not new substantive goal work.", terminate: true };
     }
   });
-  const agents = options.agentsRoot ? installAgentSupport(pi, engine, sync, options.agentsRoot) : undefined;
+  const composer = new RequestContextComposer();
+  const agents = options.agentsRoot ? installAgentSupport(pi, engine, sync, options.agentsRoot, composer) : undefined;
+  let activationEpoch = 0;
+  let requestSequence = 0;
+  pi.on("session_tree", () => { activationEpoch++; composer.invalidate(); });
+  // Register after Secretary's domain projections; other extensions retain their own ordering.
+  pi.on("context", async (event, ctx) => {
+    const prepared = await composer.prepare({ sessionId: ctx.sessionManager.getSessionId(), activationEpoch,
+      requestId: String(++requestSequence), signal: ctx.signal ?? new AbortController().signal });
+    const messages = composer.compose(event.messages, prepared);
+    agents?.contextPrepared(prepared);
+    return { messages };
+  });
   pi.on("session_shutdown", async () => {
+    activationEpoch++; composer.dispose();
     sync.dispose();
     if (agents && !await agents.shutdown()) return; // Do not close storage under a live child.
     engine.dispose();

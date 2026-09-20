@@ -18,9 +18,13 @@ const bindings: ScenarioBindings = {
     } } }));
     await h.start();
     const schema = h.tools.get("Agent").parameters;
-    assert.deepEqual(schema.properties.model.enum, ["primary", "secondary"]);
+    assert.equal(schema.properties.model.enum, undefined);
+    assert.equal(schema.properties.model.type, "string");
     assert.ok(!schema.required.includes("model"));
-    assert.ok(!schema.properties.model.enum.includes("test-provider/reviewer-model"));
+    const view = await h.emit("context", { messages: [] });
+    const envelope = view.messages.find((m: any) => m.customType === "secretary:request-context").content;
+    const payload = JSON.parse(envelope.slice("<secretary-runtime-state>".length, -"</secretary-runtime-state>".length));
+    assert.deepEqual(payload.contributions.find((c: any) => c.id === "secretary.agent-catalog").data.modelFallbackLists, ["primary", "secondary"]);
     assert.ok(!Object.hasOwn(schema.properties, "modelAliases"));
     await h.put(join(h.userDir, "secretary.json"), JSON.stringify({ agents: { modelFallbackLists: { secondary: ["test-provider/reviewer-model"] } } }));
     assert.deepEqual(loadAgentConfiguration(h.root, h.userDir, true).modelFallbackLists.secondary, ["test-provider/reviewer-model"]);
@@ -341,6 +345,6 @@ const bindings: ScenarioBindings = {
 };
 
 runFeatures(["agent-configuration", "goal-integration"], bindings, {
-  "agent-configuration": "cb4f2ca141f3ddf51f43a38a7f2e3cc42913b6acade1d017b303e80126fd9e92",
+  "agent-configuration": "aef0656d9235d35d9a7e44324c851007f5daa843c711e113d277131aacb306eb",
   "goal-integration": "2a1badb878287c3d944eb8919e710c267461692dc210df7165d9f3e6273b84b3",
 });

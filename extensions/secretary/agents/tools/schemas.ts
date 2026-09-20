@@ -2,12 +2,12 @@ import { Type, type Static } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { AgentConfiguration } from "../configuration.ts";
 
-const MODEL_DESCRIPTION = "Optional model selection. Name a configured model fallback list to try its models in order, or give an exact provider/modelId available in this session. Normally omit this field to use the agent definition's model or inherit the parent model. Do not override the definition unless the user requests it.";
+const MODEL_DESCRIPTION = "Optional model selection. Name a configured model fallback list from secretary.agent-catalog in the current runtime state to try its models in order, or give an exact provider/modelId available in this session. Normally omit this field to use the agent definition's model or inherit the parent model. Do not override the definition unless the user requests it.";
 
 export const agentSchema = Type.Object({
   description: Type.String(),
   prompt: Type.String(),
-  subagent_type: Type.Optional(Type.String()),
+  subagent_type: Type.Optional(Type.String({ description: "Exact type from secretary.agent-catalog in the current runtime state. Defaults to general-purpose. Definition files are loaded by the application; do not read them merely to discover types. This selects a definition, not an agent instance name." })),
   model: Type.Optional(Type.String({ description: MODEL_DESCRIPTION })),
   run_in_background: Type.Optional(Type.Boolean()),
   name: Type.Optional(Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$", maxLength: 64 })),
@@ -18,15 +18,9 @@ export const agentSchema = Type.Object({
   mode: Type.Optional({ ...StringEnum(["acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"]), deprecated: true, description: "Deprecated; ignored." }),
 }, { additionalProperties: false });
 
-/** Advertise only configured fallback lists. An absent list must not invite model guesses. */
-export function createAgentSchema(modelFallbackLists: AgentConfiguration["modelFallbackLists"]): typeof agentSchema {
-  const names = Object.keys(modelFallbackLists);
-  const properties: Record<string, unknown> = { ...agentSchema.properties };
-  properties.model = names.length
-    ? Type.Optional(StringEnum(names, { description: MODEL_DESCRIPTION }))
-    : Type.Optional(Type.String({ description: MODEL_DESCRIPTION }));
-  // The handler accepts the baseline superset; the advertised JSON Schema is narrower.
-  return { ...agentSchema, properties } as typeof agentSchema;
+/** Runtime-state publication supplies dynamic names without changing the tool schema. */
+export function createAgentSchema(_modelFallbackLists?: AgentConfiguration["modelFallbackLists"]): typeof agentSchema {
+  return agentSchema;
 }
 
 export const sendMessageSchema = Type.Object({

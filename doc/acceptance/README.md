@@ -17,7 +17,7 @@
 - The `@confirmed` tag identifies a scenario derived directly from a confirmed design constraint. It does not mean its steps have been implemented or its outcome has been verified.
 - The `@proposed` tag identifies a scenario that depends on a detailed policy proposed in the design. These scenarios must not be treated as additional user approvals.
 - Every scenario has exactly one of `@confirmed` or `@proposed`.
-- The `@SA-01` through `@SA-09` tags identify the corresponding requirement.
+- The `@SA-01` through `@SA-13` tags identify the corresponding requirement where covered by these specifications.
 - The `@ACC-SA-...` tags provide stable scenario identifiers for review and later automation.
 - The `@ui`, `@concurrency`, `@recovery`, and `@compatibility` tags classify scenarios without changing their approval status.
 - `npm run test:acceptance` executes the compiled scenarios and all Examples rows through the scenario-specific adapters in `tests/acceptance/`.
@@ -30,7 +30,8 @@
 | Feature file | Requirements | Scope |
 | --- | --- | --- |
 | [delegation.feature](delegation.feature) | SA-01. | The scenarios cover foreground and background delegation, fresh context, queue admission, and tool availability. |
-| [agent-configuration.feature](agent-configuration.feature) | SA-07. | The scenarios cover definitions, model fallback lists, inheritance, project trust, and tool restrictions. |
+| [agent-configuration.feature](agent-configuration.feature) | SA-07. | The scenarios cover definitions, stable model schemas with runtime list publication, inheritance, project trust, and tool restrictions. |
+| [agent-discovery.feature](agent-discovery.feature) | SA-13. | The scenarios cover first-request discovery, request-scoped definitions during edits, and recovery without parent filesystem probing. |
 | [messaging.feature](messaging.feature) | SA-03. | The scenarios cover guidance, resumption, delivery acknowledgment, and concurrent requests. |
 | [cancellation.feature](cancellation.feature) | SA-04. | The scenarios cover stopping, foreground interruption, wait cancellation, and stale confirmations. |
 | [session-recovery.feature](session-recovery.feature) | SA-05. | The scenarios cover exit, reload, session ownership, restoration, and recovery after failure. |
@@ -84,7 +85,7 @@
 
 ## 7. Automation and Review
 
-- Each scenario identifier is bound by `tests/acceptance/runtime.test.ts`, `configuration-goals.test.ts`, `ui.test.ts`, or `worktrees.test.ts`. The shared runner uses the official Gherkin compiler to expand Examples rows.
+- Each scenario identifier is bound by `tests/acceptance/runtime.test.ts`, `configuration-goals.test.ts`, `discovery.test.ts`, `ui.test.ts`, or `worktrees.test.ts`. The shared runner uses the official Gherkin compiler to expand Examples rows.
 - The [terminal recording procedure](tui-recording.md) supplements UI adapter tests with actual terminal input and output. Human approval remains a separate review. Real-provider spawning scenarios are described in the [E2E testing guide](../../docs/testing/subagent-e2e.md) and are not part of this Gherkin suite.
 - Keep generated run output under ignored `test-results/` or in CI artifact storage, as specified in the [test artifact policy](../../docs/testing/test-artifacts.md). This directory contains versioned specifications and instructions, not generated evidence archives.
 - The configuration-precedence fixture uses the real packaged `general-purpose` definition. Its former `reviewer` name incorrectly assumed a packaged agent that the design does not include; the behavioral precedence requirement is unchanged.

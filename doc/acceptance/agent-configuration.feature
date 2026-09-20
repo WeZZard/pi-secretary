@@ -5,11 +5,12 @@ Feature: Resolve agent definitions and models predictably
   so that delegation does not silently change capabilities or providers.
 
   @ACC-SA-07-01 @confirmed @compatibility
-  Scenario: Advertise configured model fallback lists in the tool schema.
+  Scenario: Publish configured model fallback names without changing the tool schema.
     Given Secretary advertises the "Agent" tool.
-    When the model input schema is inspected.
-    Then the optional "model" field permits exactly the configured fallback list names.
-    And exact provider-qualified model identifiers and unconfigured names are rejected by the advertised schema.
+    When a model request is prepared.
+    Then the optional "model" field retains a stable string schema.
+    And the runtime catalog lists the configured fallback list names.
+    And an unconfigured name is rejected at launch without selecting a substitute model.
     And fallback list mappings are configured outside the tool invocation schema.
 
   @ACC-SA-07-02 @confirmed

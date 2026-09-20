@@ -51,7 +51,10 @@ export function goalHarness(options: { engine?: GoalEngine; threadId?: string; h
   const sync = installSecretary(pi, engine);
   const emit = async (name: string, event: any = {}) => {
     let result: any;
-    for (const handler of hooks.get(name) ?? []) result = await handler(event, ctx) ?? result;
+    for (const handler of hooks.get(name) ?? []) {
+      result = await handler(event, ctx) ?? result;
+      if (name === "context" && result?.messages) event = { ...event, messages: result.messages };
+    }
     return result;
   };
   return {

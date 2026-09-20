@@ -37,7 +37,14 @@ export async function agentHarness(t: TestContext, options: { mode?: string; col
     ui: { setStatus() {}, setWidget() {}, notify: (text: string) => notices.push(text) } };
   const pi: any = { on: (name: string, fn: any) => hooks.set(name, [...(hooks.get(name) ?? []), fn]), registerTool: (tool: any) => tools.set(tool.name, tool), registerCommand: (name: string, definition: any) => commands.set(name, definition), getAllTools: () => [...tools.values()], getActiveTools: () => ["read", ...tools.keys(), "SubagentWorkflow"], getSessionName: () => "Fixture", setSessionName() {}, appendEntry: (customType: string, data: any) => entries.push({ type: "custom", customType, data }), sendMessage: (message: any, delivery: any) => sent.push({ message, delivery }) };
   const sync = installSecretary(pi, engine, { agentsRoot: root });
-  const emit = async (name: string, event: any = {}) => { let result: any; for (const fn of hooks.get(name) ?? []) result = await fn(event, ctx) ?? result; return result; };
+  const emit = async (name: string, event: any = {}) => {
+    let result: any;
+    for (const fn of hooks.get(name) ?? []) {
+      result = await fn(event, ctx) ?? result;
+      if (name === "context" && result?.messages) event = { ...event, messages: result.messages };
+    }
+    return result;
+  };
   t.after(async () => {
     try { await emit("session_shutdown"); }
     finally { if (prior === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = prior; await rm(root, { recursive: true, force: true }); }
@@ -46,5 +53,16 @@ export async function agentHarness(t: TestContext, options: { mode?: string; col
   return { root, engine, sync, ctx, pi, tools, commands, calls, notices, sent, emit,
     start: () => emit("session_start", { reason: "startup" }),
     command: (name: string, args: string) => { assert.ok(commands.has(name), `${name} is registered`); return commands.get(name).handler(args, ctx); },
-    tool: (name: string, args: any, id = `invocation-${++sequence}`) => { assert.ok(tools.has(name), `${name} is registered`); return tools.get(name).execute(id, args, undefined, undefined, ctx); } };
+    tool: async (name: string, args: any, id = `invocation-${++sequence}`) => {
+      assert.ok(tools.has(name), `${name} is registered`);
+      if (name === "Agent") {
+        // Adapter tests simulate host ordering; discovery.test.ts separately proves it in the real SDK.
+        await emit("context", { messages: [] });
+        await emit("message_end", { message: { role: "assistant", stopReason: "toolUse",
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+          content: [{ type: "toolCall", id, name, arguments: args }] } });
+      }
+      try { return await tools.get(name).execute(id, args, undefined, undefined, ctx); }
+      finally { await emit("tool_execution_end", { toolCallId: id, toolName: name }); }
+    } };
 }

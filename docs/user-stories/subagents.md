@@ -136,7 +136,7 @@ As a user, I want to manage named model fallback lists from the TUI so that suba
 - I can create, rename, and remove named model fallback lists. The plugin ships with no lists; every list is one I created. Renaming keeps the list's models; agent definitions that reference the old name fail at launch until they are updated.
 - I can add models to a list, remove models from a list, and change their order.
 - When a subagent is launched through a list, its models are tried from first to last. If every model is unavailable, the launch fails with an actionable error that names what was tried.
-- Changes made in the menu are persisted immediately and apply to subsequent launches.
+- Changes made in the menu are persisted immediately and apply to subsequent launches. Under the SA-13 consistency policy, a launch requested by an already issued model response keeps the configuration advertised to that response; new requests receive the edited configuration.
 - In print, JSON, and other non-interactive modes, the configuration command returns text guidance instead of opening a terminal component.
 
 ### SA-12: Delegate nested work
@@ -150,6 +150,23 @@ As a parent agent, I want a delegated agent to decompose its task further so tha
 - Nesting is bounded by a documented maximum depth, and a launch beyond that depth fails with an actionable error.
 - The fleet indicator and the fleet view overlay present the agent hierarchy correctly in sessions where no agent has children.
 
+### SA-13: Discover agent definitions without filesystem probing
+
+As a user, I want the parent agent to know the available delegation types automatically so that predefined and custom agents work without asking the model to locate or read their definition files.
+
+**Status:** Implemented with deterministic SDK and acceptance coverage. Live-provider selection and cache behavior remain separate verification items in the [verification report](../testing/subagent-verification.md#2026-09-20-request-context-composition-and-agent-discovery).
+
+- Before the first delegation decision, the parent can identify the available packaged, user-defined, and trusted project-defined agents by exact name and description, including `general-purpose`, `Explore`, and `Plan` when enabled.
+- A model-issued filesystem read or a prior child launch is not required to discover the available types. A new agent instance's name is not confused with its definition type.
+- The parent sees selection metadata rather than complete child instructions or private configuration. The runtime applies the selected definition without requiring the parent to reconstruct its prompt.
+- Application-tracked state provides the reminder; the model does not invent or summarize the inventory. Repeated updates do not accumulate reminder copies in the saved conversation or change what the human originally wrote.
+- Under the request-boundary update policy, file and configuration changes become available at the next model request. Work requested by an already issued response retains the definition that was advertised to that response, subject to current permissions and trust.
+- Invalid or unavailable configuration produces an actionable failure rather than silently using a stale or partial inventory. Correcting the source allows a later request to recover.
+- Discovery works in interactive and non-interactive sessions and in children that are permitted to delegate. A disabled delegation capability is not advertised as usable.
+- Other deterministic state can later be added without changing the meaning of agent discovery. This extension point does not promise improved prompt-cache reuse or grant authority to resume a goal.
+
+The [subagent discovery contract](../arch/subagents.md#54-request-scoped-definition-catalog) owns catalog contents, discovery lifecycle, launch consistency, and domain verification. It uses the independent [request-context mechanism](../arch/request-context.md) for composition.
+
 ## 3. Compatibility and Scope
 
 - The compatibility baseline is Claude Code 2.1.272, as inspected in the research report.
@@ -161,6 +178,6 @@ As a parent agent, I want a delegated agent to decompose its task further so tha
 
 ## 4. Acceptance and Verification
 
-- Requirements are validated through the scenarios linked from the technical design and executed by the acceptance suite.
+- Implemented requirements are validated through the scenarios linked from the technical design and executed by the acceptance suite. SA-13 has dedicated real-SDK request-boundary tests and acceptance bindings; generic serializer tests alone are not evidence of agent discovery.
 - Passing tests do not establish visual conformance; TUI interaction review and human approval are separate.
 - The [verification report](../testing/subagent-verification.md) records which checks have run and which remain open.
