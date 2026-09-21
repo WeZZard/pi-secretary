@@ -221,13 +221,14 @@ export function installAgentSupport(pi: ExtensionAPI, options: AgentInstallation
             if (!tools.length) throw new Error("Agent definition has no tools allowed by the parent.");
             const launched = await controller.launch({ launchKey, parentEntryId, definition, model: resolution.id, assertAdmission,
               requestId: operation?.requestId, signal: admissionSignal,
+              modelResolution: { value: resolution.value, source: resolution.source, chain: resolution.chain,
+                selected: resolution.chain.indexOf(resolution.id), skipped: resolution.skipped },
               ...(myAgentId !== undefined ? { parentAgentId: myAgentId } : {}),
               ...(resolution.chain.length > 1 ? { modelCandidates: resolution.chain.slice(resolution.chain.indexOf(resolution.id) + 1) } : {}),
               thinkingLevel: toolCtx.thinkingLevel, tools, prompt: params.prompt, description: params.description,
               name: params.name, background, isolation: resolveIsolation(params.isolation, definition.isolation) });
             const run = launched.run!;
-            const skipped = resolution.skipped.length ? `\nFallback: skipped ${resolution.skipped.map(s => `${s.id} (${s.reason})`).join("; ")}` : "";
-            if (background) return { ...displayResult(run), content: [{ type: "text" as const, text: `${runText(run)}\nModel: ${launched.agent.model}${skipped}\nLaunch accepted; execution is not yet complete. You will be notified on completion.` }] };
+            if (background) return { ...displayResult(run), content: [{ type: "text" as const, text: `${runText(run)}\nLaunch accepted; execution is not yet complete. You will be notified on completion.` }] };
             const abort = () => { void controller.stop(run.runId, `foreground-abort:${id}`); };
             signal?.addEventListener("abort", abort, { once: true });
             if (signal?.aborted) abort();

@@ -36,6 +36,23 @@ Reproduce with:
 node --experimental-strip-types --test tests/agents/model-inheritance.test.ts
 ```
 
+## Follow-up: the 2026-09-21 discord-session incident
+
+- A second incident showed the same confusion from the opposite direction. A `discord-session` definition named the `computer-use` fallback list, and its children launched on `litellm/gpt-6-astra`, the parent's current model. The launch was reported as unwanted inheritance.
+- The stored agent record is inconsistent with inheritance. It holds `model: litellm/gpt-6-astra` together with `modelCandidates: ["litellm/kimi-k3", "litellm/kimi-k3-256k"]`, and the launch result showed no skipped candidates. Inheritance produces a single-candidate chain and records no candidates, so the only consistent resolution state is a `computer-use` list whose first entry was `litellm/gpt-6-astra` at capture time, selected as candidate 1 of 3. Resolution behaved as Section 5.3 specifies.
+- The user reported editing the list before that launch, yet the record proves the on-disk list still had `litellm/gpt-6-astra` at its head at capture time, so the edit was not persisted when the launch was admitted. A freshness review of the full path established two facts.
+- The read side is fresh. The catalog and its execution configuration are captured from disk on every request, and a real-SDK test confirms that an on-disk edit between turns resolves in the very next launch. No caching in the resolution path can serve a stale list.
+- The write side could silently lose the edit. The `/secretary` menu held the whole lists map in memory and rewrote it wholesale on every action, so any action in a menu opened before a newer external edit reverted that edit without a warning. `tests/agents/config-freshness.test.ts` reproduces the loss deterministically. Whether this mechanism consumed the user's pre-launch edit cannot be proven from the retained records; the defect is consistent with the observation and is now repaired by applying menu operations to freshly re-read lists at the persistence boundary, with conflicts reported as not-saved.
+- The user-global `secretary.json` was rewritten after the incident with `litellm/gpt-5.6-luna` as the list's new first entry. This investigation did not modify that file.
+- The defect this incident shares with the earlier one is observability, not selection. The launch result stated only `Model: litellm/gpt-6-astra`, so a correct list resolution whose first candidate is the parent model was indistinguishable from silent inheritance. Two investigations were spent on that ambiguity.
+- The architectural repair records the resolution provenance on the agent record (interpreted value, origin, full chain, selected position, pre-launch skips) and states it on every result surface, for example `Model: litellm/gpt-6-astra (definition list 'computer-use', candidate 1/3)`. The repair is verified by `tests/agents/model-provenance.test.ts`, which reproduces the incident symptom through real parent and child SDK sessions and asserts the source label.
+
+Reproduce with:
+
+```sh
+node --experimental-strip-types --test tests/agents/model-provenance.test.ts tests/agents/config-freshness.test.ts
+```
+
 ## Resolution and limits
 
 - Use an omitted model or `model: inherit` in a definition when fresh children should follow the main session. Do not supply an explicit model argument on the launch unless that override is intended.

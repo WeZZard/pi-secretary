@@ -173,7 +173,7 @@ test("WF-G: legacy TaskOutput keeps its host header, metadata preview, and expan
   const f = await fixture(t);
   const lines = f.render("TaskOutput", { args: { task_id: f.run.runId, block: false }, result: f.response() });
   same(lines.slice(0, 11), ["TaskOutput", "Agent: agent_1", "Run: run_1", "Status: succeeded",
-    "Description: Inspect authentication", `Model: ${model}`, "Working directory: /repo",
+    "Description: Inspect authentication", `Model: ${model} (invocation model)`, "Working directory: /repo",
     "Isolation: none (parent working directory).", "Output: /output/agent_1.txt", "Partial: false", ""]);
   assert.match(lines[11] ?? "", /more lines,.*to expand/);
   assert.equal(lines.length, 12);

@@ -40,6 +40,18 @@ export type WorkspacePlan =
   | { kind?: "git-worktree"; repo: string; baseCommit: string; relativeCwd?: string }
   | { kind: "directory-snapshot"; repo: string; reason: "no-git" | "unborn-head"; relativeCwd?: string };
 
+export interface ModelResolutionRecord {
+  /** The value that produced the chain: `inherit`, an exact provider/modelId, or a fallback-list name. */
+  value: string;
+  /** Where `value` came from: the invocation, the definition, or the default when neither set a model. */
+  source: "invocation" | "definition" | "default";
+  /** The full ordered candidate chain the selection came from. */
+  chain: string[];
+  /** Index of the selected candidate in `chain`; advances when the runner falls back at runtime. */
+  selected: number;
+  /** Candidates skipped during pre-launch resolution, with their failure reasons. */
+  skipped: { id: string; reason: string }[];
+}
 export interface AgentRecord {
   agentId: string;
   parentId: string;
@@ -58,6 +70,8 @@ export interface AgentRecord {
   model: string;
   /** Ordered fallback candidates remaining after `model` (architecture §5.3). Ignored on resumption, which retains the recorded model. */
   modelCandidates?: string[];
+  /** How the recorded model was chosen (architecture §5.3). Absent on records written before provenance tracking. */
+  modelResolution?: ModelResolutionRecord;
   thinkingLevel?: string;
   tools: string[];
   cwd: string;

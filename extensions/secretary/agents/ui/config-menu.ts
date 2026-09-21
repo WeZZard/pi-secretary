@@ -4,7 +4,7 @@ import {
   type Component, type Focusable,
 } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { FALLBACK_LIST_NAME, loadAgentConfiguration, saveModelFallbackLists } from "../configuration.ts";
+import { FALLBACK_LIST_NAME, loadAgentConfiguration, updateModelFallbackLists } from "../configuration.ts";
 
 const MIN_WIDTH = 36;
 const MAX_VISIBLE = 8;
@@ -79,10 +79,14 @@ export class SecretaryConfigMenu implements Component, Focusable {
 
   private setStatus(text: string, warning = false): void { this.status = { text, warning }; }
 
-  /** Validate-then-write; the in-memory view adopts the change only after persistence succeeds. */
-  private mutate(next: Record<string, string[]>, success: string): boolean {
+  /**
+   * Validate-then-write. The operation runs against the lists freshly re-read at the
+   * persistence boundary, never against this menu's older in-memory copy, so a newer
+   * external edit is not reverted; the in-memory view reloads only after persistence succeeds.
+   */
+  private mutate(update: (lists: Record<string, string[]>) => Record<string, string[]>, success: string): boolean {
     try {
-      saveModelFallbackLists(this.options.agentDir, next);
+      updateModelFallbackLists(this.options.agentDir, update);
       this.lists = loadAgentConfiguration("", this.options.agentDir, false).modelFallbackLists;
       this.setStatus(success);
       return true;
@@ -122,7 +126,10 @@ export class SecretaryConfigMenu implements Component, Focusable {
     const name = modal.input.getValue().trim();
     const error = this.nameError(name);
     if (error) { modal.error = error; return; }
-    if (this.mutate({ ...this.lists, [name]: [] }, `Added list ${name}.`)) {
+    if (this.mutate(lists => {
+      if (Object.hasOwn(lists, name)) throw new Error(`A list named "${name}" already exists.`);
+      return { ...lists, [name]: [] };
+    }, `Added list ${name}.`)) {
       this.modal = undefined;
       const level = this.level;
       if (level.kind === "manager") level.selection = this.listNames().indexOf(name);
@@ -142,9 +149,13 @@ export class SecretaryConfigMenu implements Component, Focusable {
     const error = this.nameError(name);
     if (error) { modal.error = error; return; }
     // Rebuild so the renamed list keeps its position in the manager.
-    const next: Record<string, string[]> = {};
-    for (const [key, value] of Object.entries(this.lists)) next[key === modal.list ? name : key] = value;
-    if (this.mutate(next, `Renamed ${modal.list} to ${name}.`)) {
+    if (this.mutate(lists => {
+      if (!Object.hasOwn(lists, modal.list)) throw new Error(`The list "${modal.list}" no longer exists; the configuration changed elsewhere.`);
+      if (Object.hasOwn(lists, name)) throw new Error(`A list named "${name}" already exists.`);
+      const next: Record<string, string[]> = {};
+      for (const [key, value] of Object.entries(lists)) next[key === modal.list ? name : key] = value;
+      return next;
+    }, `Renamed ${modal.list} to ${name}.`)) {
       this.modal = undefined;
       const level = this.level;
       if (level.kind === "manager") level.selection = this.listNames().indexOf(name);
@@ -152,9 +163,7 @@ export class SecretaryConfigMenu implements Component, Focusable {
   }
 
   private removeList(name: string): void {
-    const next = { ...this.lists };
-    delete next[name];
-    if (this.mutate(next, `Removed list ${name}.`)) {
+    if (this.mutate(lists => { const next = { ...lists }; delete next[name]; return next; }, `Removed list ${name}.`)) {
       this.modal = undefined;
       const level = this.level;
       if (level.kind === "manager") level.selection = Math.min(level.selection, Math.max(0, this.listNames().length - 1));
@@ -165,23 +174,31 @@ export class SecretaryConfigMenu implements Component, Focusable {
     const current = this.lists[list] ?? [];
     const id = current[index];
     if (id === undefined) return;
-    const next = [...current];
-    next.splice(index, 1);
-    if (this.mutate({ ...this.lists, [list]: next }, `Removed ${id} from ${list}.`)) {
+    if (this.mutate(lists => {
+      const fresh = lists[list] ?? [];
+      if (!fresh.includes(id)) throw new Error(`${id} is no longer in ${list}; the configuration changed elsewhere.`);
+      return { ...lists, [list]: fresh.filter(entry => entry !== id) };
+    }, `Removed ${id} from ${list}.`)) {
       const level = this.level;
-      if (level.kind === "detail") level.selection = Math.min(index, Math.max(0, next.length - 1));
+      if (level.kind === "detail") level.selection = Math.min(index, Math.max(0, (this.lists[list] ?? []).length - 1));
     }
   }
 
   private moveModel(list: string, index: number, delta: -1 | 1): void {
     const current = this.lists[list] ?? [];
-    const target = index + delta;
-    if (index < 0 || index >= current.length || target < 0 || target >= current.length) return;
-    const next = [...current];
-    [next[index], next[target]] = [next[target]!, next[index]!];
-    if (this.mutate({ ...this.lists, [list]: next }, `Moved ${current[index]} ${delta < 0 ? "up" : "down"}.`)) {
+    const id = current[index];
+    if (id === undefined) return;
+    if (this.mutate(lists => {
+      const fresh = [...(lists[list] ?? [])];
+      const from = fresh.indexOf(id);
+      if (from < 0) throw new Error(`${id} is no longer in ${list}; the configuration changed elsewhere.`);
+      const target = from + delta;
+      if (target < 0 || target >= fresh.length) throw new Error(`${id} cannot move ${delta < 0 ? "up" : "down"} in ${list}; the configuration changed elsewhere.`);
+      [fresh[from], fresh[target]] = [fresh[target]!, fresh[from]!];
+      return { ...lists, [list]: fresh };
+    }, `Moved ${id} ${delta < 0 ? "up" : "down"}.`)) {
       const level = this.level;
-      if (level.kind === "detail") level.selection = target;
+      if (level.kind === "detail") level.selection = (this.lists[list] ?? []).indexOf(id);
     }
   }
 
@@ -270,8 +287,12 @@ export class SecretaryConfigMenu implements Component, Focusable {
         const id = this.pickerItems(modal)[modal.selection];
         if (id === undefined) return;
         const list = modal.list;
-        const current = this.lists[list] ?? [];
-        if (this.mutate({ ...this.lists, [list]: [...current, id] }, `Added ${id} to ${list}.`)) {
+        if (this.mutate(lists => {
+          if (!Object.hasOwn(lists, list)) throw new Error(`The list "${list}" no longer exists; the configuration changed elsewhere.`);
+          const fresh = lists[list] ?? [];
+          if (fresh.includes(id)) throw new Error(`${id} is already in ${list}.`);
+          return { ...lists, [list]: [...fresh, id] };
+        }, `Added ${id} to ${list}.`)) {
           this.modal = undefined;
           const level = this.level;
           if (level.kind === "detail") level.selection = (this.lists[list] ?? []).length - 1;

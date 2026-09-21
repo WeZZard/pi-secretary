@@ -87,6 +87,10 @@ export interface ModelResolution {
   chain: string[];
   /** Candidates skipped before the selection, with their failure reasons. */
   skipped: { id: string; reason: string }[];
+  /** The value that produced the chain: `inherit`, an exact provider/modelId, or a fallback-list name. */
+  value: string;
+  /** Where `value` came from: the invocation, the definition, or the default when neither sets a model. */
+  source: "invocation" | "definition" | "default";
 }
 
 /**
@@ -105,6 +109,7 @@ export async function resolveAgentModel(
   ctx: Pick<ExtensionContext, "model" | "modelRegistry" | "scopedModels">,
   availability?: ModelAvailability,
 ): Promise<ModelResolution> {
+  const source: ModelResolution["source"] = requested !== undefined ? "invocation" : definition.model !== undefined ? "definition" : "default";
   const value = requested ?? definition.model;
   let chain: string[];
   if (!value || value === "inherit") {
@@ -139,7 +144,7 @@ export async function resolveAgentModel(
     }
     const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
     if (!auth.ok) { skipped.push({ id, reason: `authentication unavailable: ${auth.error}` }); continue; }
-    return { model, id, chain, skipped };
+    return { model, id, chain, skipped, value: value ?? "inherit", source };
   }
   throw new Error(`No model candidate is available for ${value ?? "inherit"}: ${skipped.map(s => `${s.id} (${s.reason})`).join("; ")}`);
 }

@@ -8,7 +8,7 @@ import { WorkspaceManager } from "./workspaces.ts";
 import { resolveIsolation } from "./configuration.ts";
 import { createChildRunner } from "./runner.ts";
 import { guidanceNotice, parseTranscriptEvents, type TranscriptEvent } from "./ui/transcript-events.ts";
-import { TERMINAL_STATUSES, type AgentDefinition, type AgentRecord, type AgentRowView, type AgentRun, type AgentSnapshot, type RunningChild, type RunnerHooks, type UsageRecord } from "./records.ts";
+import { TERMINAL_STATUSES, type AgentDefinition, type AgentRecord, type AgentRowView, type AgentRun, type AgentSnapshot, type ModelResolutionRecord, type RunningChild, type RunnerHooks, type UsageRecord } from "./records.ts";
 import { deriveUsageLabels } from "./ui/usage-labels.ts";
 import { liveChildService } from "./live-services.ts";
 
@@ -19,6 +19,8 @@ export interface LaunchSpec {
   model: string;
   /** Ordered fallback candidates remaining after `model` (architecture §5.3). */
   modelCandidates?: string[];
+  /** How `model` was chosen (architecture §5.3); recorded so every result surface can state the source. */
+  modelResolution?: ModelResolutionRecord;
   thinkingLevel?: string;
   tools: string[];
   prompt: string;
@@ -332,7 +334,8 @@ export class AgentService {
       ...(spec.parentEntryId ? { nameScope: spec.parentEntryId } : {}),
       ...(spec.parentAgentId !== undefined ? { parentAgentId: spec.parentAgentId } : {}),
       depth: depth + 1,
-      model: spec.model, ...(spec.modelCandidates?.length ? { modelCandidates: spec.modelCandidates } : {}), thinkingLevel: spec.thinkingLevel, tools: spec.tools,
+      model: spec.model, ...(spec.modelCandidates?.length ? { modelCandidates: spec.modelCandidates } : {}),
+      ...(spec.modelResolution ? { modelResolution: spec.modelResolution } : {}), thinkingLevel: spec.thinkingLevel, tools: spec.tools,
       cwd: this.options.ctx.cwd, configCwd: this.options.ctx.cwd,
       resumable: spec.definition.resumable, requestedWorktree, createdAt: Date.now(),
     };
@@ -421,6 +424,10 @@ export class AgentService {
           const a = this.resolve(agent.agentId);
           if (a.model === id) return;
           a.model = id; a.modelCandidates = [];
+          if (a.modelResolution) {
+            const selected = a.modelResolution.chain.indexOf(id);
+            if (selected >= 0) a.modelResolution = { ...a.modelResolution, selected };
+          }
           this.repo.putAgent(a); this.projectAgent(a);
         },
       };

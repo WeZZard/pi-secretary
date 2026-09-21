@@ -94,20 +94,34 @@ export function loadAgentConfiguration(cwd: string, agentDir: string, trusted: b
 }
 
 /**
- * Validate and persist model fallback lists to the user-global secretary.json
- * (architecture §12.6.5). The full resulting `agents` object is validated against the
- * file-loading rules before anything is written; a failed validation or write leaves
- * the previous configuration in effect. Project-level overrides are never touched.
+ * Apply an operation to the persisted model fallback lists at the persistence boundary
+ * (architecture §12.6.5). The lists are re-read from disk immediately before the operation
+ * runs, so a caller holding an older in-memory copy can express intent — add a list, remove
+ * a model, rename — without reverting a newer edit made by another session or by hand. An
+ * operation that cannot apply to the fresh state fails and leaves the file unchanged. The
+ * full resulting `agents` object is validated against the file-loading rules before anything
+ * is written; a failed validation or write leaves the previous configuration in effect.
+ * Project-level overrides are never touched.
  */
-export function saveModelFallbackLists(agentDir: string, lists: Record<string, string[]>): void {
+export function updateModelFallbackLists(agentDir: string, update: (lists: Record<string, string[]>) => Record<string, string[]>): Record<string, string[]> {
   const path = join(agentDir, "secretary.json");
   let root: Record<string, unknown> = {};
   try { root = object(JSON.parse(readFileSync(path, "utf8")), path); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   const agents = Object.hasOwn(root, "agents") ? object(root.agents, `${path}: agents`) : {};
-  const candidate: Record<string, unknown> = { ...agents,
-    modelFallbackLists: Object.fromEntries(Object.entries(lists).map(([name, entries]) => [name, [...entries]])) };
+  const current: Record<string, string[]> = {};
+  if (Object.hasOwn(agents, "modelFallbackLists")) {
+    applyAgentsConfiguration({ modelFallbackLists: agents.modelFallbackLists }, path,
+      { modelFallbackLists: current, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, maxNestingDepth: 3, ui: defaultAgentUi() });
+  }
+  const candidate: Record<string, unknown> = { ...agents, modelFallbackLists: update(current) };
   applyAgentsConfiguration(candidate, path, { modelFallbackLists: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, maxNestingDepth: 3, ui: defaultAgentUi() });
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify({ ...root, agents: candidate }, null, 2) + "\n");
+  return candidate.modelFallbackLists as Record<string, string[]>;
+}
+
+/** Replace the persisted lists wholesale. Callers with per-operation intent should prefer updateModelFallbackLists. */
+export function saveModelFallbackLists(agentDir: string, lists: Record<string, string[]>): void {
+  updateModelFallbackLists(agentDir, () => lists);
 }

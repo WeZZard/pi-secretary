@@ -29,6 +29,7 @@ Foreground detach, live prompt auditing, external job display, and external term
 
 - **Compact** is Pi's collapsed tool-result state. **Full** is Pi's expanded tool-result state. The configured Pi expansion control switches between them; Secretary adds no independent display modes or replacement configuration values.
 - `Agent` uses one identity header: `Agent · <agent type> · <agent name> · <provider/model>`. The model identifies the relevant execution's resolved model, not an assumed parent default or an unresolved fallback-list name.
+- Wherever a result body states the resolved model, it also states the resolution source in parentheses: `inherited from the parent model`, `definition model` or `invocation model` for an exact model, or `definition list '<name>', candidate <n>/<count>` (or the invocation equivalent) for a fallback list. A child that legitimately runs the parent's model because a list selects it is therefore distinguishable from inheritance at a glance. Skipped candidates follow on a `Fallback: skipped` line with their reasons.
 - `SendMessage` uses `SendMessage · <agent type> · <agent name>` in both compact and full states. It does not show a model or a separate agent-ID row in these layouts.
 - Identity remains visible across launch, progress, completion, and failure. An unnamed instance uses its agent ID; information that is unresolved or unavailable is labeled accordingly rather than invented.
 - Compact foreground `Agent` results show the identity header and execution status, with activity and statistics during progress. Completed results use F when at least one turn or tool call is recorded; otherwise they use C. Elapsed time alone does not select F. They do not show separate task, model, or foreground-mode rows.
@@ -157,7 +158,7 @@ Foreground detach, live prompt auditing, external job display, and external term
 │ Run: run_1                                                          │
 │ Status: succeeded                                                   │
 │ Description: Inspect authentication                                 │
-│ Model: provider/model                                               │
+│ Model: provider/model (invocation model)                          │
 │ Working directory: /repo                                            │
 │ Isolation: none (parent working directory).                         │
 │ Output: /output/agent_1.txt                                         │
