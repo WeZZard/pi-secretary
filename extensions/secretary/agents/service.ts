@@ -97,7 +97,7 @@ export class AgentService {
     for (const run of this.repo.runs(this.options.parentId)) {
       if (!TERMINAL_STATUSES.has(run.status)) {
         run.status = "interrupted"; run.error = "The previous session ended before settlement was recorded.";
-        run.endedAt = Date.now(); this.saveRun(run); this.settleGuidance(run.runId);
+        run.endedAt = Date.now(); this.saveRun(run); this.settleGuidance(run.runId); this.ensureCompletion(run);
       }
     }
     // A nested child never outlives its parent's session (SA-12): once this session is
@@ -107,7 +107,7 @@ export class AgentService {
       for (const run of this.repo.runs(agent.parentId).filter(r => r.agentId === agent.agentId && !TERMINAL_STATUSES.has(r.status))) {
         run.status = "interrupted"; run.error = "The previous session ended before settlement was recorded.";
         run.endedAt = Date.now(); run.revision++;
-        this.repo.putRun(run); this.settleGuidance(run.runId);
+        this.repo.putRun(run); this.settleGuidance(run.runId); this.ensureCompletion(run);
       }
     }
     for (const agent of this.repo.agents(this.options.parentId)) {
@@ -307,6 +307,11 @@ export class AgentService {
     if (signal.aborted) abort();
   }
   private saveRun(run: AgentRun): void { run.revision++; this.repo.putRun(run); this.projectRun(run); if (TERMINAL_STATUSES.has(run.status)) this.releaseAbortListeners(run.runId); this.changed(); }
+  /** A run's settlement and its pending completion record are committed together (architecture Section 10.1). */
+  private ensureCompletion(run: AgentRun): void {
+    if (this.repo.completions(run.parentId).some(c => c.runId === run.runId)) return;
+    this.repo.putCompletion({ id: `completion:${run.runId}`, runId: run.runId, parentId: run.parentId, state: "pending", trigger: run.background });
+  }
   private capacity(): void {
     if (this.closed) throw rejected("This agent controller is shutting down.");
     const pending = this.repo.runs(this.options.parentId).filter(r => !TERMINAL_STATUSES.has(r.status)).length;
@@ -722,10 +727,41 @@ export class AgentService {
   }
   receipt(id: string): unknown { return this.repo.receipt(this.options.parentId, id); }
   findLaunch(id: string): AgentRun | undefined { return this.repo.findLaunch(this.options.parentId, id); }
-  pendingCompletions() { return this.repo.completions(this.options.parentId).filter(c => c.state !== "observed" && this.isVisible(this.run(c.runId))); }
+  /**
+   * Settled, visible runs whose outcome the parent has not been informed of.
+   *
+   * The projection reads run settlement and outcome acknowledgement rather than the delivery state,
+   * so a settled run stays listed until a notification or a read informs the parent, and a missing
+   * completion record cannot hide a settled run (architecture Section 10.2).
+   */
+  uninformedOutcomes(): AgentRun[] {
+    const acknowledged = new Set(this.repo.completions(this.options.parentId).filter(c => c.acknowledgedAt).map(c => c.runId));
+    return this.repo.runs(this.options.parentId).filter(run => TERMINAL_STATUSES.has(run.status) && this.isVisible(run) && !acknowledged.has(run.runId));
+  }
+  /**
+   * Record that the parent has been informed of a run's outcome.
+   *
+   * A read of a run that has not settled informs nothing, so an outcome in progress stays visible
+   * (architecture Section 3, Invariant 16). An existing acknowledgement is never replaced
+   * (Invariant 15).
+   */
+  acknowledgeOutcome(runId: string): void {
+    const run = this.run(runId);
+    if (!TERMINAL_STATUSES.has(run.status)) return;
+    const existing = this.repo.completions(this.options.parentId).find(c => c.runId === runId);
+    if (existing?.acknowledgedAt) return;
+    // A settled run whose settlement never wrote a completion record is still acknowledgeable, so that
+    // the projection can never list a settled run the parent is unable to retire (Section 10.2).
+    const record = existing ?? { id: `completion:${runId}`, runId, parentId: run.parentId, state: "pending" as const, trigger: run.background };
+    this.repo.putCompletion({ ...record, acknowledgedAt: Date.now() });
+    this.changed();
+  }
   recordDelivery(id: string, state: "submitted" | "observed" | "uncertain"): void {
     const d = this.repo.completions(this.options.parentId).find(c => c.id === id);
-    if (d) this.repo.putCompletion({ ...d, state });
+    if (!d) { this.options.diagnostic?.(new Error(`Completion delivery ${id} has no record to update.`)); return; }
+    // Delivering the notification informs the parent, and an earlier acknowledgement survives every
+    // later delivery transition (architecture Section 3, Invariant 15).
+    this.repo.putCompletion({ ...d, state, acknowledgedAt: state === "observed" ? (d.acknowledgedAt ?? Date.now()) : d.acknowledgedAt });
   }
   async shutdown(): Promise<boolean> {
     this.closed = true;

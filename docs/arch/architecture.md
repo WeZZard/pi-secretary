@@ -525,7 +525,7 @@ interface GoalChangedEvent {
 - Keep static goal policy attached to the snapshot, and keep both out of requests that carry no active goal. The snapshot explicitly says that it supersedes historical status claims, that “work is possible” is not evidence of `active`, and that state changes require a successful command or tool result.
 - Format objective text as quoted untrusted data. Bound the message size without dropping status or identity. Reuse the existing accounting quantities and formulas; do not introduce a second usage calculation for display.
 - Model-visible tool text must include the fields promised by `get_goal`. Structured `details` alone are not a model notification. A fresh `get_goal` result remains the appropriate evidence for an explicit status answer.
-- The Secretary agents roster message follows the same rule: inject it only when the thread has agents or undelivered outcomes to report.
+- The Secretary agents roster message follows the same rule: inject it only when the thread has agents, or settled outcomes the parent has not been informed of, to report. The subagent architecture defines how the parent is informed in [Completion Delivery and Model Context](subagents.md#10-completion-delivery-and-model-context).
 - Process-level faults, including the goal-read failure above, are reported once per process and then recorded in memory. Repeated occurrences do not repeat user-facing alerts within the same process; diagnostics remain available in logs.
 - This hook does not call `sendMessage` or start a turn. Notification delivery must not create an automatic loop.
 
