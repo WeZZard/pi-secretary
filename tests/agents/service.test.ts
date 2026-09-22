@@ -98,12 +98,12 @@ test("abort during asynchronous launch preparation prevents durable admission", 
   } finally { WorkspaceManager.prototype.captureBase = original; await h.close(); }
 });
 
-test("queued signal cancellation records completion without starting the child", async () => {
+test("queued foreground signal cancellation records completion without starting the child", async () => {
   const h = harness();
   try {
     await h.service.launch(h.spec("one")); await h.tick();
     const controller = new AbortController();
-    const queued = await h.service.launch({ ...h.spec("two"), signal: controller.signal });
+    const queued = await h.service.launch({ ...h.spec("two"), background: false, signal: controller.signal });
     controller.abort(); await h.tick();
     assert.equal(h.service.run(queued.run!.runId).status, "cancelled");
     assert.equal(h.starts(), 1);
@@ -111,12 +111,26 @@ test("queued signal cancellation records completion without starting the child",
   } finally { await h.close(); }
 });
 
-test("operation signals cancel admitted runs and detach on terminal settlement", async () => {
+test("a background run outlives the signal that admitted it and is stopped only explicitly", async () => {
+  const h = harness();
+  try {
+    await h.service.launch(h.spec("one")); await h.tick();
+    const controller = new AbortController();
+    const queued = await h.service.launch({ ...h.spec("two"), signal: controller.signal });
+    controller.abort(); await h.tick();
+    assert.equal(h.service.run(queued.run!.runId).status, "queued", "interrupting the admitting request never cancels a background run");
+    await h.service.stop(queued.run!.runId, "explicit"); await h.tick();
+    assert.equal(h.service.run(queued.run!.runId).status, "cancelled", "an explicit stop still cancels it");
+    assert.equal(h.starts(), 1);
+  } finally { await h.close(); }
+});
+
+test("operation signals cancel admitted foreground runs and detach on terminal settlement", async () => {
   const h = harness();
   try {
     const controller = new AbortController();
     const { getEventListeners } = await import("node:events");
-    const a = await h.service.launch({ ...h.spec("one"), signal: controller.signal }); await h.tick();
+    const a = await h.service.launch({ ...h.spec("one"), background: false, signal: controller.signal }); await h.tick();
     assert.equal(h.service.run(a.run!.runId).status, "running");
     assert.equal(getEventListeners(controller.signal, "abort").length, 1);
     controller.abort(); await h.tick();

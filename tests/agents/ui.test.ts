@@ -26,10 +26,10 @@ function submitting(): UiState { let s = step(ready(), { type: "compose" }); s =
 const outcome = (result: "accepted" | "rejected" | "uncertain"): UiEvent => ({ type: "outcome", epoch: "e", viewId: "v1", operationId: "op", outcome: result, message: result });
 test("fleet guards preserve main editor and inactive events cannot mutate service", () => {
   const s = activate();
-  assert.deepEqual(transition(s, { type: "fleet", editorEmpty: false }), { state: s, effects: [] });
-  const entered = transition(s, { type: "fleet", editorEmpty: true });
+  assert.deepEqual(transition(s, { type: "fleet", downAtLastLine: false }), { state: s, effects: [] });
+  const entered = transition(s, { type: "fleet", downAtLastLine: true });
   assert.equal(entered.state.navigation.kind, "fleet"); assert.ok(entered.effects.some(e => e.type === "focus" && e.target === "fleet"));
-  const idle = transition(activate([]), { type: "fleet", editorEmpty: true });
+  const idle = transition(activate([]), { type: "fleet", downAtLastLine: true });
   assert.equal(idle.state.navigation.kind, "editor", "an empty indicator cannot receive focus");
   assert.deepEqual(idle.effects, []);
   const emptied = transition(entered.state, { type: "snapshot", epoch: "e" }, []);
@@ -38,7 +38,7 @@ test("fleet guards preserve main editor and inactive events cannot mutate servic
   const closed = transition(entered.state, { type: "escape" });
   assert.equal(closed.state.navigation.kind, "editor"); assert.ok(!closed.effects.some(e => e.type === "operate"));
   const inactive = step(s, { type: "deactivate" });
-  for (const e of [{ type: "compose" }, { type: "submit", operationId: "x" }, { type: "control", action: "stop", agentId: "a" }] as UiEvent[]) assert.deepEqual(transition(inactive, e), { state: inactive, effects: [] });
+  for (const e of [{ type: "compose" }, { type: "submit", operationId: "x" }, { type: "stop", agentId: "a", operationId: "x" }] as UiEvent[]) assert.deepEqual(transition(inactive, e), { state: inactive, effects: [] });
 });
 test("activation copies owned snapshots rather than retaining mutable service objects", () => {
   const a = snapshot(), foreign = snapshot("foreign"); foreign.agent.parentId = "other";
@@ -75,18 +75,19 @@ test("uncertainty retains operation and prevents resubmission even after dismiss
   assert.equal(reopened.dialog.kind, "uncertain"); assert.ok(!transition(reopened, { type: "submit", operationId: "again" }).effects.some(e => e.type === "operate"));
   assert.equal(step(reopened, outcome("rejected")).dialog.kind, "composing");
 });
-test("stop confirmation captures run, ignores progress revisions, rejects replacement or terminal run", () => {
-  const confirmed = step(ready(), { type: "control", action: "stop", agentId: "a" });
-  const progress = confirmed.snapshots.map(s => ({ ...s, run: s.run && { ...s.run, revision: 10 } }));
-  const current = transition(confirmed, { type: "snapshot", epoch: "e" }, progress).state;
-  assert.equal(current.dialog.kind, "confirming");
-  const sent = transition(current, { type: "submit", operationId: "stop" });
-  const op = sent.effects.find(e => e.type === "operate"); assert.ok(op && op.operation.action === "stop" && op.operation.target.action === "stop" && op.operation.target.runId === "a-run");
-  for (const change of [{ status: "succeeded" as const }, { runId: "new-run" }]) {
-    const changed = progress.map(s => s.agent.agentId === "a" ? { ...s, run: { ...s.run!, ...change } } : s);
-    const result = transition(confirmed, { type: "snapshot", epoch: "e" }, changed);
-    assert.equal(result.state.dialog.kind, "closed"); assert.ok(!result.effects.some(e => e.type === "operate"));
-  }
+test("stop submits the captured run identity in the same event and refuses an ineligible row", () => {
+  const sent = transition(ready(), { type: "stop", agentId: "a", operationId: "stop" });
+  const op = sent.effects.find(e => e.type === "operate");
+  assert.ok(op && op.operation.action === "stop" && op.operation.target.runId === "a-run");
+  assert.equal(sent.state.dialog.kind, "submitting", "the shortcut submits with no dialog to confirm");
+  const progress = ready().snapshots.map(s => ({ ...s, run: s.run && { ...s.run, revision: 10 } }));
+  const progressed = transition(ready(), { type: "snapshot", epoch: "e" }, progress).state;
+  assert.equal(transition(progressed, { type: "stop", agentId: "a", operationId: "again" }).state.dialog.kind, "submitting", "ordinary progress revisions do not invalidate the row");
+  const finished = transition(ready(), { type: "snapshot", epoch: "e" }, progress.map(s => ({ ...s, run: { ...s.run!, status: "succeeded" as const } }))).state;
+  const refused = transition(finished, { type: "stop", agentId: "a", operationId: "stale" });
+  assert.equal(refused.state.dialog.kind, "closed");
+  assert.match(refused.state.feedback ?? "", /not eligible/);
+  assert.ok(!refused.effects.some(e => e.type === "operate"), "a terminated row is refused rather than submitted");
 });
 test("completion retains composer and paused source-line anchor across refresh", () => {
   let s = step(ready(), { type: "scroll", delta: -20, pageSize: 10 });
@@ -100,10 +101,10 @@ test("completion retains composer and paused source-line anchor across refresh",
 });
 test("cleanup captures worktree identity, refuses active work, and preserves direct-command editor focus", () => {
   const activeState = activate();
-  assert.equal(step(activeState, { type: "control", action: "cleanup", agentId: "a" }).dialog.kind, "closed");
+  assert.equal(step(activeState, { type: "cleanup", agentId: "a" }).dialog.kind, "closed");
   const idle = snapshot(); idle.run!.status = "succeeded";
   const state = activate([idle]);
-  const confirmation = step(state, { type: "control", action: "cleanup", agentId: "a" });
+  const confirmation = step(state, { type: "cleanup", agentId: "a" });
   assert.equal(confirmation.navigation.kind, "editor"); assert.equal(confirmation.dialog.kind, "confirming");
   const sent = transition(confirmation, { type: "submit", operationId: "clean" });
   assert.equal(sent.effects.filter(e => e.type === "operate").length, 1);
@@ -125,7 +126,7 @@ test("unavailable transcript retains identity; retry and refresh never acquire f
   assert.equal(step(closed, { type: "transcript", epoch: "e", viewId: "v1", agentId: "a", requestId: "retry", events: [{ kind: "assistant", entryId: "late", text: "late" }] }), closed);
 });
 test("bounded event sequences preserve modal/navigation constraints and forbid accidental mutations", () => {
-  const events: UiEvent[] = [{ type: "compose" }, { type: "draft", text: "text" }, { type: "submit", operationId: "fixed" }, { type: "escape" }, { type: "fleet", editorEmpty: true }, { type: "control", action: "stop", agentId: "a" }, outcome("accepted"), outcome("uncertain"), { type: "deactivate" }];
+  const events: UiEvent[] = [{ type: "compose" }, { type: "draft", text: "text" }, { type: "submit", operationId: "fixed" }, { type: "escape" }, { type: "fleet", downAtLastLine: true }, { type: "stop", agentId: "a", operationId: "fixed-stop" }, outcome("accepted"), outcome("uncertain"), { type: "deactivate" }];
   let states = [ready()];
   for (let depth = 0; depth < 4; depth++) {
     const next: UiState[] = [];
@@ -134,7 +135,7 @@ test("bounded event sequences preserve modal/navigation constraints and forbid a
       if (after.navigation.kind === "inactive") { assert.equal(after.dialog.kind, "closed"); assert.deepEqual(after.drafts, {}); }
       if (after.dialog.kind === "composing") assert.equal(after.navigation.kind, "inspector");
       if (after.navigation.kind === "fleet") assert.notEqual(after.dialog.kind, "composing");
-      if (event.type !== "submit") assert.ok(!result.effects.some(e => e.type === "operate"));
+      if (!["submit", "stop", "stop-all"].includes(event.type)) assert.ok(!result.effects.some(e => e.type === "operate"));
       if (before.dialog.kind === "submitting") assert.ok(!result.effects.some(e => e.type === "operate"));
       next.push(after);
     }
@@ -186,8 +187,8 @@ test("effect runner correlates outcomes, never repeats uncertain mutations and s
   assert.equal(calls, 1); assert.equal(events[1]?.type === "outcome" && events[1].outcome, "accepted");
 });
 test("partial fleet cancellation keeps per-run receipts and never abandons later targets after an error", async () => {
-  let s = step(ready(), { type: "stop-all" });
-  const submission = transition(s, { type: "submit", operationId: "batch" }); s = submission.state;
+  const submission = transition(ready(), { type: "stop-all", operationId: "batch" });
+  let s = submission.state;
   const effect = submission.effects.find(e => e.type === "operate"); assert.ok(effect);
   const calls: string[] = [];
   const port: AgentUIPort = { list: () => [], subscribe: () => () => {}, transcript: async () => [], message: async () => {}, cleanup: async () => {},
@@ -203,7 +204,7 @@ test("partial fleet cancellation keeps per-run receipts and never abandons later
   assert.deepEqual(calls, ["a-run:batch:a-run", "b-run:batch:b-run"]);
   assert.equal(s.dialog.kind, "uncertain");
   assert.match(s.dialog.kind === "uncertain" ? s.dialog.reason : "", /1 rejected, 1 unresolved/);
-  s = step(step(s, { type: "escape" }), { type: "stop-all" });
+  s = step(step(s, { type: "escape" }), { type: "stop-all", operationId: "again" });
   assert.equal(s.dialog.kind, "uncertain");
   assert.deepEqual(transition(s, { type: "submit", operationId: "retry" }).effects, []);
   await runEffect({ type: "receipt", operation: effect.operation }, port, dispatch);

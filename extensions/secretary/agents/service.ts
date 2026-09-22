@@ -295,7 +295,10 @@ export class AgentService {
     this.abortListeners.delete(runId);
   }
   private bindAbort(run: AgentRun, signal?: AbortSignal): void {
-    if (!signal || TERMINAL_STATUSES.has(this.run(run.runId).status)) return;
+    // A background run outlives the request that admitted it: interrupting the parent turn must not
+    // cancel the fleet. Only an explicit stop (X / Ctrl+X) cancels a background run, while a
+    // foreground call stays bound to its own signal so interrupting that call still stops it (§2.1).
+    if (!signal || run.background || TERMINAL_STATUSES.has(this.run(run.runId).status)) return;
     const abort = () => { void this.stop(run.runId, `signal:${randomUUID()}`).catch(error => this.diagnose(error)); };
     const listeners = this.abortListeners.get(run.runId) ?? new Set<() => void>();
     listeners.add(() => signal.removeEventListener("abort", abort));

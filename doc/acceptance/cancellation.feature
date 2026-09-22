@@ -24,13 +24,13 @@ Feature: Cancel selected work without losing evidence
     And it does not restart automatically.
 
   @ACC-SA-04-03 @proposed @concurrency
-  Scenario: Do not redirect a stale stop confirmation to a newer run.
-    Given the inspector asks the user to confirm stopping a selected run.
-    And that run finishes before the user confirms.
+  Scenario: Name the execution identity observed when a stop is requested.
+    Given the user presses the stop shortcut for a selected running execution.
+    And the request is submitted without a confirmation step.
+    When that run finishes before the request reaches the service.
     And a new run starts for the same agent.
-    When the user confirms the original stop request.
     Then the newer run is not stopped.
-    And the inspector explains that the originally selected execution is no longer active.
+    And the recorded request retains the identity it captured.
 
   @ACC-SA-04-04 @proposed
   Scenario: Interrupt a foreground launch while preserving its outcome.

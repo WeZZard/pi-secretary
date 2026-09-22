@@ -6,7 +6,7 @@ import { stripVTControlCharacters } from "node:util";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { Component } from "@earendil-works/pi-tui";
+import { Editor, KeybindingsManager, TUI_KEYBINDINGS, type Component, type EditorComponent, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
 import type { AgentSnapshot, RunningChild } from "../../extensions/secretary/agents/records.ts";
 import { AgentService } from "../../extensions/secretary/agents/service.ts";
 import { defaultAgentUi } from "../../extensions/secretary/agents/configuration.ts";
@@ -69,8 +69,16 @@ export function port(overrides: Partial<AgentUIPort> = {}): AgentUIPort {
 // Production components and key routing run unchanged; only host callbacks are captured.
 export function adapter(t: TestContext, servicePort = port()) {
   let input: ((data: string) => unknown) | undefined;
-  let editor = "", parentId = "p", inspector: Inspector | undefined, fleet: FleetView | undefined;
+  let parentId = "p", inspector: Inspector | undefined, fleet: FleetView | undefined;
   let opens = 0, closes = 0, removals = 0, modelTurns = 0;
+  // The host keeps one default editor instance across custom-editor swaps and copies the text into
+  // each replacement. The double mirrors that so a session rebind does not lose the draft.
+  const editorTui = { terminal: { rows: 30 }, requestRender() {} } as unknown as TUI;
+  const editorTheme = { borderColor: (text: string) => text } as unknown as EditorTheme;
+  const editorKeys = new KeybindingsManager(TUI_KEYBINDINGS);
+  const defaultEditor: EditorComponent = new Editor(editorTui, editorTheme);
+  let editorFactory: ((tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => EditorComponent) | undefined;
+  let editor: EditorComponent = defaultEditor;
   const hooks = new Map<string, () => void>();
   const commands = new Map<string, { handler: (args: string, ctx: ExtensionContext) => Promise<void> }>();
   const pi = { on(name: string, callback: () => void) { hooks.set(name, callback); }, registerCommand(name: string, command: any) { commands.set(name, command); }, sendMessage() { modelTurns++; } } as unknown as ExtensionAPI;
@@ -79,19 +87,29 @@ export function adapter(t: TestContext, servicePort = port()) {
       assert.equal(key, FLEET_WIDGET_KEY, "the unified indicator is the only registered widget");
       if (factory) { assert.equal(options?.placement, "belowEditor"); fleet = factory() as FleetView; } else fleet = undefined;
     },
-    getEditorText: () => editor,
+    getEditorText: () => editor.getText(),
+    setEditorComponent(factory?: ((tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => EditorComponent) | undefined) {
+      const current = editor.getText();
+      editorFactory = factory;
+      editor = factory ? factory(editorTui, editorTheme, editorKeys) : defaultEditor;
+      editor.setText(current);
+    },
+    getEditorComponent: () => editorFactory,
     onTerminalInput(callback: (data: string) => unknown) { input = callback; return () => { removals++; input = undefined; }; },
     notify() {},
     custom(factory: any) { opens++; const done = deferred<void>(); let closed = false; inspector = factory({ requestRender() {}, terminal: { rows: 30 } }, {}, { matches: () => false }, () => { if (!closed) { closed = true; closes++; inspector = undefined; done.resolve(); } }); return done.promise; },
   } } as unknown as ExtensionContext;
   const ui = registerAgentUI(pi, servicePort); ui.bind(ctx); t.after(() => ui.dispose());
   return {
-    get editor() { return editor; }, set editor(value: string) { editor = value; },
+    get editor() { return editor.getText(); }, set editor(value: string) { editor.setText(value); },
     get inspector() { return inspector; }, get opens() { return opens; }, get closes() { return closes; }, get removals() { return removals; }, get modelTurns() { return modelTurns; },
-    input: (data: string) => input?.(data), prompt: (open: boolean) => hooks.get(open ? "ui_prompt_start" : "ui_prompt_end")!(),
+    // Raw terminal input reaches the extension hook first; the focused editor sees only what the
+    // hook leaves unconsumed, and an open overlay owns focus instead of the editor.
+    input: (data: string) => { const result = input?.(data); const consumed = !!result && typeof result === "object" && (result as { consume?: boolean }).consume === true; if (!consumed && !inspector) editor.handleInput(data); return result; },
+    prompt: (open: boolean) => hooks.get(open ? "ui_prompt_start" : "ui_prompt_end")!(),
     fleet: () => plain(fleet?.render(120) ?? []), render: (width = 120) => plain(inspector?.render(width) ?? []),
     command: (args: string) => commands.get("agents")!.handler(args, ctx),
-    replaceSession(id: string, draft: string) { parentId = id; editor = draft; ui.bind(ctx); },
+    replaceSession(id: string, draft: string) { parentId = id; editor.setText(draft); ui.bind(ctx); },
   };
 }
 

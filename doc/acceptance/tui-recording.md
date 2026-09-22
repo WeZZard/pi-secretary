@@ -51,11 +51,11 @@ npm run render:tui -- /tmp/secretary-tui-unique-run
 ## 4. Executed Interaction Coverage
 
 - The parent launches an agent through the real `Agent` tool using a deterministic local provider.
-- The user enters FleetView from an empty editor and opens the agent inspector.
+- The user enters FleetView from the editor's last line and opens the agent inspector.
 - The user pauses transcript following, expands tool details, and returns to the transcript end.
 - The user composes guidance, dismisses the composer, reopens the retained draft, and submits it.
 - The terminal resizes from a wide layout to a narrow layout while the inspector remains open.
-- The user confirms cancellation and observes the cancelled outcome without losing the inspector.
+- The user requests cancellation with the configured stop key and observes the cancelled outcome without losing the inspector.
 - The user opens the `/secretary` configuration menu, drills through the Subagents section's configuration items into the fallback-list manager, and creates a list through the name prompt.
 - The user renames the list through the prefilled rename prompt, opens it, adds the fixture model through the model picker, and dismisses the menu with Escape.
 - The user returns to the main editor and types a new draft.

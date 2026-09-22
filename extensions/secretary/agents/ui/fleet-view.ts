@@ -3,7 +3,7 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { TERMINAL_STATUSES, type AgentRowView, type RunStatus } from "../records.ts";
 import { fleetRows } from "./reducer.ts";
 import type { UiState } from "./state.ts";
-import { CANCELLATION_HINT } from "./keybindings.ts";
+import { CANCELLATION_HINT, FOCUS_HINT, MOVE_HINT } from "./keybindings.ts";
 import { clip } from "./transcript.ts";
 import { selectionCircle } from "./glyphs.ts";
 import { formatElapsed, formatUsageLabels } from "./usage-labels.ts";
@@ -41,8 +41,9 @@ export class FleetView implements Component {
   private readonly theme?: Theme;
   private readonly now: () => number;
   private readonly viewRows?: () => readonly AgentRowView[];
-  constructor(state: () => UiState, options: { theme?: Theme; rows?: () => readonly AgentRowView[]; now?: () => number } = {}) {
-    this.state = state; this.theme = options.theme; this.now = options.now ?? Date.now; this.viewRows = options.rows;
+  private readonly downFocuses?: () => boolean;
+  constructor(state: () => UiState, options: { theme?: Theme; rows?: () => readonly AgentRowView[]; now?: () => number; downFocuses?: () => boolean } = {}) {
+    this.state = state; this.theme = options.theme; this.now = options.now ?? Date.now; this.viewRows = options.rows; this.downFocuses = options.downFocuses;
   }
   invalidate(): void {}
   render(width: number): string[] {
@@ -74,7 +75,10 @@ export class FleetView implements Component {
       return right ? rightAlign(left, right, width) : clip(left, width);
     };
     const lines = ids.slice(start, start + MAX_VISIBLE_ROWS).map(id => width <= 0 ? "" : truncateToWidth(renderRow(id), width, ""));
-    lines.unshift(clip(focused ? CANCELLATION_HINT : "↓ in empty editor focuses list", width));
+    // The editor-focused hint names the action Down will actually take (UX §2.2): focus enters
+    // the indicator only from the last line, so an earlier caret keeps the move-the-caret wording.
+    const hint = focused ? CANCELLATION_HINT : (this.downFocuses?.() ?? true) ? FOCUS_HINT : MOVE_HINT;
+    lines.unshift(clip(hint, width));
     return lines;
   }
 }

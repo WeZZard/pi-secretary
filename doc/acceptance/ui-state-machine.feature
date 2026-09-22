@@ -70,18 +70,18 @@ Feature: Keep interaction state consistent during asynchronous agent activity
     And completion does not submit the draft automatically.
 
   @ACC-SA-UI-08 @proposed @SA-04 @concurrency
-  Scenario: Reject a stop confirmation whose execution is no longer eligible.
-    Given the user is confirming a stop for run A.
-    When run A completes and run B starts for the same agent.
-    Then the confirmation closes with an explanation that its target changed or finished.
-    And no stop request is submitted for run B.
+  Scenario: Refuse a stop whose selected execution is no longer eligible.
+    Given the selected agent's execution has already reached a terminal status.
+    When the user presses the stop shortcut.
+    Then no stop request is submitted.
+    And the interface explains that the target is not eligible for the operation.
 
-  @ACC-SA-UI-09 @proposed @SA-04
-  Scenario: Do not invalidate a stop confirmation for ordinary progress.
-    Given the user is confirming a stop for a running execution.
-    When that same execution emits more transcript output but remains eligible to stop.
-    Then the confirmation retains its original execution target.
-    And ordinary progress does not dismiss the confirmation or redirect it.
+  @ACC-SA-UI-09 @proposed @SA-06
+  Scenario: Keep a cleanup confirmation through unrelated record changes.
+    Given the user is confirming cleanup for an idle agent's worktree.
+    When that agent's stored record changes but its worktree remains allocated.
+    Then the confirmation retains its original worktree target.
+    And an unrelated change does not dismiss the confirmation or redirect it.
 
   @ACC-SA-UI-10 @proposed @SA-05 @recovery
   Scenario: Prevent an old response from reopening UI after session replacement.
@@ -141,7 +141,7 @@ Feature: Keep interaction state consistent during asynchronous agent activity
   Scenario: Reflect configured overlay keybindings in behavior and hints.
     Given agents.ui.fleetKeybindings overrides the stop and close actions.
     When the user presses the configured stop key in the fleet view overlay.
-    Then stop confirmation opens for the selected run.
+    Then that key submits the stop for the selected run without a confirmation step.
     And the footer displays the configured keys, not the defaults.
     When the configuration contains an unsupported key or value.
     Then configuration validation fails with an explicit error.
@@ -158,7 +158,10 @@ Feature: Keep interaction state consistent during asynchronous agent activity
   @ACC-SA-UI-18 @proposed @SA-04
   Scenario: Stop the selected agent from the focused fleet list.
     Given the bottom fleet list contains active agents.
-    Then one hint line above the main row explains that Down in an empty editor focuses the list.
+    Then one hint line above the main row names the action Down will take and the Ctrl+X fleet stop.
+    When the user presses Down in the empty editor.
+    Then the list focuses the main row.
+    And the key release that follows the same press does not advance the selection again.
     When the user focuses the fleet list.
     Then the same hint line shows X for stopping the selected agent and Ctrl+X for stopping all agents.
     When the user returns focus to the editor.
@@ -166,19 +169,17 @@ Feature: Keep interaction state consistent during asynchronous agent activity
     When the user types X in the main editor.
     Then the editor retains the input and no cancellation is requested.
     When the user focuses an agent in the list and presses X.
-    Then confirmation identifies that agent's exact execution.
-    When the user dismisses confirmation.
-    Then no cancellation is requested and the list regains focus.
+    Then the stop request names that agent's exact execution and is submitted without a confirmation step.
+    And the list regains focus once the request settles.
 
   @ACC-SA-UI-19 @proposed @SA-04 @concurrency
-  Scenario: Stop only the fleet executions captured before confirmation.
+  Scenario: Stop only the fleet executions captured when the shortcut is pressed.
     Given this parent has active agents and the main editor contains a draft.
     When the user presses Ctrl+X.
-    Then confirmation captures this parent's active top-level executions.
-    When one captured execution is replaced and a new agent is admitted.
-    And the user confirms cancellation.
-    Then cancellation targets only the captured executions that remain eligible.
-    And the replacement, new agent, and unrelated sessions are not targeted.
+    Then this parent's active top-level executions are captured and cancellation is requested in the same action.
+    When a new agent is admitted afterwards.
+    Then the new agent is not targeted.
+    And unrelated sessions are not targeted.
     And the editor draft remains unchanged.
     And acceptance is not presented as completed cancellation.
 

@@ -221,11 +221,17 @@ const bindings: ScenarioBindings = {
   },
   "ACC-SA-04-03": async ({ t }) => {
     const h = serviceHarness(t); const a = await h.service.launch(h.spec("a")); const child = await h.running(a.run!.runId);
-    const ui = inspector(h.service.list()); ui.send({ type: "control", action: "stop", agentId: a.agent.agentId }); assert.equal(ui.state().dialog.kind, "confirming");
-    child.finish(); await h.terminal(a.run!.runId); const b = await h.service.message(a.agent.agentId, "new run", "new"); const newer = await h.running(b.runId);
-    ui.send({ type: "snapshot", epoch: "epoch" }, h.service.list()); const confirmation = ui.send({ type: "submit", operationId: "stale-stop" });
-    assert.equal(confirmation.effects.some(e => e.type === "operate"), false); assert.match(ui.state().feedback ?? "", /no longer eligible/);
-    assert.equal(h.service.run(b.runId).status, "running"); assert.equal(newer.aborts, 0);
+    const ui = inspector(h.service.list()); const submitted = ui.send({ type: "stop", agentId: a.agent.agentId, operationId: "captured-stop" });
+    const effect = submitted.effects.find(e => e.type === "operate");
+    assert.ok(effect && effect.operation.action === "stop" && effect.operation.target.runId === a.run!.runId, "the request names the run observed when the shortcut was pressed");
+    assert.equal(ui.state().dialog.kind, "submitting", "the shortcut submits with no dialog to confirm");
+    child.finish(); await h.terminal(a.run!.runId);
+    const b = await h.service.message(a.agent.agentId, "new run", "new"); const newer = await h.running(b.runId);
+    await runEffect(effect, { list: () => h.service.list(), subscribe: () => () => {}, transcript: async () => [], message: async () => {},
+      stop: (runId, operationId) => h.service.stop(runId, operationId), cleanup: async () => {} }, () => {});
+    assert.equal(h.service.run(a.run!.runId).status, "succeeded");
+    assert.equal(h.service.run(b.runId).status, "running", "the captured request never reaches the successor run");
+    assert.equal(newer.aborts, 0);
   },
   "ACC-SA-04-04": async ({ t }) => {
     const h = await publicHarness(t); await h.start();
@@ -421,7 +427,7 @@ const bindings: ScenarioBindings = {
 runFeatures(["delegation", "messaging", "cancellation", "session-recovery", "output-and-headless"], bindings, {
   delegation: "d02d850b85e528e20e965ddbb442a76bf3dc8b807460d50dd04ab26e08710c6d",
   messaging: "92bdf9ed1c321276fdb56c19ffc08e4eb7d591518741015a1689d561aa2f5555",
-  cancellation: "19f34013acff66973c725eeb33afbc16248c527ce8b79bef06d3a1deace09709",
+  cancellation: "004cfef7f9933e34fac9b919b1040150abac812883feb99cb51891dede513812",
   "session-recovery": "3c682dcd45aeeed7daf574682707ac507ca3e9fbcb44366e131c3e093b820568",
   "output-and-headless": "28b939d53e04305786f49d97daeb5efb2911747bea9d58f7245d77fabfaca244",
 });

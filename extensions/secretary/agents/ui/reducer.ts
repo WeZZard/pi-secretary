@@ -1,6 +1,6 @@
 import { TERMINAL_STATUSES, type AgentSnapshot } from "../records.ts";
 import { captureAnchor, restoreTranscript, transcriptLineCount } from "./transcript.ts";
-import { initialState, type ActionTarget, type StopTarget, type InspectorLevel, type Operation, type UiEffect, type UiEvent, type UiState } from "./state.ts";
+import { initialState, type ActionTarget, type CleanupTarget, type StopTarget, type InspectorLevel, type Operation, type UiEffect, type UiEvent, type UiState } from "./state.ts";
 export const active = (s: AgentSnapshot) => !!s.run && !TERMINAL_STATUSES.has(s.run.status);
 export const stopTargets = (s: UiState): StopTarget[] => fleetRows(s).filter(a => active(a) && a.run?.status !== "cancelling").map(a => ({ action: "stop", parentId: s.parentId, agentId: a.agent.agentId, runId: a.run!.runId, revision: a.run!.revision }));
 export const messageEligible = (s: AgentSnapshot | undefined): boolean => !!s && s.agent.resumable && (!s.agent.worktree || s.agent.worktree.state === "allocated") && s.run?.status !== "cancelling" && (active(s) || !!s.agent.sessionPath);
@@ -40,9 +40,6 @@ export function transition(previous: UiState, event: UiEvent, snapshots: readonl
       if (state.dialog.kind === "confirming" && !eligible(state.dialog.target, find(state.dialog.target.agentId))) {
         patch({ dialog: { kind: "closed" } }); feedback("The captured target is no longer eligible. No operation was sent."); restore();
       }
-      if (state.dialog.kind === "confirming-all" && !state.dialog.targets.some(t => eligible(t, find(t.agentId)))) {
-        patch({ dialog: { kind: "closed" } }); feedback("The captured runs are no longer eligible. No operation was sent."); restore();
-      }
       const nav = state.navigation;
       // When the last non-terminal row leaves, the hidden indicator cannot hold focus (UX §2.2).
       if (nav.kind === "fleet" && fleetRows(state).length === 0) { patch({ navigation: { kind: "editor" } }); focus("editor"); }
@@ -52,7 +49,7 @@ export function transition(previous: UiState, event: UiEvent, snapshots: readonl
     }
     case "fleet":
       // Entry requires at least one agent row; an idle session has no visible indicator (UX §2.2).
-      if (state.navigation.kind === "editor" && state.dialog.kind === "closed" && event.editorEmpty && fleetRows(state).length > 0) { patch({ navigation: { kind: "fleet", selectedAgentId: null } }); focus("fleet"); } break;
+      if (state.navigation.kind === "editor" && state.dialog.kind === "closed" && event.downAtLastLine && fleetRows(state).length > 0) { patch({ navigation: { kind: "fleet", selectedAgentId: null } }); focus("fleet"); } break;
     case "fleet-select":
       if (state.navigation.kind === "fleet" && (!event.agentId || find(event.agentId))) patch({ navigation: { kind: "fleet", selectedAgentId: event.agentId } }); break;
     case "open":
@@ -126,25 +123,38 @@ export function transition(previous: UiState, event: UiEvent, snapshots: readonl
     case "draft":
       if (state.dialog.kind === "composing") patch({ drafts: { ...state.drafts, [state.dialog.agentId]: event.text }, dialog: { ...state.dialog, draft: event.text, error: undefined } }); break;
     case "stop-all": {
+      // Ctrl+X cancels immediately: the shortcut is the decision, so it submits the captured batch
+      // in the same event and exposes no dialog to confirm (UX §3.3).
       if (state.dialog.kind !== "closed") break;
-      const targets = stopTargets(state);
+      const targets = stopTargets(state).filter(t => eligible(t, find(t.agentId)));
       const pending = pendingStop(targets);
       if (pending) { unresolved(pending); break; }
       if (!targets.length) { feedback("No runs are eligible for cancellation; existing cancellation requests remain in progress."); break; }
-      patch({ dialog: { kind: "confirming-all", targets }, feedback: undefined }); focus("dialog"); break;
+      const operation: Operation = { epoch: state.epoch, viewId: state.viewId, id: event.operationId, action: "stop-all", agentId: state.parentId, targets };
+      patch({ dialog: { kind: "submitting", operation }, pending: { ...state.pending, [operation.id]: operation }, feedback: undefined });
+      effects.push({ type: "operate", operation }); break;
     }
-    case "control": {
+    case "stop": {
+      // X cancels immediately, like Ctrl+X: the shortcut is the decision, and the run identity
+      // observed at the keypress is submitted in the same event with no dialog to confirm (§3.3).
       if (state.dialog.kind !== "closed") break;
       const s = find(event.agentId);
       if (!s) { feedback("Agent is not available."); break; }
-      const base = { parentId: state.parentId, agentId: event.agentId, revision: s.run?.revision ?? 0 };
-      const target: ActionTarget | undefined = event.action === "stop" && s.run ? { ...base, action: "stop", runId: s.run.runId } : event.action === "cleanup" && s.agent.worktree ? { ...base, action: "cleanup", worktreeId: s.agent.worktree.id } : undefined;
+      const target: StopTarget | undefined = s.run ? { parentId: state.parentId, agentId: event.agentId, revision: s.run.revision, action: "stop", runId: s.run.runId } : undefined;
       if (!target || !eligible(target, s)) { feedback("The target is not eligible for this operation."); break; }
-      if (target.action === "stop") {
-        const pending = pendingStop([target]);
-        if (pending) { unresolved(pending); break; }
-        if (s.run?.status === "cancelling") { feedback("Cancellation is already in progress."); break; }
-      }
+      const pending = pendingStop([target]);
+      if (pending) { unresolved(pending); break; }
+      if (s.run?.status === "cancelling") { feedback("Cancellation is already in progress."); break; }
+      const operation: Operation = { epoch: state.epoch, viewId: state.viewId, id: event.operationId, action: "stop", agentId: event.agentId, target };
+      patch({ dialog: { kind: "submitting", operation }, pending: { ...state.pending, [operation.id]: operation }, feedback: undefined });
+      effects.push({ type: "operate", operation }); break;
+    }
+    case "cleanup": {
+      if (state.dialog.kind !== "closed") break;
+      const s = find(event.agentId);
+      if (!s) { feedback("Agent is not available."); break; }
+      const target: CleanupTarget | undefined = s.agent.worktree ? { parentId: state.parentId, agentId: event.agentId, revision: s.run?.revision ?? 0, action: "cleanup", worktreeId: s.agent.worktree.id } : undefined;
+      if (!target || !eligible(target, s)) { feedback("The target is not eligible for this operation."); break; }
       patch({ dialog: { kind: "confirming", target }, feedback: undefined }); focus("dialog"); break;
     }
     case "submit": {
@@ -155,12 +165,6 @@ export function transition(previous: UiState, event: UiEvent, snapshots: readonl
       if (d.kind === "composing") {
         if (!d.draft.trim() || !messageEligible(find(d.agentId))) { patch({ dialog: { ...d, error: !d.draft.trim() ? "Enter nonempty guidance." : "Recipient is no longer eligible. Your draft is retained." } }); break; }
         operation = { ...correlation, action: "message", agentId: d.agentId, text: d.draft };
-      } else if (d.kind === "confirming-all") {
-        const targets = d.targets.filter(t => eligible(t, find(t.agentId)) && find(t.agentId)?.run?.status !== "cancelling");
-        if (!targets.length) { patch({ dialog: { kind: "closed" } }); feedback("The captured runs are no longer eligible."); restore(); break; }
-        const pending = pendingStop(targets);
-        if (pending) { unresolved(pending); break; }
-        operation = { ...correlation, action: "stop-all", agentId: state.parentId, targets };
       } else if (d.kind === "confirming") {
         if (!eligible(d.target, find(d.target.agentId))) { patch({ dialog: { kind: "closed" } }); feedback("The captured target is no longer eligible."); restore(); break; }
         operation = { ...correlation, action: d.target.action, agentId: d.target.agentId, target: d.target };

@@ -533,6 +533,7 @@ The status vocabulary is internal. A new run is created for resumption; terminal
 ### 7.4 Shutdown and cancellation
 
 - Cancelling a foreground `Agent` tool handler propagates cancellation to its captured child run. This applies while queued, starting, or running; it is not the wait-only cancellation behavior of `TaskOutput`.
+- A background run is not bound to the signal that admitted it. Interrupting the parent request, including the host's foreground-abort key, never cancels a background run: only an explicit stop request (`TaskStop`, `X`, `Ctrl+X`, or shutdown) cancels it. Foreground handlers remain bound so interrupting the call still stops their captured child.
 - The service records the foreground waiter's cancellation independently of the child's outcome. If completion already committed, the final outcome remains completed rather than being overwritten by cancellation.
 - If the foreground waiter disappears before receiving the outcome, the service retains a completion-delivery record. The result is shown in the UI and included in the next parent context without requesting an automatic turn after a user abort. It is not lost because the run originally used foreground execution.
 - Session shutdown first refuses new launches and messages that would resume work.
@@ -711,11 +712,12 @@ The [interaction design](../ux/subagents.md) owns visible behavior. The followin
 - The fleet indicator is the single below-editor agent list. It renders only while at least one top-level agent execution is non-terminal, shows the main row first, appends non-terminal top-level agents in creation order, and removes a row immediately when its run reaches a terminal status. When the last row leaves, the surface renders nothing and list focus returns to the editor. Enter on the main row returns focus to the prompt input; Enter on an agent row opens the overlay. The async widget is removed; background executions no longer have a second list.
 - The fleet view overlay is an in-process custom TUI component rendered as a bordered overlay. It does not depend on Herdr, Ghostty automation, or opening another terminal.
 - View models are immutable snapshots obtained from `AgentService`; progress events invalidate affected components. The fleet indicator polls on a bounded interval so elapsed time advances between service events; rendering is deduplicated by a render key so unchanged state does not repaint. Display reads never touch storage per paint or tick: `AgentService` publishes view models from an in-memory projection of committed state (§6.2), so a contended shared store cannot block or fail a paint (goal architecture §5.1.1, §13.6).
-- The editor integration composes with an existing editor factory. It captures navigation only when the editor is empty and the agent component can receive focus.
-- If editor composition is unavailable, the `/agents` command remains functional and the adapter reports the missing shortcut integration rather than replacing another editor silently.
+- The editor integration installs a `CustomEditor` subclass through the host's `setEditorComponent` extension point, because the host exposes no caret position to extensions. The subclass reports whether the editor's Down binding can no longer move the caret down: the caret is on the last visual line, and the editor is neither completing nor browsing prompt history. The same reading drives the editor-focused hint, so the advertised action always matches what Down does. Navigation is captured only while the editor owns focus, the dialog is closed, and the fleet has at least one row.
+- Installation records the previously configured editor factory and restores it on deactivation, so another extension's editor is not discarded. A host without the custom-editor API keeps the empty-editor-only trigger rather than failing the fleet indicator.
 - Transcript rendering uses structured events parsed from the persisted pi session file, bounded windows, and strips untrusted terminal control sequences. Raw artifacts are not interpreted as UI commands.
 - Scrolling, selection, and draft guidance remain stable across progress updates and terminal resize.
-- Stop confirmation retains the selected run ID and observed revision; it does not re-resolve a name to a new run after confirmation. Revalidation checks target identity and current eligibility. A revision change caused only by transcript progress is not a reason to reject the same eligible target.
+- A stop request retains the selected run ID and observed revision from the moment the shortcut was pressed; the shortcut submits in the same event, so nothing re-resolves the selection afterward. Revalidation at execution checks target identity and current eligibility. A revision change caused only by transcript progress is not a reason to reject the same eligible target.
+- Fleet cancellation and the single-agent stop share one submission path: both capture run identities and enter `submitting` in the same event, with no confirming state.
 - State changes are delivered to the TUI only after service commit. Rendering failures do not roll back accepted work.
 
 ### 12.1 UI state model
@@ -730,7 +732,7 @@ The [interaction design](../ux/subagents.md) owns visible behavior. The followin
 stateDiagram-v2
     [*] --> Inactive
     Inactive --> Editor: Activate the parent UI
-    Editor --> Fleet: Down in an empty editor
+    Editor --> Fleet: Down at the last line of the editor
     Fleet --> Editor: Escape or Up on the first row
     Editor --> Inspector: Open the agents command
     Fleet --> Inspector: Enter on the selected row
@@ -766,13 +768,11 @@ stateDiagram-v2
 stateDiagram-v2
     [*] --> Closed
     Closed --> Composing: Open eligible message composer
-    Closed --> Confirming: Request stop or cleanup
-    Closed --> ConfirmingAll: Request fleet cancellation
-    ConfirmingAll --> Submitting: Confirm captured executions
-    ConfirmingAll --> Closed: Decline or all captured targets become ineligible
+    Closed --> Confirming: Request cleanup
+    Closed --> Submitting: Request stop or fleet cancellation
     Composing --> Submitting: Submit valid guidance
     Composing --> Closed: Escape without sending
-    Confirming --> Submitting: Confirm the identified operation
+    Confirming --> Submitting: Confirm the identified worktree cleanup
     Confirming --> Closed: Decline or dismiss
     Confirming --> Closed: Target becomes ineligible
     Submitting --> Closed: Observe acceptance
@@ -784,15 +784,15 @@ stateDiagram-v2
     Uncertain --> Composing: Establish message rejection
 ```
 
-- This machine describes messaging, individual or fleet-wide stop confirmation, and cleanup confirmation. The action and target are shown explicitly; the diagram does not make the operations interchangeable.
+- This machine describes messaging, the direct single and fleet-wide stop, and cleanup confirmation. The action and target are shown explicitly; the diagram does not make the operations interchangeable.
 - The dialog remembers whether it was opened from the editor or inspector and returns focus there when dismissed. A direct stop or cleanup command does not need to open the inspector first.
 - `Composing` retains the selected recipient and draft. Empty submissions stay in this state with a validation message.
-- `Confirming` retains the exact run or worktree selected before the dialog opened. A newer run is not substituted automatically.
-- `ConfirmingAll` retains a fixed set of active top-level run identities from the current fleet. Later launches and replacement runs are not added. Confirmation operates only on captured runs that remain eligible. Nested work stops through the existing parent cancellation cascade; unrelated sessions are never included.
+- `Confirming` retains the exact worktree selected before the dialog opened. It is the only remaining confirmation; cleanup removes files and cannot be undone.
+- A stop request has no confirming state. `X` and `Ctrl+X` capture their run identities and enter `Submitting` in the same event, so one keypress both decides and submits. Fleet cancellation captures a fixed set of active top-level run identities, so later launches and replacement runs are not added. Nested work stops through the existing parent cancellation cascade; unrelated sessions are never included.
 - `Submitting` disables duplicate submission. It remains distinct from the agent's running or stopping state.
 - Dismissing a submitted request does not retract it, cancel the child, or authorize a retry. Its outcome remains available in the owning session.
 - `Uncertain` means the interface cannot yet establish whether the request was accepted. The text and target remain inspectable, and a new submission is disabled until the original request is resolved.
-- A message rejected definitively returns to `Composing` with its draft intact. A rejected stop or cleanup closes confirmation and displays the reason at the originating view.
+- A message rejected definitively returns to `Composing` with its draft intact. A rejected stop or cleanup displays the reason at the originating view.
 - Agent completion while a composer is open does not close it or discard text. Its action label changes to indicate resumption when that is available; otherwise submission is disabled with a reason.
 - Escape closes only the currently focused dialog. A subsequent Escape can close the inspector. Escape in the main editor keeps its normal host behavior, including foreground interruption where applicable.
 
@@ -823,8 +823,8 @@ stateDiagram-v2
 | UI-04 | The user opens the composer. | The selected agent can receive guidance or resume. | The composer receives focus with a stable recipient and draft. |
 | UI-05 | The user submits guidance. | The draft is nonempty and no submission for that composer is pending. | The dialog enters `Submitting` and sends one request. |
 | UI-06 | Guidance is definitively rejected. | The response belongs to the open submission. | The composer reopens with the same draft and an actionable error. |
-| UI-07 | The user confirms stop or cleanup. | The originally selected target remains eligible. | The dialog enters `Submitting`; the resulting status is reported without assuming the operation has finished. |
-| UI-08 | A confirmation target becomes ineligible. | The selected run finished, another run started, or worktree eligibility changed. | Confirmation closes with an explanation and no replacement operation is submitted. |
+| UI-07 | The user confirms cleanup. | The originally selected worktree remains idle and eligible. | The dialog enters `Submitting`; the resulting status is reported without assuming the operation has finished. |
+| UI-08 | The user requests a stop whose selected execution is no longer eligible. | The selected run already finished or has no run record. | No operation is submitted and the interface explains that the target is not eligible. |
 | UI-09 | The user dismisses a pending or uncertain submission. | The dialog has focus. | The originating view regains focus while the request remains tracked. No retry or cancellation is inferred. |
 | UI-10 | Progress, resize, or theme updates arrive. | The update belongs to the current session and selected record where applicable. | The view refreshes without discarding the draft, changing focus, or leaving paused transcript following. |
 | UI-11 | The user closes the fleet view overlay. | No dialog is open. | The editor and its draft are restored without cancelling work. |
@@ -864,8 +864,7 @@ type InspectorState =
 type DialogState =
   | { kind: "closed" }
   | { kind: "composing"; agentId: string; draft: string; error?: string }
-  | { kind: "confirming"; target: ActionTarget }
-  | { kind: "confirming-all"; targets: readonly StopTarget[] }
+  | { kind: "confirming"; target: CleanupTarget }
   | { kind: "submitting"; operation: PendingOperation }
   | { kind: "uncertain"; operation: PendingOperation; reason: string };
 
@@ -875,11 +874,11 @@ type TranscriptFollowMode = "following" | "paused";
 
 - The types are discriminated unions. `TranscriptView`, `ActionTarget`, and `PendingOperation` are internal records described below, not additional public tool parameters.
 - A transcript view retains its follow mode, stable message anchor, relative display offset, tool-expansion setting, and bounded rendered window.
-- An action target retains the parent session, agent ID, and the relevant run ID or worktree ID. It records the revision observed when confirmation opened, but the service evaluates actual identity and eligibility at execution.
+- An action target retains the parent session, agent ID, and the relevant run ID or worktree ID. It records the revision observed when the shortcut or dialog was acted on, but the service evaluates actual identity and eligibility at execution.
 - A pending operation retains an operation ID, action, target, submitted text where applicable, and the view instance that originated it. A `stop-all` operation retains its captured run targets rather than resolving the fleet again at submission or receipt reconciliation.
 - The enclosing UI state retains the parent session ID, activation epoch, view instance ID, originating focus, and a monotonically increasing state revision.
-- Confirmation is rendered in the inspector overlay, not inside the bottom indicator. Indicator shortcuts can open that confirmation surface. Opening a direct command's dialog from the editor retains the editor as its return location.
-- `inactive` requires a closed dialog and no bound terminal references. `composing` requires an inspector with a selected record. Both confirmation forms support editor-originated shortcuts or commands and the inspector.
+- Confirmation is rendered in the inspector overlay, not inside the bottom indicator. A direct command's dialog from the editor retains the editor as its return location.
+- `inactive` requires a closed dialog and no bound terminal references. `composing` requires an inspector with a selected record. The single `confirming` form holds a worktree cleanup target. Neither `X`, `Ctrl+X`, nor `/agents stop` has a confirming state: each captures its run identities and enters `submitting` in the same event, so one action both decides and submits.
 - These constraints are checked by the reducer. The Cartesian product of the unions is not a declaration that every combination is legal.
 - Renderer state never writes an `AgentRun` status. A submitted stop request and a cancelling agent remain different records with different state machines.
 
@@ -895,6 +894,7 @@ transition(state, event, serviceSnapshot): {
 ```
 
 - Input events include activation, navigation, selection, composer editing, submission, confirmation, dismissal, transcript scrolling, and deactivation.
+- The terminal listener ignores key-release events. pi delivers extension terminal listeners before it filters releases for the focused component, so a terminal that reports kitty-protocol event types would otherwise deliver one physical press twice: the press would focus a row and its release would immediately advance past it. One press therefore moves the selection exactly one row and never both opens and closes a surface.
 - External events include transcript load completion, operation acknowledgment, operation rejection, uncertain operation outcome, service snapshot changes, resize, and theme changes.
 - Guards implement the transition table in Section 12.1.4, including empty-editor activation, ownership, message eligibility, nonempty drafts, and stable confirmation targets.
 - Effects include loading a transcript, submitting guidance, requesting cancellation or cleanup, restoring focus, publishing feedback, and requesting a render.
@@ -927,14 +927,14 @@ transition(state, event, serviceSnapshot): {
 - The controller preserves the host editor instance and its draft; it does not reconstruct the editor from transcript text.
 - Transcript following uses a stable message anchor rather than an absolute rendered line number. Width changes may alter wrapping without forcing the user to the end.
 - Missing anchors fall back to the nearest retained content with an explicit indication that older content is unavailable, not a fabricated scroll position.
-- Direct stop and cleanup commands use the same confirmation states and operation tracking as inspector actions. They preserve their editor-origin focus without requiring an inspector to be open.
+- Direct stop commands submit immediately and share the same operation tracking as the inspector shortcuts. Cleanup commands open the same cleanup confirmation. Both preserve their editor-origin focus without requiring an inspector to be open.
 
 ### 12.5 State-machine verification
 
 - Table-driven reducer tests exercise every transition in Section 12.1.4 and each guard's rejection path. They also verify that unrelated state remains unchanged.
 - Tests assert both the resulting state and emitted effects. A correct rendered label does not compensate for an unintended service request.
 - Model-based tests traverse legal event sequences and assert focus uniqueness, target stability, one submission per operation, draft preservation, and absence of service effects after UI deactivation.
-- Adversarial event sequences include selecting B before A finishes loading, repeated Enter during submission, cancelling a modal during a pending response, a target finishing during confirmation, and session replacement before an acknowledgment arrives.
+- Adversarial event sequences include selecting B before A finishes loading, repeated Enter during submission, cancelling a modal during a pending response, a selected run finishing before its stop request is processed, and session replacement before an acknowledgment arrives.
 - Runner settlement and UI navigation are tested independently. Closing the overlay must emit no cancellation effect; stopping a run must not close the overlay automatically.
 - Adapter integration tests verify that key events are consumed once and that effect outcomes carry correlation metadata. Pure reducer tests alone do not establish correct pi keyboard behavior.
 - The [UI state-machine feature](../../doc/acceptance/ui-state-machine.feature) provides user-visible acceptance coverage. It complements, rather than replaces, transition and effect tests.
@@ -984,7 +984,7 @@ Usage labels follow the [interaction design](../ux/subagents.md#22-fleet-indicat
 - **Cumulative usage** is the accumulated input-plus-output total derived from persisted usage events.
 - Neither label is an external budget quantity. The [composition accounting contract](goal-agent-composition.md#4-usage-and-goal-accounting) defines goal charging as a separate consumer of usage events; widget labels must not be reused for it.
 
-While the indicator is visible, it prepends exactly one clipped hint line to the bounded row window. Fleet navigation selects the cancellation hint; editor focus selects the empty-editor Down-arrow hint defined in UX Section 2.2. Both occupy the same single row, and the hint disappears with the last active agent. Plain `x` is captured only with fleet or inspector focus, and Ctrl+X is captured only while the current fleet has active work and no modal or host prompt owns input. This intentionally overrides pi's default Ctrl+X message-copy action while that fleet is active; idle editing retains the host action.
+While the indicator is visible, it prepends exactly one clipped hint line to the bounded row window. Fleet navigation selects the cancellation hint; editor focus selects the Down-arrow hint defined in UX Section 2.2. Both occupy the same single row, and the hint disappears with the last active agent. Plain `x` is captured only with fleet or inspector focus, and Ctrl+X is captured only while the current fleet has active work and no modal or host prompt owns input. This intentionally overrides pi's default Ctrl+X message-copy action while that fleet is active; idle editing retains the host action.
 
 The fleet indicator maintains a bounded polling timer and a render key. The timer is unreferenced so it cannot keep the process alive, is disposed on deactivation, and a repaint is skipped when the render key is unchanged and no row is running.
 
@@ -1091,7 +1091,7 @@ If a future release adds one of these runtime features, its surface is designed 
 | SA-01 | Schema fixtures, launch validation, foreground/background execution, model resolution, and launch deduplication tests cover delegation. |
 | SA-02 | Snapshot and interaction tests cover live status, historical results, errors, and inspector retention. |
 | SA-03 | Race tests cover ordered messaging, completion during send, concurrent resumption, and policy revalidation. |
-| SA-04 | Startup cancellation, queue cancellation, foreground handler abort, abort-versus-settlement races, repeated stop, stale confirmation, and noncooperative tool tests cover stopping. |
+| SA-04 | Startup cancellation, queue cancellation, foreground handler abort, abort-versus-settlement races, repeated stop, captured-identity stop tests, and noncooperative tool tests cover stopping. |
 | SA-05 | Crash recovery, ownership locking, reload, session replacement, missing files, and no-auto-resume tests cover persistence. |
 | SA-06 | Disposable Git and non-Git projects cover shared-directory defaults, captured-HEAD worktrees, unborn and non-Git snapshots, copy bounds, ownership checks, retained changes, and conservative cleanup. |
 | SA-07 | Registry precedence, project trust, fallback-list resolution, missing and empty lists, candidate ordering, availability-cache behavior, and late tool registration tests cover configuration. |

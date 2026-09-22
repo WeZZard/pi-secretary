@@ -16,7 +16,7 @@ const vm = (id: string, overrides: Partial<AgentRowView> = {}): AgentRowView => 
 /** Activate with the editor focused by default; pass focus: "fleet" to select the first row. */
 function fleet(snapshots: AgentSnapshot[], rows: AgentRowView[] = [], now = 6500, focus: "editor" | "fleet" = "fleet"): { state: () => UiState; view: FleetView } {
   let state = transition(initialState(), { type: "activate", parentId: "p", epoch: "e", viewId: "v" }, snapshots).state;
-  if (focus === "fleet") state = transition(state, { type: "fleet", editorEmpty: true }).state;
+  if (focus === "fleet") state = transition(state, { type: "fleet", downAtLastLine: true }).state;
   return { state: () => state, view: new FleetView(() => state, { rows: () => rows, now: () => now }) };
 }
 
@@ -45,6 +45,15 @@ test("the circle encodes selection only and only while the indicator has focus",
   assert.match(lines[2]!, /^● reviewer/);
   const unfocused = fleet([snapshot("a")], [vm("a", { name: "reviewer" })], 6500, "editor");
   for (const line of unfocused.view.render(80)) assert.doesNotMatch(line, /^●/, "an unfocused indicator fills no circle");
+});
+
+test("the editor hint names the action Down will take", () => {
+  const { state, view } = fleet([snapshot("a")], [vm("a")], 6500, "editor");
+  assert.equal(view.render(80)[0], "↓ to focus a subagent · Ctrl+X stop all", "an unconditional reader reports the last-line action");
+  const above = new FleetView(state, { rows: () => [vm("a")], now: () => 6500, downFocuses: () => false });
+  assert.equal(above.render(80)[0], "↓ to move down · Ctrl+X stop all", "a caret above the last line is not advertised as focusing the fleet");
+  const onList = new FleetView(() => transition(state(), { type: "fleet", downAtLastLine: true }).state, { rows: () => [vm("a")], now: () => 6500, downFocuses: () => true });
+  assert.equal(onList.render(80)[0], "X stop selected · Ctrl+X stop all", "list focus keeps the cancellation hint regardless of the caret");
 });
 
 test("a row leaves the indicator immediately when its run reaches a terminal status", () => {
@@ -106,7 +115,7 @@ test("long lists window around the selection", () => {
   const snapshots = Array.from({ length: 15 }, (_, i) => snapshot(`a${i}`));
   const rows = snapshots.map(s => vm(s.agent.agentId));
   let state = transition(initialState(), { type: "activate", parentId: "p", epoch: "e", viewId: "v" }, snapshots).state;
-  state = transition(state, { type: "fleet", editorEmpty: true }).state;
+  state = transition(state, { type: "fleet", downAtLastLine: true }).state;
   state = transition(state, { type: "fleet-select", agentId: "a14" }).state;
   const lines = new FleetView(() => state, { rows: () => rows, now: () => 6500 }).render(80);
   assert.ok(lines.length <= 11, "the visible window has at most ten rows plus its hint");

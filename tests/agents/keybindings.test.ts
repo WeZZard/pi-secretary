@@ -57,7 +57,7 @@ test("labels reflect configured keys and rendered footers match input handling",
   const inspector = new Inspector(() => s, e => dispatched.push(e.type), () => "id", () => 22, { keybindings: config });
   inspector.handleInput("T");
   inspector.handleInput("Z");
-  assert.deepEqual(dispatched, ["control", "expand"]);
+  assert.deepEqual(dispatched, ["stop", "expand"]);
   const footer = stripVTControlCharacters(inspector.render(160).join("\n"));
   assert.match(footer, /T stop/);
   assert.match(footer, /m message/);

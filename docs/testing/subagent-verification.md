@@ -41,6 +41,7 @@
 - Six real-SDK model tests pass. The incident-shaped case keeps the parent model unchanged and recreates a captured `general-purpose` definition with `model: superior`. The child follows that explicit policy; removing only the definition override makes the next fresh child inherit. The current user definition already omits the override, and this investigation changed neither user configuration nor production model-selection code.
 - `npm run verify` passed TypeScript checking, all 674 tests, all 28 Mermaid blocks, and acceptance syntax validation for 11 feature files and 110 scenario identities. New ACC-SA-UI-18 through ACC-SA-UI-20 bindings cover the cancellation interactions. Generated output remains under ignored `test-results/`.
 - Reproduce focused checks with `node --experimental-strip-types --test tests/agents/fleet-cancellation.test.ts tests/agents/model-inheritance.test.ts`. No paid-provider cancellation, foreground GUI recording, or human visual approval is claimed. The model checks do not establish nested or arbitrary hosted-provider behavior.
+- Superseded after this record: the single-agent stop confirmation and the fleet-wide `ConfirmingAll` dialog were removed on 2026-09-22. The selected stop (`X`), the fleet stop (`Ctrl+X`), and `/agents stop` now submit in the same input event with no confirmation step, and only worktree cleanup keeps a confirmation dialog. See the [stop interaction](../ux/subagents.md#33-stop-an-agent) and the [dialog state machine](../arch/subagents.md#1212-dialog-state-machine). The runs above remain valid evidence for revision `dc04e5c` and were not re-run under the new contract.
 
 ## 2026-09-20: Session rewind and abandoned subagent work
 
@@ -207,7 +208,7 @@ This section records verification of the nicobailon/pi-subagents TUI port onto S
 
 **Acceptance:** four new scenarios (`ACC-SA-UI-14` through `ACC-SA-UI-17`) in `doc/acceptance/ui-state-machine.feature` with bindings in `tests/acceptance/ui.test.ts`; existing inspector scenarios were re-bound to the ported presentation. The reviewed specification hash was updated after the bindings passed.
 
-**Terminal walkthrough:** `npm run record:tui` succeeded against real interactive Pi (`test-results/tui/20260918T172515Z-1275ad6d`, git revision recorded in `manifest.json`). Twelve checkpoints replay through `scripts/render-tui-recording.ts`, including the bordered wide/narrow inspector, paused-then-following transcript scrolling, tool-detail expansion, the composer, and stop confirmation. Generated frames remain under the ignored `test-results/` tree per the artifact policy.
+**Terminal walkthrough:** `npm run record:tui` succeeded against real interactive Pi (`test-results/tui/20260918T172515Z-1275ad6d`, git revision recorded in `manifest.json`). Twelve checkpoints replay through `scripts/render-tui-recording.ts`, including the bordered wide/narrow inspector, paused-then-following transcript scrolling, tool-detail expansion, the composer, and the stop confirmation the interface used before 2026-09-22. Generated frames remain under the ignored `test-results/` tree per the artifact policy.
 
 **Reproduction commands:** `npm run check`, `npm run test:subagents` (153 pass), `npm run test:acceptance` (147 pass), `npm run test` (521 pass), `npm run lint:mermaid`, `npm run lint:acceptance`.
 

@@ -9,8 +9,9 @@ export type InspectorState = { kind: "list"; level: InspectorLevel } | { kind: "
 export type NavigationState = { kind: "inactive" } | { kind: "editor" } | { kind: "fleet"; selectedAgentId: string | null } | { kind: "inspector"; detail: InspectorState };
 export type ActionTarget = { parentId: string; agentId: string; revision: number } & ({ action: "stop"; runId: string } | { action: "cleanup"; worktreeId: string });
 export type StopTarget = Extract<ActionTarget, { action: "stop" }>;
-export type Operation = Correlation & { id: string; agentId: string; action: "stop-all"; targets: readonly StopTarget[] } | Correlation & { id: string; agentId: string; action: "message"; text: string } | Correlation & { id: string; agentId: string; action: "stop" | "cleanup"; target: ActionTarget };
-export type DialogState = { kind: "closed" } | { kind: "composing"; agentId: string; draft: string; error?: string } | { kind: "confirming"; target: ActionTarget } | { kind: "confirming-all"; targets: readonly StopTarget[] } | { kind: "submitting"; operation: Operation } | { kind: "uncertain"; operation: Operation; reason: string };
+export type CleanupTarget = Extract<ActionTarget, { action: "cleanup" }>;
+export type Operation = Correlation & { id: string; agentId: string; action: "stop-all"; targets: readonly StopTarget[] } | Correlation & { id: string; agentId: string; action: "message"; text: string } | Correlation & { id: string; agentId: string; action: "stop"; target: StopTarget } | Correlation & { id: string; agentId: string; action: "cleanup"; target: CleanupTarget };
+export type DialogState = { kind: "closed" } | { kind: "composing"; agentId: string; draft: string; error?: string } | { kind: "confirming"; target: CleanupTarget } | { kind: "submitting"; operation: Operation } | { kind: "uncertain"; operation: Operation; reason: string };
 export interface UiState extends Correlation {
   parentId: string; revision: number; navigation: NavigationState; dialog: DialogState;
   snapshots: readonly AgentSnapshot[]; drafts: Readonly<Record<string, string>>;
@@ -21,7 +22,7 @@ export type UiEvent =
   | { type: "activate"; parentId: string; epoch: string; viewId: string }
   | { type: "deactivate" }
   | { type: "snapshot"; epoch: string }
-  | { type: "fleet"; editorEmpty: boolean }
+  | { type: "fleet"; downAtLastLine: boolean }
   | { type: "fleet-select"; agentId: string | null }
   | { type: "open"; viewId: string }
   | { type: "select"; agentId: string; requestId: string }
@@ -33,8 +34,9 @@ export type UiEvent =
   | ({ type: "transcript"; agentId: string; requestId: string; events?: readonly TranscriptEvent[]; error?: string } & Correlation)
   | { type: "compose" }
   | { type: "draft"; text: string }
-  | { type: "control"; action: "stop" | "cleanup"; agentId: string }
-  | { type: "stop-all" }
+  | { type: "stop"; agentId: string; operationId: string }
+  | { type: "cleanup"; agentId: string }
+  | { type: "stop-all"; operationId: string }
   | { type: "submit"; operationId: string }
   | ({ type: "outcome"; operationId: string; outcome: "accepted" | "rejected" | "uncertain"; message: string } & Correlation)
   | { type: "escape" }

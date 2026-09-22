@@ -35,6 +35,10 @@ export const DEFAULT_INSPECTOR_KEYBINDINGS: ResolvedInspectorKeybindings = {
 export const matchesStopSelected = (data: string): boolean => matchesKey(data, "x") || matchesKey(data, "shift+x");
 export const matchesStopAll = (data: string): boolean => matchesKey(data, "ctrl+x");
 export const CANCELLATION_HINT = "X stop selected · Ctrl+X stop all";
+/** The editor-focused hint while Down enters the indicator. */
+export const FOCUS_HINT = "↓ to focus a subagent · Ctrl+X stop all";
+/** The editor-focused hint while the caret still has a line below and Down moves it (§2.2). */
+export const MOVE_HINT = "↓ to move down · Ctrl+X stop all";
 
 export function resolveInspectorKeybindings(config?: InspectorKeybindingsConfig): ResolvedInspectorKeybindings {
   return Object.fromEntries(INSPECTOR_ACTIONS.map(action => [action, config?.[action] ?? DEFAULT_INSPECTOR_KEYBINDINGS[action]])) as ResolvedInspectorKeybindings;

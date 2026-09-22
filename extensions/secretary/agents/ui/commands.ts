@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { matchesKey } from "@earendil-works/pi-tui";
+import { isKeyRelease, matchesKey } from "@earendil-works/pi-tui";
 import { SecretaryConfigMenu, headlessSecretaryConfig } from "./config-menu.ts";
+import { SecretaryEditor, installFleetEditor } from "./editor.ts";
 import { FleetView, startFleetPolling } from "./fleet-view.ts";
 import { Inspector, inspectorHeight } from "./inspector.ts";
 import { matchesStopAll, matchesStopSelected, type InspectorKeybindingsConfig } from "./keybindings.ts";
@@ -38,9 +39,13 @@ export function registerAgentUI(pi: ExtensionAPI, port: AgentUIPort, resolveOpti
   let unsubscribe: (() => void) | undefined, terminal: (() => void) | undefined;
   let requestRender: (() => void) | undefined, close: (() => void) | undefined;
   let customOpen = false, promptDepth = 0, transcriptDirty = false;
+  let fleetEditor: SecretaryEditor | undefined, restoreEditor: (() => void) | undefined;
   let polling: { dispose(): void } | undefined;
   const placement = () => options().fleetViewPlacement ?? "belowEditor";
-  const fleet = new FleetView(() => state, { rows: () => port.viewModels?.() ?? [] });
+  // The hint must name the action Down will take, so it reads the live caret through the installed
+  // editor; without one the empty-editor trigger remains the only state that focuses the indicator.
+  const downFocuses = () => fleetEditor ? fleetEditor.caretAtLastLine() : ctx?.ui.getEditorText() === "";
+  const fleet = new FleetView(() => state, { rows: () => port.viewModels?.() ?? [], downFocuses });
   const render = () => {
     if (ctx?.mode !== "tui") return;
     ctx.ui.setWidget(FLEET_WIDGET_KEY, () => fleet, { placement: placement() });
@@ -81,6 +86,7 @@ export function registerAgentUI(pi: ExtensionAPI, port: AgentUIPort, resolveOpti
     unsubscribe?.(); terminal?.(); unsubscribe = terminal = undefined;
     polling?.dispose(); polling = undefined;
     close?.(); close = undefined; requestRender = undefined; customOpen = false;
+    restoreEditor?.(); restoreEditor = undefined; fleetEditor = undefined;
     if (ctx?.mode === "tui") ctx.ui.setWidget(FLEET_WIDGET_KEY, undefined);
     state = transition(state, { type: "deactivate" }).state; ctx = undefined; transcriptDirty = false;
   };
@@ -97,18 +103,33 @@ export function registerAgentUI(pi: ExtensionAPI, port: AgentUIPort, resolveOpti
     polling = startFleetPolling({ rows: () => port.viewModels?.() ?? [],
       selected: () => state.navigation.kind === "fleet" ? state.navigation.selectedAgentId : undefined,
       repaint: () => { if (state.epoch === epoch) render(); }, subscribe: listener => port.subscribe(listener) });
+    // The indicator's Down trigger needs the caret position, which pi exposes only to an editor
+    // component. The plugin owns the editor for the session and restores the previous factory on
+    // disposal; a host without the custom-editor API keeps the empty-editor-only trigger.
+    if (typeof next.ui.setEditorComponent === "function" && typeof next.ui.getEditorComponent === "function") {
+      try { restoreEditor = installFleetEditor(next.ui, editor => { fleetEditor = editor; }); }
+      catch (error) { next.ui.notify(`Fleet editor integration unavailable; Down at the last line is disabled: ${error instanceof Error ? error.message : String(error)}`, "warning"); }
+    }
     if (typeof next.ui.onTerminalInput !== "function") { next.ui.notify("Fleet keyboard integration unavailable. Use /agents.", "warning"); return; }
     terminal = next.ui.onTerminalInput(data => {
+      // pi runs extension terminal listeners before it filters key-release events for the focused
+      // component (pi-tui `handleTerminalInput`). A terminal that reports event types therefore
+      // delivers both the press and the release of one physical key, and acting on both would move
+      // the selection twice — or open and close a surface in the same press (UX §2.2).
+      if (isKeyRelease(data)) return;
       if (customOpen || promptDepth > 0 || state.dialog.kind !== "closed") return;
       if (matchesStopAll(data) && fleetRows(state).some(active)) {
-        dispatch({ type: "stop-all" });
+        dispatch({ type: "stop-all", operationId: randomUUID() });
         if (state.dialog.kind !== "closed") void show();
         return { consume: true };
       }
       if (state.navigation.kind === "editor") {
-        // Down in an empty editor enters the indicator when it has rows; Left no longer activates it (UX §4).
-        if (matchesKey(data, "down") && next.ui.getEditorText() === "" && fleetRows(state).length > 0) {
-          dispatch({ type: "fleet", editorEmpty: true }); return { consume: true };
+        // Down enters the indicator when the caret cannot move down any further: an empty editor or
+        // the last line of a multi-line draft. The installed editor reports its own caret; the
+        // empty-editor test remains the fallback for a host that cannot install it (UX §2.2).
+        const atLastLine = fleetEditor ? fleetEditor.downAtLastLine(data) : matchesKey(data, "down") && next.ui.getEditorText() === "";
+        if (atLastLine && fleetRows(state).length > 0) {
+          dispatch({ type: "fleet", downAtLastLine: true }); return { consume: true };
         }
         return;
       }
@@ -116,7 +137,7 @@ export function registerAgentUI(pi: ExtensionAPI, port: AgentUIPort, resolveOpti
       if (matchesStopSelected(data)) {
         const id = state.navigation.selectedAgentId;
         if (id && fleetRows(state).some(a => a.agent.agentId === id)) {
-          dispatch({ type: "control", action: "stop", agentId: id });
+          dispatch({ type: "stop", agentId: id, operationId: randomUUID() });
           if (state.dialog.kind !== "closed") void show();
 
         }
@@ -177,7 +198,7 @@ export function registerAgentUI(pi: ExtensionAPI, port: AgentUIPort, resolveOpti
       if ((reference && !selected) || (action && !reference)) { commandCtx.ui.notify("Specify an agent ID or exact name in this session.", "warning"); return; }
       if (!ctx || state.parentId !== commandCtx.sessionManager.getSessionId()) bind(commandCtx);
       if (customOpen) return;
-      if (action && selected) dispatch({ type: "control", action, agentId: selected.agent.agentId });
+      if (action && selected) dispatch(action === "stop" ? { type: "stop", agentId: selected.agent.agentId, operationId: randomUUID() } : { type: "cleanup", agentId: selected.agent.agentId });
       else { dispatch({ type: "open", viewId: randomUUID() }); if (selected) dispatch({ type: "select", agentId: selected.agent.agentId, requestId: randomUUID() }); }
       if (state.dialog.kind !== "closed" || state.navigation.kind === "inspector") await show();
 

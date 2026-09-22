@@ -32,7 +32,7 @@ const bindings: ScenarioBindings = {
       const current = (await installed.tool("TaskOutput", { task_id: result.details.runId, block: false })).details;
       assert.equal(current.status, "running");
       const record = snapshot(current.agentId, "parent"); record.run = current;
-      const ui = new UIHarness([record]); ui.send({ type: "fleet", editorEmpty: true });
+      const ui = new UIHarness([record]); ui.send({ type: "fleet", downAtLastLine: true });
       assert.match(plain(ui.fleet.render(160)), /running/);
       assert.doesNotMatch(plain(ui.fleet.render(160)), /succeeded|completed/);
       assert.equal(plain(renderResult(result, { expanded: true, isPartial: false }).render(160)), historical);
@@ -57,6 +57,19 @@ const bindings: ScenarioBindings = {
     assert.equal(h.input("\x1b[B"), undefined, "Open custom UI owns input, not the indicator's terminal hook");
     assert.equal(h.modelTurns, 0); h.inspector!.handleInput("\x1b"); await tick();
     assert.equal(h.closes, 1); assert.equal(h.editor, "");
+    // The trigger is the caret's last line, not editor emptiness (UX §2.2).
+    h.editor = "first line\nsecond line";
+    assert.match(h.fleet(), /↓ to focus a subagent · Ctrl\+X stop all/, "the hint names the last-line action");
+    assert.equal(h.input("\x1b[A"), undefined, "Up stays in the editor");
+    assert.match(h.fleet(), /↓ to move down · Ctrl\+X stop all/, "the hint follows the caret away from the last line");
+    assert.equal(h.input("\x1b[B"), undefined, "Down above the last line stays in the editor");
+    assert.match(h.fleet(), /↓ to focus a subagent · Ctrl\+X stop all/, "the caret is now on the last line, so the hint names fleet focus");
+    assert.doesNotMatch(h.fleet(), /●/);
+    assert.deepEqual(h.input("\x1b[B"), { consume: true }, "Down on the last line enters the indicator");
+    assert.match(h.fleet(), /● main/);
+    h.input("\x1b");
+    assert.match(h.fleet(), /↓ to focus a subagent · Ctrl\+X stop all/, "returning focus restores the last-line hint");
+    assert.equal(h.editor, "first line\nsecond line", "the draft is unchanged");
   },
   "ACC-SA-02-02a": async ({ t }) => {
     const h = adapter(t);
@@ -83,7 +96,7 @@ const bindings: ScenarioBindings = {
     assert.equal(h.input("\x1b[B"), undefined, "Down stays in the editor while the indicator is hidden");
     snapshots.push(snapshot("a")); for (const listener of listeners) listener(); await tick();
     const rows = h.fleet().split("\n");
-    assert.equal(rows[0], "↓ in empty editor focuses list");
+    assert.equal(rows[0], "↓ to focus a subagent · Ctrl+X stop all");
     assert.equal(rows[1], "○ main", "the main session is the first agent row below the hint");
     assert.match(rows[2]!, /○ a · running/);
   },
@@ -100,10 +113,17 @@ const bindings: ScenarioBindings = {
     h.inspector!.handleInput("\x1b"); await tick();
   },
   "ACC-SA-02-03": ({ t }) => {
-    const h = adapter(t); h.editor = "Unsent draft 界";
-    for (const key of ["\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D", "j", "k"]) {
-      assert.equal(h.input(key), undefined, "Host editor must receive ordinary input");
-      assert.equal(h.editor, "Unsent draft 界"); assert.equal(h.opens, 0); assert.doesNotMatch(h.fleet(), /●/);
+    const draft = "Unsent draft 界\nsecond line";
+    const h = adapter(t); h.editor = draft;
+    assert.equal(h.input("\x1b[A"), undefined, "Up moves the caret within the editor");
+    for (const key of ["\x1b[B", "\x1b[C", "\x1b[D"]) {
+      assert.equal(h.input(key), undefined, "the editor receives cursor movement above its last line");
+      assert.equal(h.editor, draft); assert.equal(h.opens, 0); assert.doesNotMatch(h.fleet(), /●/);
+    }
+    for (const key of ["j", "k"]) {
+      assert.equal(h.input(key), undefined, "the editor receives ordinary typing");
+      assert.match(h.editor, /Unsent draft 界/, "the indicator neither captures nor erases the draft");
+      assert.equal(h.opens, 0); assert.doesNotMatch(h.fleet(), /●/);
     }
     assert.equal(h.modelTurns, 0);
   },
@@ -160,10 +180,8 @@ const bindings: ScenarioBindings = {
     }
     h.inspector.handleInput("s"); assert.equal(h.state.dialog.kind, "composing"); h.inspector.handleInput("\x1b");
     h.inspector.handleInput("D");
-    const confirmation = structuredClone(h.state).dialog;
-    assert.equal(confirmation.kind, "confirming");
-    if (confirmation.kind === "confirming") assert.equal(confirmation.target.action === "stop" && confirmation.target.runId, "a-run");
-    assert.ok(!h.effects.some(e => e.type === "operate"));
+    assert.equal(h.state.dialog.kind, "submitting", "the stop shortcut submits with no dialog to confirm");
+    assert.ok(h.effects.some(e => e.type === "operate" && e.operation.action === "stop" && e.operation.agentId === "a"));
   },
   "ACC-SA-02-09": async ({ t }) => {
     const attacks = { "CSI clear screen": "\x1b[2J", "OSC clipboard BEL": "\x1b]52;c;Y2xpcGJvYXJk\x07", "OSC title ST": "\x1b]0;forged title\x1b\\", "DCS payload": "\x1bPmalicious payload\x1b\\", "C1 CSI": "\x9b2J" };
@@ -181,7 +199,7 @@ const bindings: ScenarioBindings = {
     const record = snapshot();
     assert.equal(Object.hasOwn(record.run!, "goal"), false, "Goal attribution belongs to composition, not UI snapshots");
     const h = new UIHarness([record]).ready(); const inspector = h.render();
-    h.send({ type: "escape" }); h.send({ type: "fleet", editorEmpty: true });
+    h.send({ type: "escape" }); h.send({ type: "fleet", downAtLastLine: true });
     for (const surface of [inspector, plain(h.fleet.render(140))]) {
       assert.doesNotMatch(surface, /(?:context|window).*\b0(?:%|\s*tokens?)|\b0%/i);
       assert.doesNotMatch(surface, /context|window|budget|token usage/i, "The current snapshot API exposes neither context nor goal-budget measurements; omit rather than invent either");
@@ -351,22 +369,25 @@ const bindings: ScenarioBindings = {
     assert.ok(!effects.some(e => e.type === "operate" || e.type === "focus")); assert.deepEqual(h.state.pending, {});
   },
   "ACC-SA-UI-08": () => {
-    for (const next of [{ status: "succeeded" as const }, { runId: "b-run", status: "running" as const }]) {
-      const h = new UIHarness().ready(); h.inspector.handleInput("D"); assert.match(h.render(), /Run: a-run/);
-      const changed = snapshot(); Object.assign(changed.run!, next);
-      const effects = h.send({ type: "snapshot", epoch: "e" }, [changed]);
-      assert.equal(h.state.dialog.kind, "closed"); assert.match(h.state.feedback!, /target.*no longer eligible.*No operation was sent/i);
-      h.inspector.handleInput("\r"); assert.ok(!h.effects.some(e => e.type === "operate"));
-      assert.ok(effects.some(e => e.type === "focus" && e.target === "inspector"));
-    }
+    const h = new UIHarness().ready();
+    const finished = snapshot(); finished.run!.status = "succeeded";
+    h.send({ type: "snapshot", epoch: "e" }, [finished]);
+    h.inspector.handleInput("D");
+    assert.equal(h.state.dialog.kind, "closed");
+    assert.match(h.state.feedback ?? "", /not eligible/i);
+    assert.ok(!h.effects.some(e => e.type === "operate"), "no stop request is submitted for an ineligible row");
   },
   "ACC-SA-UI-09": async () => {
-    const h = new UIHarness().ready(); h.inspector.handleInput("D"); const dialog = structuredClone(h.state.dialog);
-    const changed = snapshot(); changed.run!.revision = 20; changed.run!.output += "ordinary progress";
-    h.send({ type: "snapshot", epoch: "e" }, [changed]); assert.deepEqual(h.state.dialog, dialog);
-    const calls: string[][] = []; const operation = h.submit();
-    await h.execute(operation, port({ stop: async (runId, operationId) => { calls.push([runId, operationId]); } }));
-    assert.deepEqual(calls, [["a-run", operation.operation.id]]);
+    const idle = snapshot(); idle.run!.status = "succeeded";
+    const h = new UIHarness([idle]);
+    h.send({ type: "cleanup", agentId: "a" });
+    const dialog = structuredClone(h.state.dialog); assert.equal(dialog.kind, "confirming");
+    const changed = snapshot(); changed.run!.status = "succeeded"; changed.run!.revision = 20; changed.run!.output += "ordinary progress";
+    h.send({ type: "snapshot", epoch: "e" }, [changed]);
+    assert.deepEqual(h.state.dialog, dialog, "ordinary progress does not dismiss or redirect the confirmation");
+    const calls: string[][] = [];
+    await h.execute(h.submit(), port({ cleanup: async (agentId, operationId) => { calls.push([agentId, operationId]); } }));
+    assert.equal(calls.length, 1); assert.equal(calls[0]![0], "a");
   },
   "ACC-SA-UI-10": async ({ t }) => {
     const service = await durableService(t), load = deferred<readonly TranscriptEvent[]>(), ack = deferred<void>();
@@ -396,7 +417,7 @@ const bindings: ScenarioBindings = {
     const closed = h.command("cleanup a"); await tick(); assert.match(h.render(), /Confirm cleanup: a/); assert.doesNotMatch(h.render(), /Agents ·/);
     h.inspector!.handleInput("\x1b"); await closed;
     assert.equal(h.editor, "Draft originating editor"); assert.equal(h.inspector, undefined); assert.equal(h.closes, 1); assert.equal(cleanups, 0); assert.equal(h.input("j"), undefined);
-    const reducer = new UIHarness([record]); reducer.send({ type: "control", action: "cleanup", agentId: "a" });
+    const reducer = new UIHarness([record]); reducer.send({ type: "cleanup", agentId: "a" });
     assert.equal(reducer.state.navigation.kind, "editor"); assert.ok(reducer.send({ type: "escape" }).some(e => e.type === "focus" && e.target === "editor"));
   },
   "ACC-SA-UI-13": async () => {
@@ -413,7 +434,7 @@ const bindings: ScenarioBindings = {
     const service = await durableService(t);
     const rows = service.service.viewModels();
     assert.equal(rows.filter(r => r.background && r.status === "running").length, 2, "both launched runs are active background executions");
-    const h = new UIHarness(service.service.list()); h.send({ type: "fleet", editorEmpty: true });
+    const h = new UIHarness(service.service.list()); h.send({ type: "fleet", downAtLastLine: true });
     const rendered = plain(h.fleet.render(140));
     assert.match(rendered.split("\n")[1]!, /● main/, "the first agent row below the hint is the main session");
     for (const row of rows) assert.match(rendered, new RegExp(`○ ${row.agentId} · running`), "each active execution lists a status label");
@@ -454,7 +475,7 @@ const bindings: ScenarioBindings = {
     const dispatched: string[] = [];
     const inspector = new Inspector(() => h.state, e => { dispatched.push(e.type); }, () => "id", () => 22, { keybindings: config.ui.fleetKeybindings });
     inspector.handleInput("T");
-    assert.deepEqual(dispatched, ["control"], "the configured stop key dispatches stop confirmation");
+    assert.deepEqual(dispatched, ["stop"], "the configured stop key submits without a confirmation step");
     const footer = plain(inspector.render(140));
     assert.match(footer, /T stop/); assert.match(footer, /Ctrl\+Q close/); assert.doesNotMatch(footer, /D stop/);
     writeFileSync(join(root, "secretary.json"), JSON.stringify({ agents: { ui: { fleetKeybindings: { inspect: ["i"] } } } }));
@@ -463,40 +484,44 @@ const bindings: ScenarioBindings = {
   "ACC-SA-UI-18": async ({ t }) => {
     const stopped: string[] = [];
     const h = adapter(t, port({ stop: async id => { stopped.push(id); } }));
-    assert.match(h.fleet(), /^↓ in empty editor focuses list\n○ main/);
+    assert.match(h.fleet(), /^↓ to focus a subagent · Ctrl\+X stop all\n○ main/);
     assert.doesNotMatch(h.fleet(), /X stop selected/);
     const initialHeight = h.fleet().split("\n").length;
     h.input("\x1b[B");
     assert.match(h.fleet(), /^X stop selected · Ctrl\+X stop all\n● main/);
+    // A terminal that reports kitty-protocol event types delivers press and release for one key.
+    h.input("\x1b[1;1:3B");
+    assert.match(h.fleet(), /^X stop selected · Ctrl\+X stop all\n● main/, "the release does not advance the selection again");
     assert.equal(h.fleet().split("\n").length, initialHeight);
     h.input("\x1b");
-    assert.match(h.fleet(), /^↓ in empty editor focuses list\n○ main/);
+    assert.match(h.fleet(), /^↓ to focus a subagent · Ctrl\+X stop all\n○ main/);
     assert.equal(h.fleet().split("\n").length, initialHeight);
     assert.equal(h.input("X"), undefined, "the editor receives X unchanged");
     h.input("\x1b[B");
     assert.match(h.fleet(), /^X stop selected · Ctrl\+X stop all\n● main/);
-    assert.doesNotMatch(h.fleet(), /focuses list/);
+    assert.doesNotMatch(h.fleet(), /focus a subagent/);
     h.input("\x1b[B"); h.input("X"); await tick();
-    assert.match(h.render(), /Confirm stop: a/); assert.match(h.render(), /a-run/);
-    h.inspector!.handleInput("\x1b"); await tick();
-    assert.equal(h.inspector, undefined); assert.match(h.fleet(), /● a/); assert.deepEqual(stopped, []);
+    assert.deepEqual(stopped, ["a-run"], "X submits the selected stop with no confirmation step");
+    assert.equal(h.inspector, undefined, "the settled request closes the overlay");
+    assert.match(h.fleet(), /^X stop selected · Ctrl\+X stop all/, "the list regains focus");
   },
   "ACC-SA-UI-19": async ({ t }) => {
     let snapshots = [snapshot(), snapshot("b"), snapshot("foreign", "other")];
     const listeners = new Set<() => void>(), stopped: string[] = [];
     const h = adapter(t, port({ list: () => snapshots, stop: async id => { stopped.push(id); }, subscribe: fn => { listeners.add(fn); return () => { listeners.delete(fn); }; } }));
     h.editor = "Main draft"; h.input("\x18"); await tick();
-    assert.match(h.render(), /Confirm stop all/); assert.match(h.render(), /a-run, b-run/);
+    assert.deepEqual(stopped, ["a-run", "b-run"], "Ctrl+X submits the captured batch without a confirmation step");
     snapshots = snapshots.map(s => s.agent.agentId === "a" ? { ...s, run: { ...s.run!, runId: "replacement" } } : s);
     snapshots.push(snapshot("new")); for (const fn of listeners) fn();
-    h.inspector!.handleInput("\r"); await tick();
-    assert.deepEqual(stopped, ["b-run"]); assert.equal(h.editor, "Main draft");
+    await tick();
+    assert.deepEqual(stopped, ["a-run", "b-run"], "a later admission is not added to the captured batch");
+    assert.equal(h.editor, "Main draft");
     assert.match(h.fleet(), /b · running/, "UI acceptance does not manufacture completion");
   },
   "ACC-SA-UI-20": async () => {
     const h = new UIHarness().ready(); let calls = 0;
     const p = port({ stopMany: async () => { calls++; throw new Error("Acknowledgment lost"); }, receipt: () => ({ outcome: "accepted", message: "Cancellation accepted, not completed." }) });
-    h.inspector.handleInput("\x18"); const op = h.submit(); await h.execute(op, p);
+    h.inspector.handleInput("\x18"); const op = h.effects.find(e => e.type === "operate"); assert.ok(op, "Ctrl+X submits in the same event"); await h.execute(op, p);
     assert.equal(h.state.dialog.kind, "uncertain");
     for (const key of ["x", "\x18"]) {
       h.inspector.handleInput("\x1b"); h.inspector.handleInput(key);
@@ -521,6 +546,6 @@ const bindings: ScenarioBindings = {
   },
 };
 runFeatures(["agent-inspection", "ui-state-machine"], bindings, {
-  "agent-inspection": "1ac61f8c5d98c2ae6ada2489fe15e91f361400ce46645f242be33380641889c8",
-  "ui-state-machine": "e06e01393574e0f5f42ec636a349a2df9d8add47023d0120838025447a0451b4",
+  "agent-inspection": "bc002dd98af599024fd442d3edfbce3cdf76f0eec34fd9b15b43181d79d4810e",
+  "ui-state-machine": "4b6b3f33863aba14aca996503ca03b73574b2ad9e555a5e79d17a8fc932cdd81",
 });

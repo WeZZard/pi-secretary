@@ -73,13 +73,13 @@ export class Inspector implements Component, Focusable {
       return;
     }
     if (d.kind !== "closed") {
-      if ((d.kind === "confirming" || d.kind === "confirming-all") && matchesKey(data, "enter")) this.dispatch({ type: "submit", operationId: this.id() });
+      if (d.kind === "confirming" && matchesKey(data, "enter")) this.dispatch({ type: "submit", operationId: this.id() });
       return;
     }
-    if (matchesStopAll(data)) { this.dispatch({ type: "stop-all" }); return; }
+    if (matchesStopAll(data)) { this.dispatch({ type: "stop-all", operationId: this.id() }); return; }
     if (matchesStopSelected(data)) {
       const nav = s.navigation;
-      if (nav.kind === "inspector" && nav.detail.kind !== "list") this.dispatch({ type: "control", action: "stop", agentId: nav.detail.agentId });
+      if (nav.kind === "inspector" && nav.detail.kind !== "list") this.dispatch({ type: "stop", agentId: nav.detail.agentId, operationId: this.id() });
       return;
     }
     if (this.action(data, "close")) { this.dispatch({ type: "escape" }); return; }
@@ -97,7 +97,7 @@ export class Inspector implements Component, Focusable {
     else if (this.action(data, "drillOut")) this.dispatch({ type: "drill-out", requestId: this.id() });
     else if (this.action(data, "toggleFinished")) this.dispatch({ type: "toggle-finished", requestId: this.id() });
     else if (this.action(data, "steer")) this.dispatch({ type: "compose" });
-    else if (this.action(data, "stop") && selected) this.dispatch({ type: "control", action: "stop", agentId: selected });
+    else if (this.action(data, "stop") && selected) this.dispatch({ type: "stop", agentId: selected, operationId: this.id() });
     else if (this.action(data, "refresh") && selected) this.dispatch({ type: "select", agentId: selected, requestId: this.id() });
     else if (this.action(data, "toggleTools")) this.dispatch({ type: "expand" });
     else if (this.action(data, "pageUp") || this.action(data, "pageDown")) this.dispatch({ type: "scroll", delta: this.action(data, "pageUp") ? -this.visibleTranscriptRows : this.visibleTranscriptRows, pageSize: this.visibleTranscriptRows });
@@ -135,8 +135,7 @@ export class Inspector implements Component, Focusable {
       const label = messageEligible(recipient) ? recipient && active(recipient) ? "Queue guidance" : "Resume conversation" : "Submission unavailable; draft retained";
       return [clip(`${label}: ${d.agentId}`, width), ...this.input.render(Math.max(1, width)).map(l => width <= 0 ? "" : l), clip(d.error ?? "Enter sends · Escape keeps draft", width)];
     }
-    if (d.kind === "confirming-all") return ["Confirm stop all agents in this session", `Captured runs: ${d.targets.map(t => t.runId).join(", ")}`, "Descendants are included. New runs are excluded. File changes are not rolled back.", "Enter confirms · Escape dismisses"].map(l => clip(l, width));
-    if (d.kind === "confirming") return [`Confirm ${d.target.action}: ${d.target.agentId}`, d.target.action === "stop" ? `Run: ${d.target.runId}. File changes are not rolled back.` : `Workspace: ${d.target.worktreeId}. Cleanup disables future resumption.`, "Enter confirms · Escape dismisses"].map(l => clip(l, width));
+    if (d.kind === "confirming") return [`Confirm ${d.target.action}: ${d.target.agentId}`, `Workspace: ${d.target.worktreeId}. Cleanup disables future resumption.`, "Enter confirms · Escape dismisses"].map(l => clip(l, width));
     if (d.kind === "submitting" || d.kind === "uncertain") return [`${d.kind}: ${d.operation.action} ${d.operation.agentId}`, `Operation: ${d.operation.id}`, ...(d.operation.action === "message" ? [d.operation.text] : []), d.kind === "uncertain" ? d.reason : "Waiting for acceptance; this is not completion.", "Escape dismisses without cancelling or retrying"].map(l => clip(l, width));
     return undefined;
   }

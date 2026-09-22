@@ -13,7 +13,7 @@ Feature: Inspect delegated work without polling the parent model
     And neither surface claims that the task completed merely because the launch tool returned.
 
   @ACC-SA-02-02 @proposed
-  Scenario: Enter the fleet indicator only from an empty editor.
+  Scenario: Enter the fleet indicator when the caret is on its last line.
     Given the fleet indicator is visible below the main editor.
     And the editor is empty and focused.
     When the user presses Down.
@@ -21,6 +21,12 @@ Feature: Inspect delegated work without polling the parent model
     And the selected row's circle is filled while every other circle is hollow.
     And the user can select an agent and open its fleet view overlay without a model turn.
     And pressing Left does not move focus into the fleet indicator.
+    Given the editor holds a multi-line draft and its caret is above the last line.
+    And the hint line names the caret move rather than fleet focus.
+    When the user presses Down.
+    Then the editor moves the caret and the fleet indicator keeps no focus.
+    When the caret reaches the last line and the user presses Down again.
+    Then focus moves into the fleet indicator, the hint names fleet focus, and the draft is unchanged.
 
   @ACC-SA-02-02a @proposed
   Scenario: Return focus from the fleet indicator to the editor.
@@ -54,8 +60,9 @@ Feature: Inspect delegated work without polling the parent model
     And the agent remains inspectable in the fleet view overlay.
 
   @ACC-SA-02-03 @proposed
-  Scenario: Preserve ordinary editing when the editor contains text.
-    Given the main editor contains an unsent draft and has focus.
+  Scenario: Preserve ordinary editing above the editor's last line.
+    Given the main editor contains a multi-line unsent draft and has focus.
+    And the caret is above the draft's last line.
     When the user presses navigation keys or types "j" or "k".
     Then the editor handles the input normally.
     And the fleet indicator does not capture the input or erase the draft.

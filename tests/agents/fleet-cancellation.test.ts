@@ -80,13 +80,15 @@ test("idle Ctrl+X and other modal input reach the host; editor and composer draf
   } finally { h.close(); }
 });
 
-test("captured batch skips replacement and terminal runs without adding new admissions", async () => {
+test("Ctrl+X captures the current batch: terminal runs are skipped and later admissions are excluded", async () => {
   const h = harness("main");
   try {
+    const records = h.records(); records.find(s => s.agent.agentId === "b")!.run!.status = "succeeded";
+    h.update(records);
     h.input("\x18"); await h.paint();
-    const records = h.records(); records.find(s => s.agent.agentId === "a")!.run!.runId = "replacement";
-    records.push(snapshot("new")); h.update(records);
-    h.input("\r"); await h.paint(); assert.deepEqual(h.stopped, ["b-run"]);
+    assert.deepEqual(h.stopped, ["a-run"]);
+    h.update([...h.records(), snapshot("new")]); await h.paint();
+    assert.deepEqual(h.stopped, ["a-run"], "a later admission is not part of the captured batch");
   } finally { h.close(); }
 });
 
@@ -99,12 +101,26 @@ test("a departed selected row cannot redirect X to another agent", async () => {
   } finally { h.close(); }
 });
 
+test("a kitty-protocol key release does not advance the fleet a second time", () => {
+  const h = harness("main");
+  try {
+    h.input("\x1b[B");
+    assert.match(h.widget(), /● main/, "the press focuses the main row");
+    // pi runs extension terminal listeners before it filters releases for the focused component,
+    // so a terminal that reports event types delivers this sequence for one physical press.
+    h.input("\x1b[1;1:3B");
+    assert.match(h.widget(), /● main/, "the matching release event is not a second press");
+    h.input("\x1b[B");
+    assert.match(h.widget(), /● a/, "the next press advances exactly one row");
+  } finally { h.close(); }
+});
+
 test("unresolved batch blocks duplicate selected and fleet cancellation after dismissal, then reconciles its receipt", async () => {
   const h = harness("main"); let calls = 0, accepted = false;
   h.port.stopMany = async () => { calls++; throw new Error("Lost acknowledgment"); };
   h.port.receipt = () => accepted ? { outcome: "accepted", message: "Cancellation acceptance recorded, not completion." } : undefined;
   try {
-    h.open(); await h.paint(); h.input("\x18"); h.input("\r");
+    h.open(); await h.paint(); h.input("\x18");
     assert.match(await h.paint(), /uncertain: stop-all/);
     h.input("\x1b"); h.input("x");
     assert.match(await h.paint(), /uncertain: stop-all/); h.input("\r"); assert.equal(calls, 1);
@@ -119,7 +135,7 @@ for (const mode of ["main", "alternate"] as const) {
     const h = harness(mode);
     try {
       const initial = h.widget().split("\n");
-      assert.equal(initial[0], "↓ in empty editor focuses list");
+      assert.equal(initial[0], "↓ to focus a subagent · Ctrl+X stop all");
       assert.match(initial[1]!, /○ main/);
       assert.doesNotMatch(h.widget(), /X stop selected/);
       h.input("\x1b[B"); await h.paint();
@@ -127,46 +143,41 @@ for (const mode of ["main", "alternate"] as const) {
       assert.equal(focused[0], "X stop selected · Ctrl+X stop all");
       assert.match(focused[1]!, /● main/);
       assert.equal(focused.length, initial.length);
-      assert.doesNotMatch(h.widget(), /focuses list/);
+      assert.doesNotMatch(h.widget(), /focus a subagent/);
       h.input("\x1b[B"); await h.paint();
       assert.equal(h.widget().split("\n")[0], focused[0]);
       h.input("\x1b"); await h.paint();
       assert.equal(h.widget().split("\n")[0], initial[0]);
     } finally { h.close(); }
   });
-  test(`real ${mode} routing: X confirms selected cancellation without intercepting editor text`, async () => {
+  test(`real ${mode} routing: X submits selected cancellation without intercepting editor text`, async () => {
     const h = harness(mode);
     try {
       h.input("x"); assert.equal(h.editor.getValue(), "x"); h.editor.setValue("");
-      h.input("\x1b[B"); h.input("\x1b[B"); h.input("X");
-      assert.match(await h.paint(), /Confirm stop: a/);
-      assert.deepEqual(h.stopped, []);
-      h.input("\r"); await h.paint();
-      assert.deepEqual(h.stopped, ["a-run"]);
+      h.input("\x1b[B"); h.input("\x1b[B"); h.input("X"); await h.paint();
+      assert.deepEqual(h.stopped, ["a-run"], "X submits the selected cancellation immediately");
+      assert.doesNotMatch(await h.paint(), /Confirm stop/);
       assert.match(h.widget(), /a · running/, "acceptance must not invent a terminal status");
     } finally { h.close(); }
   });
   test(`real ${mode} routing: Ctrl+X captures this parent fleet and excludes later admissions`, async () => {
     const h = harness(mode);
     try {
-      h.editor.setValue("keep draft"); h.input("\x18");
-      assert.match(await h.paint(), /Confirm stop all/);
-      assert.deepEqual(h.stopped, []);
-      h.update([...h.records(), snapshot("new")]);
-      h.input("\r"); await h.paint();
-      assert.deepEqual(h.stopped.sort(), ["a-run", "b-run"]);
+      h.editor.setValue("keep draft"); h.input("\x18"); await h.paint();
+      assert.deepEqual(h.stopped, ["a-run", "b-run"], "Ctrl+X submits the captured batch immediately");
+      h.update([...h.records(), snapshot("new")]); await h.paint();
+      assert.deepEqual(h.stopped, ["a-run", "b-run"], "a later admission is not added to the batch");
       assert.equal(h.editor.getValue(), "keep draft");
     } finally { h.close(); }
   });
-  test(`real ${mode} routing: overlay X and Ctrl+X keep confirmation ownership`, async () => {
+  test(`real ${mode} routing: overlay X and Ctrl+X both submit without a confirmation step`, async () => {
     const h = harness(mode);
     try {
-      h.open(); await h.paint(); h.input("x");
-      assert.match(await h.paint(), /Confirm stop: a/);
-      h.input("\x18"); assert.match(await h.paint(), /Confirm stop: a/);
-      h.input("\x1b"); await h.paint(); h.input("\x18");
-      assert.match(await h.paint(), /Confirm stop all/);
-      h.input("\x1b"); await h.paint(); assert.deepEqual(h.stopped, []);
+      h.open(); await h.paint(); h.input("x"); await h.paint();
+      assert.deepEqual(h.stopped, ["a-run"], "X in the overlay submits the selected run with no Enter");
+      assert.doesNotMatch(await h.paint(), /Confirm stop/);
+      h.input("\x18"); await h.paint();
+      assert.ok(h.stopped.includes("b-run"), "Ctrl+X still reaches the rest of the fleet from the overlay");
     } finally { h.close(); }
   });
   test(`real ${mode} rendering: focused bottom list advertises cancellation and idle stays hidden`, async () => {

@@ -296,9 +296,9 @@ test("configured keybindings replace defaults in both input handling and the foo
   const inspector = new Inspector(() => s, e => dispatched.push(e), () => "id", () => 22,
     { keybindings: { stop: ["shift+t"], steer: ["m"], close: ["ctrl+q"] } });
   inspector.handleInput("T");
-  assert.deepEqual(dispatched.map(e => e.type), ["control"]);
+  assert.deepEqual(dispatched.map(e => e.type), ["stop"]);
   inspector.handleInput("m");
-  assert.deepEqual(dispatched.map(e => e.type), ["control", "compose"]);
+  assert.deepEqual(dispatched.map(e => e.type), ["stop", "compose"]);
   const rendered = plain(new Inspector(() => inspectorState(), () => {}, () => "id", () => 22,
     { keybindings: { stop: ["shift+t"], steer: ["m"], close: ["ctrl+q"] } }).render(140));
   assert.match(rendered, /T stop/);
@@ -312,7 +312,7 @@ test("viewport sizing, dialogs, feedback, and Unicode preserve the complete fram
   let s = inspectorState();
   s.snapshots[0]!.agent.name = "分析🧪".repeat(30);
   const states = [s, { ...s, feedback: "queued" }, transition(s, { type: "compose" }).state,
-    transition(s, { type: "control", action: "stop", agentId: "b" }).state,
+    transition(s, { type: "stop", agentId: "b", operationId: "stop" }).state,
     transition(s, { type: "open", viewId: "list" }).state];
   for (const state of states) for (const width of [36, 60, 99, 100, 140, 300]) for (const height of [4, 6, 18, 30]) {
     const lines = new Inspector(() => state, () => {}, () => "id", () => height).render(width);

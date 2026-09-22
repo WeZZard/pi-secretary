@@ -42,7 +42,7 @@ Foreground detach, live prompt auditing, external job display, and external term
 - A fresh agent with no model override in its launch or definition inherits the main session's active model, not the configured default for new pi sessions. An explicit definition model or fallback list takes precedence over inheritance, and an explicit launch model takes precedence over the definition. Resuming an existing agent retains its recorded model.
 - The UI removes the Secretary `rich`/`summary` distinction and the `agents.ui.inlineToolDisplay` selector. Only Pi's compact/full state controls detail disclosure. Existing configuration files may retain either known old selector value; it is accepted and ignored, not copied into resolved UI configuration. Unsupported values remain validation errors.
 - A foreground call streams bounded recent activity until it settles. Its compact card retains destination identity, activity, status, the configured tool-expansion hint, and available statistics without a task row. Switching to full reveals available details while execution is still running.
-- Interrupting a foreground `Agent` call requests cancellation of that child. The child's output remains inspectable if the foreground response is interrupted. Cancelling a `TaskOutput` wait stops only the wait.
+- Interrupting a foreground `Agent` call requests cancellation of that child. Background executions are independent of the foreground request, so interrupting the parent turn never cancels them; only an explicit stop does. The child's output remains inspectable if the foreground response is interrupted. Cancelling a `TaskOutput` wait stops only the wait.
 - The `background` header suffix identifies the launch operation, not successful completion of the child task. Switching to full reveals the prompt, launch identifier, and available operation details.
 - A completed background execution creates a separate completion entry. It does not rewrite the historical launch result. A failed or interrupted completion produces a visible notice in the owning session.
 - The configured pi tool-expansion key reveals complete or explicitly line-limited task or message content, result text, and artifact paths.
@@ -241,8 +241,8 @@ Foreground detach, live prompt auditing, external job display, and external term
 - Unknown usage is not displayed as zero. Rows whose source artifacts predate window data keep the token-total label without a window label.
 - Rows are themed and display width-aware. The layout truncates by terminal display width and realigns right-side information after resize.
 - When more rows exist than fit, the visible window follows the selection.
-- While the indicator is visible, exactly one hint line appears above the agent rows, before the main row when it is in view. With the editor focused, it reads `↓ in empty editor focuses list`. With the fleet list focused, that same line changes to `X stop selected · Ctrl+X stop all`. Moving focus does not add another line or change the list height. The hint clips rather than wraps on narrow terminals. The selected-agent shortcut applies only when the indicator or inspector has focus. Typing `x` in the editor remains ordinary text. Ctrl+X opens fleet-wide cancellation confirmation from the editor or fleet surfaces, except while another dialog or host prompt owns input. When the fleet is idle, Ctrl+X retains the host's normal behavior.
-- Pressing Down in an empty, focused editor moves focus into the list and selects the first row. Up and Down move the selection. Pressing Up on the first row or pressing Escape returns focus to the editor. Left no longer activates the indicator. Enter opens the fleet view overlay on the selected agent row. Enter on the main row returns focus to the prompt input instead; the main session's transcript is the session behind the editor, so there is no overlay destination for it.
+- While the indicator is visible, exactly one hint line appears above the agent rows, before the main row when it is in view. The editor-focused wording names the action Down will actually take: with the caret on the last line it reads `↓ to focus a subagent · Ctrl+X stop all`, and while the caret can still move down it reads `↓ to move down · Ctrl+X stop all`. With the fleet list focused, that same line changes to `X stop selected · Ctrl+X stop all`. Moving focus or the caret does not add another line or change the list height. The hint clips rather than wraps on narrow terminals. The selected-agent shortcut applies only when the indicator or inspector has focus, and it stops the selected execution immediately, without a confirmation step. Typing `x` in the editor remains ordinary text. Ctrl+X stops every active top-level execution in the current fleet immediately, from the editor or fleet surfaces and without a confirmation step, except while another dialog or host prompt owns input. When the fleet is idle, Ctrl+X retains the host's normal behavior. One press moves the selection exactly one row, including on a terminal that reports key-release events.
+- Pressing Down with the caret on the editor's last line moves focus into the list and selects the first row; an empty editor is the single-line case of that rule. The editor keeps Down for autocomplete and prompt-history browsing. Up and Down move the selection. Pressing Up on the first row or pressing Escape returns focus to the editor. Left no longer activates the indicator. Enter opens the fleet view overlay on the selected agent row. Enter on the main row returns focus to the prompt input instead; the main session's transcript is the session behind the editor, so there is no overlay destination for it.
 
 The following is a layout example with an active selection. Angle-bracket values are placeholders, not measurements:
 
@@ -441,7 +441,7 @@ until they are updated.
 
 - **User intent:** The user wants to understand delegated work and its current outcome.
 - **Entry conditions:** The current session has an agent record, or the user knows its identifier.
-- **User action:** The user presses Down in an empty editor, selects an agent, and presses Enter. The user can instead invoke `/agents`.
+- **User action:** The user presses Down at the editor's last line, selects an agent, and presses Enter. The user can instead invoke `/agents`.
 - **Observable outcome:** The fleet view overlay shows the selected agent without starting a model turn.
 - **Feedback:** The view identifies the agent, execution state, and whether the transcript is live or historical.
 - **Failure and recovery:** Missing artifacts remain visible as a diagnostic. The user can inspect the retained record and output paths; the interface does not manufacture a transcript.
@@ -461,10 +461,10 @@ Secretary initially exposes one guidance operation. Nicobailon's `steer`, `follo
 
 - **User intent:** The user wants selected work to stop while retaining its available output.
 - **Entry conditions:** The selected execution is queued, starting, running, or already stopping.
-- **User action:** The user presses `X` while the fleet indicator or inspector has an agent selected, then confirms the identified execution. `/agents stop <id-or-name>` provides the same operation with confirmation in the TUI. Ctrl+X opens confirmation for all active top-level executions in the current fleet; cancelling those executions also requests cancellation of their nested work.
+- **User action:** The user presses `X` while the fleet indicator or inspector has an agent selected. The selected execution's run identity is captured and submitted in that one action, with no confirmation step. `/agents stop <id-or-name>` provides the same operation immediately in the TUI. Ctrl+X stops all active top-level executions in the current fleet the same way; cancelling those executions also requests cancellation of their nested work.
 - **Observable outcome:** A queued execution is cancelled before starting. Active execution shows “Stopping” until termination is observed.
 - **Feedback:** The view distinguishes a pending stop request from a cancelled execution. It states that file changes are not rolled back.
-- **Failure and recovery:** If the selected execution finishes or is replaced before confirmation, the confirmation does not target the newer execution. Fleet-wide confirmation captures a fixed set of run identities; later launches are not added to it. Escape dismisses confirmation without cancellation. If stopping cannot be confirmed, the view reports that uncertainty and does not offer a conflicting resume.
+- **Failure and recovery:** A stop request names the run identity that was selected when the shortcut was pressed, so a run that finishes and is replaced before the request is processed is never redirected to its successor. Ctrl+X captures a fixed set of run identities at the moment it is pressed; later launches are not added to it, and earlier cancellation requests are never repeated. A shortcut pressed on a row whose execution already finished submits nothing and explains that the target is not eligible. If stopping cannot be confirmed, the view reports that uncertainty and does not offer a conflicting resume.
 
 ### 3.4 Exit, reload, or switch sessions
 
@@ -551,8 +551,8 @@ Secretary initially exposes one guidance operation. Nicobailon's `steer`, `follo
 | The inspector is open. | Shift+K/Shift+J | The key scrolls the transcript by one line. |
 | The inspector is open. | `o` or the configured tool-expansion key | The key toggles tool details. |
 | The inspector is open. | `s` | The key opens the message composer. |
-| The fleet indicator or inspector has an agent selected. | `x` or `X` | The key opens confirmation for that execution. Shift+D remains an inspector compatibility shortcut. |
-| The editor or a fleet surface has focus and the fleet has active work. | Ctrl+X | The key opens confirmation for the current fleet's active executions. Another dialog or host prompt prevents this shortcut from taking over. |
+| The fleet indicator or inspector has an agent selected. | `x` or `X` | The key stops that execution immediately, without a confirmation step. Shift+D remains an inspector compatibility shortcut. |
+| The editor or a fleet surface has focus and the fleet has active work. | Ctrl+X | The key stops all of the current fleet's active executions immediately, without a confirmation step. Another dialog or host prompt prevents this shortcut from taking over. |
 | The inspector is open. | `r` or `R` | The key reloads the selected transcript. |
 | The inspector is open. | Escape | The key closes the inspector without stopping work. |
 | The composer is open. | Escape | The key cancels composition without sending a message. |
@@ -586,13 +586,13 @@ sequenceDiagram
     participant Editor as Main editor
     participant Fleet as FleetView
     participant Inspector as Agent inspector
-    User->>Editor: Press Down with an empty editor
+    User->>Editor: Press Down at the editor's last line
     Editor->>Fleet: Move focus
     User->>Fleet: Select an agent and press Enter
     Fleet->>Inspector: Open the selected conversation
     User->>Inspector: Compose and submit guidance
     Inspector-->>User: Show message acknowledgment
-    User->>Inspector: Request stop and confirm
+    User->>Inspector: Request stop
     Inspector-->>User: Show Stopping, then the observed outcome
     User->>Inspector: Press Escape
     Inspector->>Editor: Restore editor focus and text
@@ -648,7 +648,7 @@ This interaction implements [SA-08](../user-stories/subagents.md#sa-08-compose-d
 
 - Reviewers must be able to distinguish launch, completion, failure, partial output, and cancellation without relying on color.
 - Inspection, messaging, stopping, and cleanup must satisfy the requirements in [SA-02 through SA-06](../user-stories/subagents.md#sa-02-observe-concurrent-work), and the ported presentation must satisfy [SA-10](../user-stories/subagents.md#sa-10-recognize-delegated-work-through-the-ported-presentation).
-- A UI walkthrough must cover narrow and wide terminals, keyboard focus, resize, scrolling during streaming, completion while open, and stale stop confirmation.
+- A UI walkthrough must cover narrow and wide terminals, keyboard focus, resize, scrolling during streaming, completion while open, and a stop requested for an execution that finishes before the request is processed.
 - The review must record visual verification separately from execution tests and human approval.
 - The user must retain their draft, selected target, and reading position through progress updates and unsuccessful actions where the interaction contract requires it.
 - Technical transition and guard coverage is specified in the [architecture verification contract](../arch/subagents.md#125-state-machine-verification).
