@@ -143,6 +143,9 @@ The existing extension entry point composes these modules alongside goal managem
 11. Usage is recorded once per source event and retains its originating run identity.
 12. Model notifications are untrusted result data, not permission to initiate new work.
 13. No agent starts automatically because a parent session was restored.
+14. A settled run remains in the parent's outcome projection until the parent has been informed of its outcome, and it leaves the projection once it has been informed.
+15. Informing the parent is monotonic. Session recovery, reconciliation, and repeated inspection never move an outcome back into the projection.
+16. Reading a run that has not settled does not inform the parent, so an outcome in progress stays visible in the projection.
 
 ## 4. Model-Facing Tools
 
@@ -235,6 +238,8 @@ interface TaskOutputInput {
 - A blocking call waits for that captured run to settle or for the wait timeout to expire.
 - Timeout and cancellation of the wait do not cancel the agent.
 - Reading output is not an acknowledgment that a completion notification was delivered. Deduplication belongs to the delivery component.
+- Reading output does inform the parent of the run's outcome. A read that returns a terminal status sets outcome acknowledgement, so the run leaves the parent's outcome projection whether or not a notification was ever delivered. The two facts are separate, because the notification is a delivery concern and the projection is a knowledge concern.
+- A read that returns a nonterminal status does not set outcome acknowledgement, so an outcome in progress stays in the projection.
 - All text outputs are bounded by pi's existing truncation utilities. A truncated response identifies the full output file.
 
 ### 4.5 Result and error handling
@@ -432,7 +437,7 @@ These cases define verification obligations. `tests/agents/discovery.test.ts` an
 | `AgentRun` | It stores `runId`, `agentId`, status, launch origin, timestamps, output paths, partial-result metadata, and error or cancellation reason. |
 | `GuidanceRecord` | It stores an accepted guidance ID, target run, order, text, and delivery state. States distinguish pending, transport-accepted, consumed when provable, undelivered, and uncertain. |
 | `UsageRecord` | It stores a unique source event ID, run identity, and normalized usage. External accounting associations are owned by their consumers, not by this record. |
-| `CompletionRecord` | It stores run identity, destination parent, delivery ID, and pending/submitted/observed/uncertain state. |
+| `CompletionRecord` | It stores run identity, destination parent, delivery ID, pending/submitted/observed/uncertain delivery state, and outcome acknowledgement. The delivery state reports whether the completion notification reached the parent transcript. Outcome acknowledgement reports whether the parent holds the outcome, and either a delivered notification or a terminal read sets it. |
 | `WorkspaceRecord` | It distinguishes a Git `WorktreeRecord` from a `DirectorySnapshotRecord`. Both retain source, path, identity, and cleanup state; only Git worktrees have a branch and base commit. |
 
 An agent ID names a conversation. A run ID names one execution. A source tool-call ID deduplicates a launch; it is not reused as either identity. The historical `AgentRecord.worktree` and `requestedWorktree` keys now hold discriminated workspace records and plans; their names do not imply Git isolation.
@@ -661,17 +666,46 @@ Retaining even unchanged isolated workspaces until explicit cleanup differs from
 - Foreground outcomes are returned by the waiting tool handler and do not also trigger an ordinary background completion turn. If the waiter is cancelled or delivery to it becomes uncertain, the service retains the outcome and uses the non-triggering recovery path in Section 7.4.
 - Background outcomes are delivered as bounded extension-owned messages to the owning parent, using the host's follow-up mechanism rather than impersonating user input.
 - Delivery records progress from pending to submitted and then observed when matching parent transcript evidence exists.
+- Outcome acknowledgement is a separate field on the same record. It reports whether the parent holds the outcome, while the delivery state reports whether the completion notification reached the parent transcript.
+- Acknowledgement is set by either channel that informs the parent. It is set when the delivery state reaches observed, and it is set when a read of the run returns a terminal status.
+- Acknowledgement is monotonic. Session recovery, reconciliation, and repeated inspection never clear it, so an outcome that leaves the projection never returns to it.
+- The projection enumerates settled visible runs and reads acknowledgement. A settled run is therefore never omitted merely because its completion record is absent, which the interrupted-recovery path in Section 7.4 can produce.
 - Submission failure leaves the record pending. A crash or uncertain acknowledgment leaves it uncertain until reconciliation.
 - Reconciliation searches by the stable delivery identifier, not by result prose or timestamps.
 - If the host cannot establish whether a message was observed, the next parent model context includes the result once in a replaceable current-status projection. The implementation does not blindly trigger duplicate turns.
 - Exactly-once provider execution is not promised. The design uses deduplicated state and conservative recovery to avoid repeated execution and misleading delivery claims.
 
+Outcome acknowledgement is the dimension the projection reads, and it has one transition for each channel that informs the parent.
+
+```mermaid
+stateDiagram-v2
+    [*] --> unsettled: run accepted
+    unsettled --> awaiting: run reaches a terminal status
+    awaiting --> acknowledged: completion notification delivered
+    awaiting --> acknowledged: terminal read through TaskOutput
+    awaiting --> awaiting: read of a nonterminal run
+    acknowledged --> [*]
+```
+
+The delivery state is a separate machine, and it governs retry and reconciliation rather than the projection.
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending: terminal run recorded
+    pending --> submitted: publish attempt
+    submitted --> observed: parent transcript evidence
+    submitted --> uncertain: crash or unproven acknowledgment
+    uncertain --> observed: reconciliation finds evidence
+```
+
 ### 10.2 Turn policy
 
 - A normal background result can request one parent follow-up turn from the host in a live owning session. The host owns scheduling policy; the subagent subsystem does not inspect goals to decide whether a turn may run.
 - Results remain available for display and inspection whether or not the host schedules a follow-up.
-- Restoring a parent session does not replay old automatic follow-up requests. Undelivered outcomes become available in its next context or explicit inspection.
-- A parent request receives one bounded current-agent snapshot listing relevant active runs and undelivered outcomes. Historical snapshots are replaced in the outgoing copy, not appended indefinitely.
+- Restoring a parent session does not replay old automatic follow-up requests. Outcomes the parent has not been informed of become available in its next context, and explicit inspection informs the parent as well.
+- A parent request receives one bounded current-agent snapshot listing relevant active runs and outcomes the parent has not been informed of. The listing reads run settlement and outcome acknowledgement rather than the delivery state, so it omits nothing that is settled and uninformed. Historical snapshots are replaced in the outgoing copy, not appended indefinitely.
+- An outcome the parent has been informed of, by delivery or by inspection, is not listed again, and a repeated read never restores it.
+- The notice states the mechanism that informs the parent, and it does not instruct the parent to perform an action that cannot change the projection.
 - Status refreshes do not start model turns, and rendered assistant claims do not change agent records.
 
 ### 10.3 Transient definition metadata

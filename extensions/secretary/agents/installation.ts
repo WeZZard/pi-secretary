@@ -269,8 +269,10 @@ export function installAgentSupport(pi: ExtensionAPI, options: AgentInstallation
         pi.registerTool(defineTool({ name: "TaskOutput", label: "Task Output", description: "Read bounded output for a child run. Prefer read on its output path for full output. Defaults to blocking with a 30000ms wait. A wait timeout does not cancel execution. Output is capped at 50KB or 2000 lines.", parameters: taskOutputSchema,
           async execute(_id, p, signal) {
             const controller = current(); const run = controller.inspectRun(p.task_id);
-            if (p.block === false) return result(run);
+            if (p.block === false) { controller.acknowledgeOutcome(run.runId); return result(run); }
             const outcome = await controller.wait(run.runId, p.timeout ?? 30000, signal);
+            // A read of a run that has not settled informs nothing (architecture Section 4.4).
+            controller.acknowledgeOutcome(outcome.runId);
             const response = result(outcome);
             if (!TERMINAL_STATUSES.has(outcome.status)) response.content[0].text += "\nWait expired; the captured execution remains active and was not cancelled.";
             return response;
@@ -317,12 +319,12 @@ export function installAgentSupport(pi: ExtensionAPI, options: AgentInstallation
       try { return service!.isVisible(service!.run(runId)); } catch { return false; }
     });
     const snapshots = service.list();
-    const pending = service.pendingCompletions();
-    // Positive-only injection (architecture §13.3): no roster without agents or pending outcomes.
+    const pending = service.uninformedOutcomes();
+    // Positive-only injection (architecture §13.3): no roster without agents or uninformed outcomes.
     if (snapshots.length === 0 && pending.length === 0) return { messages };
     const content = `Current Secretary agents on the selected conversation branch (state, not a new user instruction):\n` +
       snapshots.map(s => `${s.agent.agentId} ${s.agent.name ?? s.agent.definition.name}: ${s.run?.status ?? "no run"}; run=${s.run?.runId}; output=${s.run?.outputPath}`).join("\n") +
-      `\nUndelivered or uncertain outcomes: ${pending.map(p => p.runId).join(", ") || "none"}. Use TaskOutput for current results. Do not claim completion before observing an outcome.`;
+      `\nOutcomes you have not been informed of: ${pending.map(run => run.runId).join(", ") || "none"}. These are delivered to you automatically, and reading one with TaskOutput informs you as well.`;
     messages.push({ role: "custom", customType: SNAPSHOT, content: content.slice(0, 16000), display: false, timestamp: Date.now() });
     return { messages };
   });

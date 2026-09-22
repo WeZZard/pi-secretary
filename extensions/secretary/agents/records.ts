@@ -119,6 +119,13 @@ export interface CompletionRecord {
   parentId: string;
   state: "pending" | "submitted" | "observed" | "uncertain";
   trigger: boolean;
+  /**
+   * When the parent was informed of the outcome, by a delivered completion notification or by a
+   * terminal read. It is absent while the parent is still uninformed, and it is never cleared
+   * (architecture Section 3, Invariant 15). The delivery state reports whether the notification
+   * reached the parent transcript, which is a separate concern (Section 6.1).
+   */
+  acknowledgedAt?: number;
 }
 export interface UsageRecord {
   id: string;
