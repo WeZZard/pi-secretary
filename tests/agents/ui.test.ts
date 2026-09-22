@@ -153,7 +153,7 @@ test("expanded narrow inspector preserves operation feedback and navigation hint
   const inspector = new Inspector(() => state, event => events.push(event), () => "id", () => 22);
   const lines = inspector.render(58);
   assert.ok(lines.some(line => line.includes("Operation acceptance is recorded.")));
-  assert.ok(lines.some(line => line.includes("Esc close")));
+  assert.ok(lines.some(line => line.includes("Esc Close")));
   assert.ok(lines.length <= 22, "the bordered frame keeps the rendered height within the overlay budget");
   inspector.handleInput("\x1b[6~");
   const scroll = events.find(event => event.type === "scroll");

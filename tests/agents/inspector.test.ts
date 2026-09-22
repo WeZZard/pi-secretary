@@ -132,7 +132,7 @@ for (const mode of ["main", "alternate"] as const) {
     const h = await terminalHarness(mode);
     try {
       const before = await h.paint();
-      assert.match(before.join("\n"), /PgUp\/PgDn scroll/);
+      assert.match(before.join("\n"), /PgUp\/PgDn Scroll/);
       h.input("\x1b[5~");
       const page = await h.paint();
       const nav = h.state().navigation;
@@ -217,12 +217,12 @@ test("the overlay renders a bordered frame with title, position, and footer at w
   assert.match(wide, /│ ○ a\s+│ b · running/, "wide terminals show the list beside the status header");
   assert.match(wide, /│ ● b\s+│ activity: /);
   assert.match(wide, /│ ○ c\s+│ ─{4,}/, "the divider separates the fixed header from the transcript");
-  assert.match(wide, /Esc close/);
+  assert.match(wide, /Esc Close/);
   const narrow = inspector.render(60);
   assert.match(plain(narrow), /╭─ Agents · 2\/3/);
   const headerRow = plain(narrow).split("\n")[1]!;
   assert.doesNotMatch(headerRow, / │ /, "narrow terminals stack panes");
-  assert.match(plain(narrow), /Esc close/);
+  assert.match(plain(narrow), /Esc Close/);
   for (const width of [36, 60, 100, 140]) {
     for (const line of inspector.render(width)) assert.ok(visibleWidth(line) <= width, `width ${width}`);
   }
@@ -241,26 +241,48 @@ test("below the minimum width the inspector renders a single diagnostic line", (
 
 test("the footer enumerates only actions available for the selected record", () => {
   const running = inspectorState();
-  const withRunning = plain(new Inspector(() => running, () => {}, () => "id").render(140));
-  assert.match(withRunning, /s message/);
-  assert.match(withRunning, /X stop selected · Ctrl\+X stop all/);
-  assert.match(withRunning, /o tools/);
-  assert.match(withRunning, /r reload/);
-  // A finished one-shot agent can only be viewed; message and stop disappear.
+  // The full hint line is 138 columns, so render wide enough to hold every entry.
+  const withRunning = plain(new Inspector(() => running, () => {}, () => "id").render(200));
+  assert.match(withRunning, /s Message/);
+  assert.match(withRunning, /X Stop · Ctrl\+X Stop all/);
+  assert.match(withRunning, /o Tools/);
+  assert.match(withRunning, /r Reload/);
+  // A finished one-shot agent can only be viewed; the record-specific message action disappears.
   const done = snapshot("b"); done.run!.status = "succeeded"; done.agent.resumable = false;
   let s = transition(initialState(), { type: "activate", parentId: "p", epoch: "e", viewId: "v" }, [done]).state;
   s = transition(s, { type: "open", viewId: "v1" }).state;
   s = transition(s, { type: "select", agentId: "b", requestId: "r" }).state;
   s = transition(s, { type: "transcript", epoch: "e", viewId: "v1", agentId: "b", requestId: "r", events }).state;
-  const finished = plain(new Inspector(() => s, () => {}, () => "id").render(140));
-  assert.doesNotMatch(finished, /s message/);
-  assert.doesNotMatch(finished, /D stop/);
-  assert.match(finished, /o tools/);
-  assert.match(finished, /Esc close/);
-  // The list view without a selection offers selection and closing only.
+  const finished = plain(new Inspector(() => s, () => {}, () => "id").render(200));
+  assert.doesNotMatch(finished, /s Message/);
+  assert.match(finished, /X Stop · Ctrl\+X Stop all/);
+  assert.match(finished, /o Tools/);
+  assert.match(finished, /Esc Close/);
+  // The list view without a selection offers no record-specific action.
   const list = transition(s, { type: "open", viewId: "v2" }).state;
-  const listRender = plain(new Inspector(() => list, () => {}, () => "id").render(140));
-  assert.doesNotMatch(listRender, /s message|D stop|o tools/);
+  const listRender = plain(new Inspector(() => list, () => {}, () => "id").render(200));
+  assert.doesNotMatch(listRender, /s Message|o Tools|r Reload/);
+});
+
+test("the footer keeps its published order and never omits close, stop, or scroll", () => {
+  const s = inspectorState();
+  const published = ["Esc Close", "↑/↓ Select", "Enter Open", "← Back", "X Stop", "Ctrl+X Stop all", "PgUp/PgDn Scroll", "a All agents", "s Message", "o Tools", "r Reload"];
+  const footerAt = (width: number) => {
+    const line = plain(new Inspector(() => s, () => {}, () => "id").render(width)).split("\n").find(candidate => candidate.includes("Esc Close"));
+    assert.ok(line, `the footer renders at width ${width}`);
+    return line.slice(line.indexOf("│ ") + 2, line.lastIndexOf(" │")).trim();
+  };
+  assert.equal(footerAt(200), published.join(" · "), "every entry is visible when the width allows it");
+  for (const width of [60, 76, 100, 116, 140, 160]) {
+    const present = footerAt(width).split(" · ");
+    let cursor = -1;
+    for (const entry of present) {
+      const index = published.indexOf(entry);
+      assert.ok(index > cursor, `"${entry}" is out of order at width ${width}`);
+      cursor = index;
+    }
+    for (const always of ["Esc Close", "X Stop", "PgUp/PgDn Scroll"]) assert.ok(present.includes(always), `"${always}" survives width ${width}`);
+  }
 });
 
 test("tool-detail expansion toggles on o and the configured expansion key", () => {
@@ -300,11 +322,11 @@ test("configured keybindings replace defaults in both input handling and the foo
   inspector.handleInput("m");
   assert.deepEqual(dispatched.map(e => e.type), ["stop", "compose"]);
   const rendered = plain(new Inspector(() => inspectorState(), () => {}, () => "id", () => 22,
-    { keybindings: { stop: ["shift+t"], steer: ["m"], close: ["ctrl+q"] } }).render(140));
-  assert.match(rendered, /T stop/);
-  assert.match(rendered, /m message/);
-  assert.match(rendered, /Ctrl\+Q close/);
-  assert.doesNotMatch(rendered, /D stop/);
+    { keybindings: { stop: ["shift+t"], steer: ["m"], close: ["ctrl+q"] } }).render(200));
+  assert.match(rendered, /T Stop/);
+  assert.match(rendered, /m Message/);
+  assert.match(rendered, /Ctrl\+Q Close/);
+  assert.doesNotMatch(rendered, /· X Stop ·/);
 });
 
 test("viewport sizing, dialogs, feedback, and Unicode preserve the complete frame", () => {
@@ -319,7 +341,7 @@ test("viewport sizing, dialogs, feedback, and Unicode preserve the complete fram
     assert.equal(lines.length, height);
     for (const line of lines) assert.equal(visibleWidth(line), width);
     for (const line of lines.slice(1, -1)) assert.equal(stripVTControlCharacters(line).at(-1), "│");
-    if (height >= 18 && state.dialog.kind === "closed") assert.match(plain(lines), /Esc close/);
+    if (height >= 18 && state.dialog.kind === "closed") assert.match(plain(lines), /Esc Close/);
   }
 });
 
@@ -337,7 +359,10 @@ test("navigation bounds take priority and excess width belongs to the transcript
     state.snapshots[0]!.agent.name = "long label ".repeat(100);
     assert.equal(inspector.render(width)[1]!.indexOf("│", 1), divider);
   }
-  assert.match(plain(inspector.render(36)), /PgUp\/PgDn scroll/);
+  // Close leads the published order, so clipping the narrowest frame can never remove it; the
+  // remaining hints need enough columns to fit at all, which the 36-column minimum does not provide.
+  assert.match(plain(inspector.render(36)), /Esc Close/);
+  assert.match(plain(inspector.render(60)), /PgUp\/PgDn Scroll/);
 });
 
 test("the selected roster row remains visible when the fleet exceeds the viewport", () => {

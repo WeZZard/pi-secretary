@@ -133,6 +133,9 @@ test("tool detail expansion toggles bounded argument and output blocks", () => {
   const tool = { kind: "tool" as const, entryId: "t1", name: "bash", status: "complete" as const, argsPreview: "```\n{\"command\":\"ls\"}\n```", output: "one\ntwo" };
   const collapsed = renderEvent(tool, 80);
   assert.ok(collapsed.every(line => !line.includes('"command"')));
+  // The expansion hint must name the key the footer advertises, never the stop shortcut.
+  assert.match(collapsed.join("\n"), /o to expand/);
+  assert.doesNotMatch(collapsed.join("\n"), /x to expand/);
   const expanded = renderEvent(tool, 80, { expanded: true });
   assert.match(expanded.join("\n"), /"command"/);
   assert.match(expanded.join("\n"), /one/);

@@ -6,7 +6,7 @@ import { messageEligible, active, overlayRows } from "./reducer.ts";
 import { clip, transcriptWindow } from "./transcript.ts";
 import { selectionCircle } from "./glyphs.ts";
 import { formatElapsed, formatUsageLabels } from "./usage-labels.ts";
-import { CANCELLATION_HINT, matchesStopAll, matchesStopSelected, bindingLabel, matchesInspectorAction, resolveInspectorKeybindings, type ResolvedInspectorKeybindings, type InspectorKeybindingsConfig } from "./keybindings.ts";
+import { matchesStopAll, matchesStopSelected, bindingLabel, matchesInspectorAction, resolveInspectorKeybindings, type ResolvedInspectorKeybindings, type InspectorKeybindingsConfig } from "./keybindings.ts";
 
 const MIN_WIDTH = 36;
 const PANE_SPLIT = 100;
@@ -163,26 +163,43 @@ export class Inspector implements Component, Focusable {
     const divider = theme ? theme.fg("dim", "─".repeat(Math.max(1, width))) : "─".repeat(Math.max(1, width));
     return [first, second, divider];
   }
+  /**
+   * The overlay hint row (UX §2.4). Entries render in a fixed order and that order never changes.
+   * When the width cannot hold every entry, whole entries are omitted by ascending drop rank, which is
+   * why close, stop, and page-scroll survive the narrowest terminals (architecture §12.6.4). Entries
+   * specific to the selected record appear only when that record offers the action.
+   */
   private footer(selected: AgentSnapshot | undefined, width: number): string {
     const keys = this.keys;
     const label = (action: keyof ResolvedInspectorKeybindings) => bindingLabel(keys, action, { firstOnly: true });
-    const close = `${label("close")} close`;
-    const select = `${bindingLabel(keys, "selectUp", { firstOnly: true })}/${bindingLabel(keys, "selectDown", { firstOnly: true })} select`;
-    const drill = `${label("drillIn")} open · ${label("drillOut")} back`;
-    const filter = `${label("toggleFinished")} finished`;
-    const optional: string[] = [];
+    const never = Infinity;
+    const entries: { text: string; drop: number }[] = [
+      { text: `${label("close")} Close`, drop: never },
+      { text: `${bindingLabel(keys, "selectUp", { firstOnly: true })}/${bindingLabel(keys, "selectDown", { firstOnly: true })} Select`, drop: 8 },
+      { text: `${label("drillIn")} Open`, drop: 6 },
+      { text: `${label("drillOut")} Back`, drop: 7 },
+      { text: `${label("stop")} Stop`, drop: never },
+      { text: "Ctrl+X Stop all", drop: 5 },
+      { text: `${label("pageUp")}/${label("pageDown")} Scroll`, drop: never },
+      { text: `${label("toggleFinished")} All agents`, drop: 4 },
+    ];
     if (selected) {
-      if (messageEligible(selected)) optional.push(`${label("steer")} message`);
-      if (active(selected) && label("stop") !== "X") optional.push(`${label("stop")} stop`);
+      if (messageEligible(selected)) entries.push({ text: `${label("steer")} Message`, drop: 2 });
       const nav = this.state().navigation;
-      if (nav.kind === "inspector" && nav.detail.kind === "ready") optional.push(`${label("toggleTools")} tools`, `${label("refresh")} reload`);
+      if (nav.kind === "inspector" && nav.detail.kind === "ready") {
+        entries.push({ text: `${label("toggleTools")} Tools`, drop: 1 }, { text: `${label("refresh")} Reload`, drop: 3 });
+      }
     }
-    const scroll = `${label("pageUp")}/${label("pageDown")} scroll`;
-    // Preserve scrolling and closing hints on narrow terminals; drop secondary actions first.
-    const parts = [select, scroll, drill, filter, ...optional, close];
-    while (parts.length > 3 && visibleWidth(parts.join(" · ")) > width) parts.splice(2, 1);
-    while (parts.length > 1 && visibleWidth(parts.join(" · ")) > width) parts.shift();
-    return parts.join(" · ");
+    while (visibleWidth(entries.map(entry => entry.text).join(" · ")) > width) {
+      let victim = -1;
+      for (let index = 0; index < entries.length; index++) {
+        if (entries[index]!.drop === never) continue;
+        if (victim < 0 || entries[index]!.drop < entries[victim]!.drop) victim = index;
+      }
+      if (victim < 0) break;
+      entries.splice(victim, 1);
+    }
+    return entries.map(entry => entry.text).join(" · ");
   }
   render(width: number): string[] {
     // Below the minimum width the overlay renders a single diagnostic line instead of panes.
@@ -213,7 +230,6 @@ export class Inspector implements Component, Focusable {
     const position = record ? `${roster.findIndex(a => a.agent.agentId === selected) + 1}/${roster.length}` : `0/${roster.length}`;
     const activeCount = s.snapshots.filter(a => active(a)).length;
     const top = topBorder(`${this.breadcrumb(level)} · ${position} · ${activeCount} active`);
-    const cancellationLine = frameRow(clip(width - 4 >= CANCELLATION_HINT.length ? CANCELLATION_HINT : "Stop: X selected · Ctrl+X all", width - 4));
     const footerLine = frameRow(clip(this.footer(record, width - 4), width - 4));
     if (height === 4) return [top, frameRow(clip(s.feedback ?? "", width - 4)), footerLine, bottom];
     const body: string[] = [];
@@ -239,18 +255,19 @@ export class Inspector implements Component, Focusable {
     if (nav.detail.kind === "loading") details.push("Loading transcript…");
     else if (nav.detail.kind === "unavailable") details.push(nav.detail.reason, `${bindingLabel(this.keys, "refresh")} retries`);
     else if (nav.detail.kind === "ready") {
-      details.push(`Transcript: ${nav.detail.transcript.follow}`);
+      // The follow state is observable from the viewport and is not part of the documented status
+      // header (§12.6.4), so it is not restated as a detail row.
       if (nav.detail.transcript.expanded && record) details.push(`Original prompt: ${record.run?.prompt ?? ""}`, `Activity: ${record.run?.activity ?? "none"}`, `Definition hash: ${record.agent.definition.hash}`, `Outcome: ${record.run?.error ?? record.run?.status ?? "idle"}`);
     } else if (!record) details.push(`Select an agent with ${bindingLabel(this.keys, "selectUp")}/${bindingLabel(this.keys, "selectDown")}.`);
     // Feedback is part of the operation contract, not expendable transcript overflow.
-    const fixedRows = 2 /* rules */ + 2 /* footers */ + (s.feedback ? 1 : 0);
+    const fixedRows = 2 /* rules */ + 1 /* footer */ + (s.feedback ? 1 : 0);
     const bodyHeight = Math.max(0, height - fixedRows);
     const rosterRows = wide ? bodyHeight : Math.min(rosterLines.length, Math.min(5, Math.max(0, bodyHeight - 2)));
     const selectedIndex = roster.findIndex(a => a.agent.agentId === selected);
     const rosterStart = Math.max(0, Math.min(selectedIndex - rosterRows + 1, rosterLines.length - rosterRows));
     const visibleRoster = rosterLines.slice(rosterStart, rosterStart + rosterRows);
     this.visibleTranscriptRows = Math.max(1, bodyHeight - (wide ? 0 : rosterRows) - header.length - details.length);
-    const transcriptRows = nav.detail.kind === "ready" ? transcriptWindow(nav.detail.transcript, detailWidth, this.visibleTranscriptRows, theme) : [];
+    const transcriptRows = nav.detail.kind === "ready" ? transcriptWindow(nav.detail.transcript, detailWidth, this.visibleTranscriptRows, theme, bindingLabel(this.keys, "toggleTools", { firstOnly: true })) : [];
     const detailLines = [...header, ...details, ...transcriptRows];
     if (wide) {
       this.transcriptPaneX = 2 + paneWidth + 3;
@@ -266,6 +283,6 @@ export class Inspector implements Component, Focusable {
       for (let i = 0; i < bodyHeight; i++) body.push(frameRow(clip(lines[i] ?? "", detailWidth)));
     }
     const feedback = s.feedback ? frameRow(clip(s.feedback, width - 4)) : undefined;
-    return [top, ...body, ...(feedback ? [feedback] : []), ...(height >= 5 ? [cancellationLine] : []), footerLine, bottom].map(l => truncateToWidth(l, width, ""));
+    return [top, ...body, ...(feedback ? [feedback] : []), footerLine, bottom].map(l => truncateToWidth(l, width, ""));
   }
 }

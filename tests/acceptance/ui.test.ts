@@ -299,7 +299,7 @@ const bindings: ScenarioBindings = {
     assert.match(h.render(), /unsent guidance/);
     assert.match(h.render().split("\n")[0]!, /^╭─ Agents ─+╮$/);
     h.inspector!.handleInput("\x1b[27u");
-    assert.ok(h.inspector); assert.equal(h.closes, 0); assert.match(h.render(), /Transcript/); assert.deepEqual(service.delivered, []);
+    assert.ok(h.inspector); assert.equal(h.closes, 0); assert.match(h.render(), /^╭─ Agents/m, "the fleet view overlay remains open"); assert.deepEqual(service.delivered, []);
     assert.equal(service.service.run(id).status, "running"); h.inspector!.handleInput("\x1b"); await closed;
     assert.equal(h.editor, "Original main draft"); assert.equal(h.input("k"), undefined); assert.equal(service.service.run(id).status, "running");
   },
@@ -476,8 +476,8 @@ const bindings: ScenarioBindings = {
     const inspector = new Inspector(() => h.state, e => { dispatched.push(e.type); }, () => "id", () => 22, { keybindings: config.ui.fleetKeybindings });
     inspector.handleInput("T");
     assert.deepEqual(dispatched, ["stop"], "the configured stop key submits without a confirmation step");
-    const footer = plain(inspector.render(140));
-    assert.match(footer, /T stop/); assert.match(footer, /Ctrl\+Q close/); assert.doesNotMatch(footer, /D stop/);
+    const footer = plain(inspector.render(200));
+    assert.match(footer, /T Stop/); assert.match(footer, /Ctrl\+Q Close/); assert.doesNotMatch(footer, /· X Stop ·/);
     writeFileSync(join(root, "secretary.json"), JSON.stringify({ agents: { ui: { fleetKeybindings: { inspect: ["i"] } } } }));
     assert.throws(() => loadAgentConfiguration(root, root, false), /not a supported inspector action/);
   },
@@ -485,25 +485,25 @@ const bindings: ScenarioBindings = {
     const stopped: string[] = [];
     const h = adapter(t, port({ stop: async id => { stopped.push(id); } }));
     assert.match(h.fleet(), /^↓ to focus a subagent · Ctrl\+X stop all\n○ main/);
-    assert.doesNotMatch(h.fleet(), /X stop selected/);
+    assert.doesNotMatch(h.fleet(), /X Stop · Ctrl\+X Stop all/);
     const initialHeight = h.fleet().split("\n").length;
     h.input("\x1b[B");
-    assert.match(h.fleet(), /^X stop selected · Ctrl\+X stop all\n● main/);
+    assert.match(h.fleet(), /^X Stop · Ctrl\+X Stop all\n● main/);
     // A terminal that reports kitty-protocol event types delivers press and release for one key.
     h.input("\x1b[1;1:3B");
-    assert.match(h.fleet(), /^X stop selected · Ctrl\+X stop all\n● main/, "the release does not advance the selection again");
+    assert.match(h.fleet(), /^X Stop · Ctrl\+X Stop all\n● main/, "the release does not advance the selection again");
     assert.equal(h.fleet().split("\n").length, initialHeight);
     h.input("\x1b");
     assert.match(h.fleet(), /^↓ to focus a subagent · Ctrl\+X stop all\n○ main/);
     assert.equal(h.fleet().split("\n").length, initialHeight);
     assert.equal(h.input("X"), undefined, "the editor receives X unchanged");
     h.input("\x1b[B");
-    assert.match(h.fleet(), /^X stop selected · Ctrl\+X stop all\n● main/);
+    assert.match(h.fleet(), /^X Stop · Ctrl\+X Stop all\n● main/);
     assert.doesNotMatch(h.fleet(), /focus a subagent/);
     h.input("\x1b[B"); h.input("X"); await tick();
     assert.deepEqual(stopped, ["a-run"], "X submits the selected stop with no confirmation step");
     assert.equal(h.inspector, undefined, "the settled request closes the overlay");
-    assert.match(h.fleet(), /^X stop selected · Ctrl\+X stop all/, "the list regains focus");
+    assert.match(h.fleet(), /^X Stop · Ctrl\+X Stop all/, "the list regains focus");
   },
   "ACC-SA-UI-19": async ({ t }) => {
     let snapshots = [snapshot(), snapshot("b"), snapshot("foreign", "other")];
@@ -535,7 +535,7 @@ const bindings: ScenarioBindings = {
   "ACC-SA-UI-17": () => {
     const h = new UIHarness().ready();
     const wide = plain(h.inspector.render(140));
-    assert.match(wide, /╭─ Agents · 1\/2 · 2 active ─+╮/); assert.match(wide, /╰─+╯/); assert.match(wide, /Esc close/);
+    assert.match(wide, /╭─ Agents · 1\/2 · 2 active ─+╮/); assert.match(wide, /╰─+╯/); assert.match(wide, /Esc Close/);
     const narrow = h.inspector.render(60);
     assert.match(plain(narrow), /╭─ Agents · 1\/2/);
     assert.doesNotMatch(plain(narrow).split("\n")[1]!, / │ /);

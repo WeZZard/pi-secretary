@@ -137,10 +137,10 @@ for (const mode of ["main", "alternate"] as const) {
       const initial = h.widget().split("\n");
       assert.equal(initial[0], "↓ to focus a subagent · Ctrl+X stop all");
       assert.match(initial[1]!, /○ main/);
-      assert.doesNotMatch(h.widget(), /X stop selected/);
+      assert.doesNotMatch(h.widget(), /X Stop · Ctrl\+X Stop all/);
       h.input("\x1b[B"); await h.paint();
       const focused = h.widget().split("\n");
-      assert.equal(focused[0], "X stop selected · Ctrl+X stop all");
+      assert.equal(focused[0], "X Stop · Ctrl+X Stop all");
       assert.match(focused[1]!, /● main/);
       assert.equal(focused.length, initial.length);
       assert.doesNotMatch(h.widget(), /focus a subagent/);
@@ -185,7 +185,7 @@ for (const mode of ["main", "alternate"] as const) {
     try {
       h.input("\x1b[B");
       const screen = await h.paint();
-      assert.match(screen, /X.*selected/); assert.match(screen, /Ctrl\+X.*all/);
+      assert.match(screen, /X Stop/); assert.match(screen, /Ctrl\+X.*all/);
       h.update([]); await h.paint(); assert.equal(h.widget(), "");
     } finally { h.close(); }
   });

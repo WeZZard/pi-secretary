@@ -1,7 +1,11 @@
 import { Markdown, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { getMarkdownTheme, type Theme } from "@earendil-works/pi-coding-agent";
+import { DEFAULT_INSPECTOR_KEYBINDINGS, bindingLabel } from "./keybindings.ts";
 import type { TranscriptEvent } from "./transcript-events.ts";
 import type { TranscriptView } from "./state.ts";
+
+/** The expansion hint names the resolved key, so it can never advertise the stop shortcut. */
+const DEFAULT_EXPAND_KEY = bindingLabel(DEFAULT_INSPECTOR_KEYBINDINGS, "toggleTools", { firstOnly: true });
 
 export function sanitize(text: string): string {
   return text.replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\|$)/g, "")
@@ -28,9 +32,10 @@ function toolGlyph(status: "running" | "complete" | "error", theme?: Theme): str
 export const statusGlyph = toolGlyph;
 
 /** Render one structured event to themed, width-bounded lines. Text is untrusted; sanitize before theming. */
-export function renderEvent(event: TranscriptEvent, width: number, options: { expanded?: boolean; theme?: Theme } = {}): string[] {
+export function renderEvent(event: TranscriptEvent, width: number, options: { expanded?: boolean; theme?: Theme; expandKey?: string } = {}): string[] {
   if (width <= 0) return [];
   const theme = options.theme;
+  const expandKey = options.expandKey ?? DEFAULT_EXPAND_KEY;
   const rail = (content: string) => bounded(`${theme ? theme.fg("borderMuted", "│") : "│"} ${content}`, width);
   const lines: string[] = [];
   if (event.kind === "tool") {
@@ -53,8 +58,8 @@ export function renderEvent(event: TranscriptEvent, width: number, options: { ex
       const visible = outputLines.slice(-TOOL_PREVIEW_LINES);
       const hidden = outputLines.length - visible.length;
       for (const line of visible) for (const row of wrapped(line, Math.max(1, width - 4))) lines.push(rail(`  ${theme ? theme.fg("toolOutput", row) : row}`));
-      if (hidden > 0) lines.push(rail(theme ? theme.fg("dim", `  … ${hidden} earlier lines · x to expand`) : `  … ${hidden} earlier lines · x to expand`));
-      else if (event.output) lines.push(rail(theme ? theme.fg("dim", "  x to expand") : "  x to expand"));
+      if (hidden > 0) lines.push(rail(theme ? theme.fg("dim", `  … ${hidden} earlier lines · ${expandKey} to expand`) : `  … ${hidden} earlier lines · ${expandKey} to expand`));
+      else if (event.output) lines.push(rail(theme ? theme.fg("dim", `  ${expandKey} to expand`) : `  ${expandKey} to expand`));
     }
     if (event.status === "error" && event.output) {
       const first = event.output.split("\n").find(line => line.trim()) ?? event.output;
@@ -97,17 +102,40 @@ export function transcriptLineCount(events: readonly TranscriptEvent[]): number 
   return events.reduce((total, event) => total + logicalLines(event), 0);
 }
 
-/** Render a windowed transcript view. The anchor is a logical-line index recovered by entry id and offset. */
-export function transcriptWindow(t: TranscriptView, width: number, height: number, theme?: Theme): string[] {
-  if (width <= 0 || height <= 0) return [];
-  const rendered = t.events.map(event => renderEvent(event, width, { expanded: t.expanded, theme }));
-  if (t.follow === "following") return rendered.flat().slice(-height).map(line => truncateToWidth(line.trimEnd(), width, ""));
-  const starts = logicalStarts(t.events);
+/**
+ * Render a windowed transcript view. The anchor is a logical-line index recovered by entry id and offset.
+ *
+ * Only events intersecting the viewport are rendered. Rendering the whole transcript to display one
+ * screen costs O(transcript length) per paint while the visible output is bounded by `height`, which
+ * makes wheel scrolling unusable on long transcripts (§12.1.3). The anchor reconciliation is unchanged:
+ * the offset is clamped against the rendered display lines of the anchor event, because a logical line
+ * may wrap into several display lines.
+ */
+export function transcriptWindow(t: TranscriptView, width: number, height: number, theme?: Theme, expandKey?: string): string[] {
+  if (width <= 0 || height <= 0 || !t.events.length) return [];
+  const events = t.events;
+  const paint = (event: TranscriptEvent) => renderEvent(event, width, { expanded: t.expanded, theme, ...(expandKey === undefined ? {} : { expandKey }) });
+  const clip = (lines: readonly string[]) => lines.map(line => truncateToWidth(line.trimEnd(), width, ""));
+  // Following: walk backwards from the tail only as far as the viewport reaches.
+  if (t.follow === "following") {
+    const blocks: string[][] = [];
+    let total = 0;
+    for (let index = events.length - 1; index >= 0 && total < height; index--) {
+      const lines = paint(events[index]!);
+      blocks.unshift(lines);
+      total += lines.length;
+    }
+    return clip(blocks.flat().slice(-height));
+  }
+  // Paused: locate the anchor event, then render forward until the viewport is filled.
+  const starts = logicalStarts(events);
   let eventIndex = starts.findIndex((start, i) => anchorIn(t.anchor, start, starts[i + 1] ?? Infinity));
-  if (eventIndex < 0) eventIndex = Math.max(0, t.events.length - 1);
-  const offset = Math.min(Math.max(0, t.anchor - starts[eventIndex]!), Math.max(0, rendered[eventIndex]!.length - 1));
-  const lines = [...rendered[eventIndex]!.slice(offset), ...rendered.slice(eventIndex + 1).flat()];
-  return lines.slice(0, height).map(line => truncateToWidth(line.trimEnd(), width, ""));
+  if (eventIndex < 0) eventIndex = Math.max(0, events.length - 1);
+  const first = paint(events[eventIndex]!);
+  const offset = Math.min(Math.max(0, t.anchor - starts[eventIndex]!), Math.max(0, first.length - 1));
+  const lines = first.slice(offset);
+  for (let index = eventIndex + 1; index < events.length && lines.length < height; index++) lines.push(...paint(events[index]!));
+  return clip(lines.slice(0, height));
 }
 function anchorIn(anchor: number, start: number, end: number): boolean { return anchor >= start && anchor < end; }
 

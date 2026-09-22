@@ -53,7 +53,7 @@ test("the editor hint names the action Down will take", () => {
   const above = new FleetView(state, { rows: () => [vm("a")], now: () => 6500, downFocuses: () => false });
   assert.equal(above.render(80)[0], "↓ to move down · Ctrl+X stop all", "a caret above the last line is not advertised as focusing the fleet");
   const onList = new FleetView(() => transition(state(), { type: "fleet", downAtLastLine: true }).state, { rows: () => [vm("a")], now: () => 6500, downFocuses: () => true });
-  assert.equal(onList.render(80)[0], "X stop selected · Ctrl+X stop all", "list focus keeps the cancellation hint regardless of the caret");
+  assert.equal(onList.render(80)[0], "X Stop · Ctrl+X Stop all", "list focus keeps the cancellation hint regardless of the caret");
 });
 
 test("a row leaves the indicator immediately when its run reaches a terminal status", () => {

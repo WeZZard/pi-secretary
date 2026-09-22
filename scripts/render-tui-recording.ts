@@ -24,7 +24,7 @@ const expected: Record<string, string[]> = {
   "03-message-composer": ["Queue guidance", "Check failure handling before finishing."],
   "03b-retained-composer-draft": ["Queue guidance", "Check failure handling before finishing."],
   "04-message-acknowledged": ["Operation acceptance is recorded."],
-  "05-narrow-inspector": ["Task: Inspect acceptance fixture", "Esc close"],
+  "05-narrow-inspector": ["Task: Inspect acceptance fixture", "Esc Close"],
   "06-stop-confirmation": ["Confirm stop", "Enter confirms"],
   "07-cancelled-inspector": ["acceptance-worker · cancelled", "Agents ·"],
   "07b-menu-top": ["Subagents", "Esc dismiss"],

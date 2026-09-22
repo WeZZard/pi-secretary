@@ -241,13 +241,13 @@ Foreground detach, live prompt auditing, external job display, and external term
 - Unknown usage is not displayed as zero. Rows whose source artifacts predate window data keep the token-total label without a window label.
 - Rows are themed and display width-aware. The layout truncates by terminal display width and realigns right-side information after resize.
 - When more rows exist than fit, the visible window follows the selection.
-- While the indicator is visible, exactly one hint line appears above the agent rows, before the main row when it is in view. The editor-focused wording names the action Down will actually take: with the caret on the last line it reads `↓ to focus a subagent · Ctrl+X stop all`, and while the caret can still move down it reads `↓ to move down · Ctrl+X stop all`. With the fleet list focused, that same line changes to `X stop selected · Ctrl+X stop all`. Moving focus or the caret does not add another line or change the list height. The hint clips rather than wraps on narrow terminals. The selected-agent shortcut applies only when the indicator or inspector has focus, and it stops the selected execution immediately, without a confirmation step. Typing `x` in the editor remains ordinary text. Ctrl+X stops every active top-level execution in the current fleet immediately, from the editor or fleet surfaces and without a confirmation step, except while another dialog or host prompt owns input. When the fleet is idle, Ctrl+X retains the host's normal behavior. One press moves the selection exactly one row, including on a terminal that reports key-release events.
+- While the indicator is visible, exactly one hint line appears above the agent rows, before the main row when it is in view. The editor-focused wording names the action Down will actually take: with the caret on the last line it reads `↓ to focus a subagent · Ctrl+X stop all`, and while the caret can still move down it reads `↓ to move down · Ctrl+X stop all`. With the fleet list focused, that same line changes to `X Stop · Ctrl+X Stop all`. Moving focus or the caret does not add another line or change the list height. The hint clips rather than wraps on narrow terminals. The selected-agent shortcut applies only when the indicator or inspector has focus, and it stops the selected execution immediately, without a confirmation step. Typing `x` in the editor remains ordinary text. Ctrl+X stops every active top-level execution in the current fleet immediately, from the editor or fleet surfaces and without a confirmation step, except while another dialog or host prompt owns input. When the fleet is idle, Ctrl+X retains the host's normal behavior. One press moves the selection exactly one row, including on a terminal that reports key-release events.
 - Pressing Down with the caret on the editor's last line moves focus into the list and selects the first row; an empty editor is the single-line case of that rule. The editor keeps Down for autocomplete and prompt-history browsing. Up and Down move the selection. Pressing Up on the first row or pressing Escape returns focus to the editor. Left no longer activates the indicator. Enter opens the fleet view overlay on the selected agent row. Enter on the main row returns focus to the prompt input instead; the main session's transcript is the session behind the editor, so there is no overlay destination for it.
 
 The following is a layout example with an active selection. Angle-bracket values are placeholders, not measurements:
 
 ```text
-X stop selected · Ctrl+X stop all
+X Stop · Ctrl+X Stop all
 ○ main
 ● <agent name> · <status> · <elapsed> · <window> · <cumulative>
 ○ <agent name> · <status>
@@ -275,7 +275,7 @@ X stop selected · Ctrl+X stop all
 - The default filter lists active and queued agents at the current level. Pressing `a` toggles the filter to also list terminal agents (succeeded, failed, cancelled, or interrupted). The filter applies to every level and is identified in the footer.
 - The transcript pane always shows the selected agent and updates as the selection moves.
 - The transcript pane is split into a fixed status header and the scrolling transcript below it. The header floats at the top of the pane as an inline panel without an enclosing box: its first line shows the agent name, status label, elapsed time, and available usage labels, its second line shows the current activity, and a single horizontal divider separates it from the transcript. The header never scrolls with the transcript. The same header applies to the full-width detail view on narrow terminals.
-- In a mouse-enabled full-screen host, wheel scrolling over the transcript pane scrolls the transcript with the same auto-follow pause and resume rules as keyboard scrolling, and wheel scrolling over the navigation list moves the selection. Dialogs consume wheel input without changing the draft, transcript, or agent selection. Normal main-screen mode leaves the wheel to terminal scrollback; Page Up/Page Down and Shift+K/Shift+J remain available for transcript scrolling in both modes. The footer prioritizes the page-scroll and close hints on narrow terminals.
+- In a mouse-enabled full-screen host, wheel scrolling over the transcript pane scrolls the transcript with the same auto-follow pause and resume rules as keyboard scrolling, and wheel scrolling over the navigation list moves the selection. Dialogs consume wheel input without changing the draft, transcript, or agent selection. Normal main-screen mode leaves the wheel to terminal scrollback; Page Up/Page Down and Shift+K/Shift+J remain available for transcript scrolling in both modes. The footer keeps its published action order and omits whole actions when the width cannot hold them; close, stop, and page-scroll are omitted last, so they survive on narrow terminals.
 
 The following is a layout example. Angle-bracket values are placeholders, not measurements:
 
@@ -286,11 +286,11 @@ The following is a layout example. Angle-bracket values are placeholders, not me
 │                 │ ────────────────────────────────────────────|
 │                 │ <transcript of the selected agent>          |
 ├─────────────────┴─────────────────────────────────────────────┤
-│ ↑/↓ select · Enter/→ open · ← back · a finished · s message   │
-│ D stop · r reload · Esc close                                 │
+│ Esc Close · ↑/↓ Select · ← Back · X Stop · PgUp/PgDn Scroll   │
 └───────────────────────────────────────────────────────────────┘
 ```
 
+- The footer names the available actions in a fixed order: `Esc Close`, `↑/↓ Select`, `Enter Open`, `← Back`, `X Stop`, `Ctrl+X Stop all`, `PgUp/PgDn Scroll`, `a All agents`, `s Message`, `o Tools`, `r Reload`. Actions that belong to the selected agent appear only when that agent offers them. When the width cannot hold every action, whole actions are omitted and the remaining ones keep their order. The example above is a narrow frame, so it shows the surviving subset.
 - Details include the original task, definition source, model, status, current activity, messages, tool calls, outcome, output path, and worktree information.
 - The transcript renders assistant text as Markdown where appropriate, tool calls with their name, bounded arguments, status, and bounded output, and notices such as queued or undelivered guidance. Control sequences from transcripts are not executed.
 - New content is followed automatically only while the user is at the end of the transcript.

@@ -58,10 +58,10 @@ test("labels reflect configured keys and rendered footers match input handling",
   inspector.handleInput("T");
   inspector.handleInput("Z");
   assert.deepEqual(dispatched, ["stop", "expand"]);
-  const footer = stripVTControlCharacters(inspector.render(160).join("\n"));
-  assert.match(footer, /T stop/);
-  assert.match(footer, /m message/);
-  assert.match(footer, /Ctrl\+Q close/);
-  assert.match(footer, /Z tools/);
-  assert.doesNotMatch(footer, /D stop/);
+  const footer = stripVTControlCharacters(inspector.render(200).join("\n"));
+  assert.match(footer, /T Stop/);
+  assert.match(footer, /m Message/);
+  assert.match(footer, /Ctrl\+Q Close/);
+  assert.match(footer, /Z Tools/);
+  assert.doesNotMatch(footer, /· X Stop ·/);
 });
