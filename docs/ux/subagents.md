@@ -2,7 +2,7 @@
 
 **Document type:** UX and interaction specification.
 
-**Status:** Interaction specification for the subagent interface. Automated execution evidence is recorded in the [verification report](../testing/subagent-verification.md); human visual approval remains separate. Revised 2026-09-19: the unified fleet indicator ([Section 2.2](#22-fleet-indicator)) and the split fleet view overlay ([Section 2.4](#24-fleet-view-overlay)) are implemented and replace the former FleetView, async widget, and inspector.
+**Status:** Interaction specification for the subagent interface. Automated execution evidence is recorded in the [verification report](../testing/subagent-verification.md); human visual approval remains separate. Revised 2026-09-19: the unified fleet indicator ([Section 2.2](#22-fleet-indicator)) and the split fleet view overlay ([Section 2.4](#24-fleet-view-overlay)) are implemented and replace the former FleetView, async widget, and inspector. Revised 2026-09-23: SA-12 adds inspection at every nested level, stopping an individual nested agent from its drill level, and presentation of a nested outcome whose delegating session has ended. These clauses are specified and are not yet implemented.
 
 **Related documents:** [Requirements](../user-stories/subagents.md), [technical design](../arch/subagents.md), and [research](../research/subagent-system-comparison.md).
 
@@ -442,7 +442,7 @@ until they are updated.
 - **User intent:** The user wants to understand delegated work and its current outcome.
 - **Entry conditions:** The current session has an agent record, or the user knows its identifier.
 - **User action:** The user presses Down at the editor's last line, selects an agent, and presses Enter. The user can instead invoke `/agents`.
-- **Observable outcome:** The fleet view overlay shows the selected agent without starting a model turn.
+- **Observable outcome:** The fleet view overlay shows the selected agent without starting a model turn. When the selected agent has nested children, the user can drill into them and inspect the next level, and can repeat this at each level until the deepest nested agent.
 - **Feedback:** The view identifies the agent, execution state, and whether the transcript is live or historical.
 - **Failure and recovery:** Missing artifacts remain visible as a diagnostic. The user can inspect the retained record and output paths; the interface does not manufacture a transcript.
 
@@ -461,7 +461,7 @@ Secretary initially exposes one guidance operation. Nicobailon's `steer`, `follo
 
 - **User intent:** The user wants selected work to stop while retaining its available output.
 - **Entry conditions:** The selected execution is queued, starting, running, or already stopping.
-- **User action:** The user presses `X` while the fleet indicator or inspector has an agent selected. The selected execution's run identity is captured and submitted in that one action, with no confirmation step. `/agents stop <id-or-name>` provides the same operation immediately in the TUI. Ctrl+X stops all active top-level executions in the current fleet the same way; cancelling those executions also requests cancellation of their nested work.
+- **User action:** The user presses `X` while the fleet indicator or inspector has an agent selected. The selected execution's run identity is captured and submitted in that one action, with no confirmation step. `/agents stop <id-or-name>` provides the same operation immediately in the TUI. Ctrl+X stops all active top-level executions in the current fleet the same way; cancelling those executions also requests cancellation of their nested work. Inside a drill level, `X` stops the selected agent at that level, including a nested agent. Stopping a nested agent also requests cancellation of the agents it launched, and it leaves its parent and its siblings untouched.
 - **Observable outcome:** A queued execution is cancelled before starting. Active execution shows “Stopping” until termination is observed.
 - **Feedback:** The view distinguishes a pending stop request from a cancelled execution. It states that file changes are not rolled back.
 - **Failure and recovery:** A stop request names the run identity that was selected when the shortcut was pressed, so a run that finishes and is replaced before the request is processed is never redirected to its successor. Ctrl+X captures a fixed set of run identities at the moment it is pressed; later launches are not added to it, and earlier cancellation requests are never repeated. A shortcut pressed on a row whose execution already finished submits nothing and explains that the target is not eligible. If stopping cannot be confirmed, the view reports that uncertainty and does not offer a conflicting resume.
@@ -638,6 +638,7 @@ This interaction implements [SA-08](../user-stories/subagents.md#sa-08-compose-d
 - Completion never steals keyboard focus from the editor or an open composer.
 - A state-only display refresh does not start a model turn.
 - The parent model can receive a completion message independently of whether a toast is shown.
+- When a nested agent's outcome can no longer be delivered to the session that launched it, a live ancestor session presents it, and the top-level conversation is the final recipient. The user therefore learns the nested outcome in the conversation where they will act on it, instead of losing it with the ended session.
 - In headless modes, commands return text rather than opening a terminal component.
 - Print and JSON mode reject a request to resume an idle agent through `SendMessage`, because that operation starts background execution. The response directs the caller to use a persistent TUI or RPC session; it does not accept work that normal process completion would terminate.
 - Cleanup requiring confirmation is unavailable in headless mode. Model-facing `TaskStop` remains an explicit stop request and does not require a dialog.

@@ -29,14 +29,14 @@
 
 | Feature file | Requirements | Scope |
 | --- | --- | --- |
-| [delegation.feature](delegation.feature) | SA-01. | The scenarios cover foreground and background delegation, fresh context, queue admission, and tool availability. |
+| [delegation.feature](delegation.feature) | SA-01 and SA-12. | The scenarios cover foreground and background delegation, fresh context, queue admission, tool availability, and delivery of a nested outcome whose delegating session has ended. |
 | [agent-configuration.feature](agent-configuration.feature) | SA-07. | The scenarios cover definitions, stable model schemas with runtime list publication, inheritance, project trust, and tool restrictions. |
 | [agent-discovery.feature](agent-discovery.feature) | SA-13. | The scenarios cover first-request discovery, request-scoped definitions during edits, and recovery without parent filesystem probing. |
 | [messaging.feature](messaging.feature) | SA-03. | The scenarios cover guidance, resumption, delivery acknowledgment, and concurrent requests. |
-| [cancellation.feature](cancellation.feature) | SA-04. | The scenarios cover stopping, foreground interruption, wait cancellation, and stale confirmations. |
+| [cancellation.feature](cancellation.feature) | SA-04 and SA-12. | The scenarios cover stopping, stopping an individual nested agent from its drill level, foreground interruption, wait cancellation, and stale confirmations. |
 | [session-recovery.feature](session-recovery.feature) | SA-05. | The scenarios cover exit, reload, session ownership, restoration, and recovery after failure. |
 | [worktree-isolation.feature](worktree-isolation.feature) | SA-06. | The scenarios cover worktree allocation, retained changes, cleanup, and resumption races. Shared-directory defaults and non-Git directory snapshots are covered by the E2E matrix rather than this feature file. |
-| [agent-inspection.feature](agent-inspection.feature) | SA-02. | The scenarios cover FleetView, transcript inspection, focus, scrolling, and accessible status presentation. |
+| [agent-inspection.feature](agent-inspection.feature) | SA-02 and SA-12. | The scenarios cover FleetView, transcript inspection, multi-level drill-down, focus, scrolling, and accessible status presentation. |
 | [ui-state-machine.feature](ui-state-machine.feature) | SA-02 through SA-06. | The scenarios cover modal transitions, stable targets, duplicate submission, uncertain acknowledgment, and stale responses. |
 | [goal-integration.feature](goal-integration.feature) | SA-08. | The scenarios cover attributed usage, automatic goal authority, completion, and continuation. |
 | [goal-agent-composition.feature](goal-agent-composition.feature) | SA-08. | The scenarios cover fresh delegated recovery while a goal remains blocked and standalone delegation without goal management. |

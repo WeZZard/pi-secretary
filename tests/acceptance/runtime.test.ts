@@ -12,6 +12,8 @@ import { initialState, type UiEvent } from "../../extensions/secretary/agents/ui
 import { runEffect } from "../../extensions/secretary/agents/ui/effects.ts";
 import { deferred, runFeatures, type ScenarioBindings } from "./support.ts";
 import { publicHarness, serviceHarness, task, turn } from "./runtime-harness.ts";
+import { adapter } from "./ui-harness.ts";
+import { nestedRealTree, settle as settleTree } from "../support/nested-real-tree.ts";
 
 const textOf = (result: any) => result.content.map((part: any) => part.text ?? "").join("\n");
 const noWorktrees = (root: string) => {
@@ -422,12 +424,42 @@ const bindings: ScenarioBindings = {
     else await assert.rejects(h.tool("TaskOutput", args), /Invalid TaskOutput input/);
     assert.equal(h.calls.length, 1);
   },
+  "ACC-SA-04-08": async ({ t }) => {
+    const tree = await nestedRealTree(t, { grandchild: true });
+    const h = adapter(t, tree.uiPort);
+    const closed = h.command(`stop ${tree.b.agent.agentId}`);
+    await settleTree(); await settleTree();
+    const b = tree.service.run(tree.b.run!.runId).status;
+    assert.ok(b === "cancelling" || b === "cancelled", `the drill-level stop must cancel B; observed ${b}`);
+    const d = tree.service.run(tree.d!.run!.runId).status;
+    assert.ok(d === "cancelling" || d === "cancelled", `stopping B must cancel B's own nested agent; observed ${d}`);
+    assert.equal(tree.service.run(tree.a.run!.runId).status, "running", "the parent keeps running");
+    assert.equal(tree.service.run(tree.c.run!.runId).status, "running", "the sibling keeps running");
+    h.inspector?.handleInput("\x1b");
+    await closed;
+  },
+  "ACC-SA-01-09": async ({ t }) => {
+    const tree = await nestedRealTree(t);
+    const nestedRunId = tree.b.run!.runId;
+    tree.finish(nestedRunId, "NESTED_LATE_OUTPUT");
+    await settleTree();
+    assert.equal(tree.service.run(nestedRunId).status, "succeeded");
+    await tree.childServices.get(tree.a.agent.agentId)!.shutdown();
+    await settleTree();
+    const presented = tree.service.uninformedOutcomes().filter(run => run.runId === nestedRunId);
+    assert.equal(presented.length, 1, "the nested outcome is presented to the main session exactly once");
+    const agent = tree.service.resolve(tree.b.agent.agentId);
+    assert.equal(agent.parentAgentId, tree.a.agent.agentId, "promotion does not change recorded parentage");
+    tree.service.acknowledgeOutcome(nestedRunId);
+    assert.equal(tree.service.uninformedOutcomes().filter(run => run.runId === nestedRunId).length, 0,
+      "an informed outcome is not presented again");
+  },
 };
 
 runFeatures(["delegation", "messaging", "cancellation", "session-recovery", "output-and-headless"], bindings, {
-  delegation: "d02d850b85e528e20e965ddbb442a76bf3dc8b807460d50dd04ab26e08710c6d",
+  delegation: "dc707adee081e15280a7b101511fc8c93e284d0da8dea585e7a9455ebdad3e6c",
   messaging: "92bdf9ed1c321276fdb56c19ffc08e4eb7d591518741015a1689d561aa2f5555",
-  cancellation: "004cfef7f9933e34fac9b919b1040150abac812883feb99cb51891dede513812",
+  cancellation: "ff1bee48da3b92d2d0526b946d90f5b9750e8fc2f81e5d10690fa72f7e640024",
   "session-recovery": "3c682dcd45aeeed7daf574682707ac507ca3e9fbcb44366e131c3e093b820568",
   "output-and-headless": "28b939d53e04305786f49d97daeb5efb2911747bea9d58f7245d77fabfaca244",
 });

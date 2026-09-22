@@ -2,17 +2,41 @@ import { TERMINAL_STATUSES, type AgentSnapshot } from "../records.ts";
 import { captureAnchor, restoreTranscript, transcriptLineCount } from "./transcript.ts";
 import { initialState, type ActionTarget, type CleanupTarget, type StopTarget, type InspectorLevel, type Operation, type UiEffect, type UiEvent, type UiState } from "./state.ts";
 export const active = (s: AgentSnapshot) => !!s.run && !TERMINAL_STATUSES.has(s.run.status);
-export const stopTargets = (s: UiState): StopTarget[] => fleetRows(s).filter(a => active(a) && a.run?.status !== "cancelling").map(a => ({ action: "stop", parentId: s.parentId, agentId: a.agent.agentId, runId: a.run!.runId, revision: a.run!.revision }));
+export const stopTargets = (s: UiState): StopTarget[] => fleetRows(s).filter(a => active(a) && a.run?.status !== "cancelling").map(a => ({ action: "stop", parentId: a.agent.parentId, agentId: a.agent.agentId, runId: a.run!.runId, revision: a.run!.revision }));
 export const messageEligible = (s: AgentSnapshot | undefined): boolean => !!s && s.agent.resumable && (!s.agent.worktree || s.agent.worktree.state === "allocated") && s.run?.status !== "cancelling" && (active(s) || !!s.agent.sessionPath);
 /** The fleet indicator lists top-level agents while their run is non-terminal; terminal rows leave immediately (UX §2.2). */
 export const fleetRows = (s: UiState) => s.snapshots.filter(a => !a.agent.parentAgentId && (!a.run || !TERMINAL_STATUSES.has(a.run.status)));
+/**
+ * The overlay retains the session's own children plus every descendant reachable through parent
+ * agent identity (§12.1.6). Session ownership alone is not enough: a nested record is owned by the
+ * child session that launched it, so filtering by session identity discards the drill levels.
+ */
+export const sessionTree = (snapshots: readonly AgentSnapshot[], parentId: string): AgentSnapshot[] => {
+  const byParent = new Map<string | undefined, AgentSnapshot[]>();
+  for (const s of snapshots) {
+    const key = s.agent.parentAgentId;
+    const group = byParent.get(key);
+    if (group) group.push(s); else byParent.set(key, [s]);
+  }
+  const retained: AgentSnapshot[] = [];
+  const visit = (parentAgentId: string | undefined) => {
+    for (const s of byParent.get(parentAgentId) ?? []) {
+      if (parentAgentId === undefined && s.agent.parentId !== parentId) continue;
+      retained.push(s); visit(s.agent.agentId);
+    }
+  };
+  visit(undefined);
+  return retained;
+};
 /** The overlay lists one drill level at a time; the filter retains or drops terminal statuses (§12.1.6). */
 export const overlayRows = (s: UiState, level: InspectorLevel) => {
   const parent = level.path.at(-1);
   return s.snapshots.filter(a => (parent ? a.agent.parentAgentId === parent : !a.agent.parentAgentId) && (level.includeFinished || !a.run || !TERMINAL_STATUSES.has(a.run.status)));
 };
 export function eligible(target: ActionTarget, s: AgentSnapshot | undefined): boolean {
-  if (!s || s.agent.parentId !== target.parentId) return false;
+  // Eligibility is evaluated against the agent record rather than by comparing the capturing
+  // session with the owning session, so a nested agent at a drill level is a valid target (§12.1.6).
+  if (!s || s.agent.agentId !== target.agentId) return false;
   return target.action === "stop" ? s.run?.runId === target.runId && active(s) : !active(s) && s.agent.worktree?.id === target.worktreeId && s.agent.worktree.state === "allocated";
 }
 export function transition(previous: UiState, event: UiEvent, snapshots: readonly AgentSnapshot[] = previous.snapshots): { state: UiState; effects: UiEffect[] } {
@@ -31,12 +55,12 @@ export function transition(previous: UiState, event: UiEvent, snapshots: readonl
   };
   if (event.type === "deactivate") return { state: { ...initialState(), revision: previous.revision + 1 }, effects: [{ type: "render" }] };
   if (event.type === "activate") {
-    state = { ...initialState(), ...event, navigation: { kind: "editor" }, snapshots: structuredClone(snapshots.filter(s => s.agent.parentId === event.parentId)) };
+    state = { ...initialState(), ...event, navigation: { kind: "editor" }, snapshots: structuredClone(sessionTree(snapshots, event.parentId)) };
   } else if (state.navigation.kind === "inactive") return { state, effects };
   else switch (event.type) {
     case "snapshot": {
       if (event.epoch !== state.epoch) break;
-      patch({ snapshots: structuredClone(snapshots.filter(s => s.agent.parentId === state.parentId)) });
+      patch({ snapshots: structuredClone(sessionTree(snapshots, state.parentId)) });
       if (state.dialog.kind === "confirming" && !eligible(state.dialog.target, find(state.dialog.target.agentId))) {
         patch({ dialog: { kind: "closed" } }); feedback("The captured target is no longer eligible. No operation was sent."); restore();
       }
@@ -140,7 +164,7 @@ export function transition(previous: UiState, event: UiEvent, snapshots: readonl
       if (state.dialog.kind !== "closed") break;
       const s = find(event.agentId);
       if (!s) { feedback("Agent is not available."); break; }
-      const target: StopTarget | undefined = s.run ? { parentId: state.parentId, agentId: event.agentId, revision: s.run.revision, action: "stop", runId: s.run.runId } : undefined;
+      const target: StopTarget | undefined = s.run ? { parentId: s.agent.parentId, agentId: event.agentId, revision: s.run.revision, action: "stop", runId: s.run.runId } : undefined;
       if (!target || !eligible(target, s)) { feedback("The target is not eligible for this operation."); break; }
       const pending = pendingStop([target]);
       if (pending) { unresolved(pending); break; }
@@ -153,7 +177,7 @@ export function transition(previous: UiState, event: UiEvent, snapshots: readonl
       if (state.dialog.kind !== "closed") break;
       const s = find(event.agentId);
       if (!s) { feedback("Agent is not available."); break; }
-      const target: CleanupTarget | undefined = s.agent.worktree ? { parentId: state.parentId, agentId: event.agentId, revision: s.run?.revision ?? 0, action: "cleanup", worktreeId: s.agent.worktree.id } : undefined;
+      const target: CleanupTarget | undefined = s.agent.worktree ? { parentId: s.agent.parentId, agentId: event.agentId, revision: s.run?.revision ?? 0, action: "cleanup", worktreeId: s.agent.worktree.id } : undefined;
       if (!target || !eligible(target, s)) { feedback("The target is not eligible for this operation."); break; }
       patch({ dialog: { kind: "confirming", target }, feedback: undefined }); focus("dialog"); break;
     }

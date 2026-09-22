@@ -2,7 +2,7 @@
 
 **Document type:** Software design specification.
 
-**Status:** Maintained architectural contract for the subagent subsystem. Verification results and known gaps are recorded separately in the [verification report](../testing/subagent-verification.md). Normative requirements in this document are not evidence that every host integration has been verified. Revised 2026-09-19: [Section 12](#12-tui-implementation-boundary) now specifies the unified fleet indicator and the split fleet view overlay in place of the former FleetView and async widget, and nested delegation is added to the runtime contract; both revisions are implemented.
+**Status:** Maintained architectural contract for the subagent subsystem. Verification results and known gaps are recorded separately in the [verification report](../testing/subagent-verification.md). Normative requirements in this document are not evidence that every host integration has been verified. Revised 2026-09-19: [Section 12](#12-tui-implementation-boundary) now specifies the unified fleet indicator and the split fleet view overlay in place of the former FleetView and async widget, and nested delegation is added to the runtime contract; both revisions are implemented. Revised 2026-09-23: the overlay retains the whole delegation tree of the current session, an action target is evaluated against the agent record rather than the capturing session, and a nested completion is promoted to a live ancestor session when its delegating session has ended. These clauses are implemented; the promotion clause is expressed over the outcome acknowledgement model in [Section 10](#10-completion-delivery-and-model-context).
 
 **Composition revision:** The subagent module must be independent of goal management, as specified in [Section 11](#11-subsystem-independence). Runtime decoupling is implemented in the working tree and verified with standalone and real-SDK composition tests. The [verification report](../testing/subagent-verification.md#2026-09-20-goal-independent-subagents-and-external-composition) records the checks and deployment limits.
 
@@ -543,6 +543,7 @@ The status vocabulary is internal. A new run is created for resumption; terminal
 - If the foreground waiter disappears before receiving the outcome, the service retains a completion-delivery record. The result is shown in the UI and included in the next parent context without requesting an automatic turn after a user abort. It is not lost because the run originally used foreground execution.
 - Session shutdown first refuses new launches and messages that would resume work.
 - Stopping an agent requests cancellation of its nested children before the parent settles; session shutdown stops the whole tree. A nested child never outlives its parent's session.
+- A nested run that is still active when its owning session shuts down is cancelled with that session. A nested run that already reached a terminal status keeps its completion record, which Section 10.1 promotes to a live ancestor when the owning session can no longer receive it.
 - It cancels queued runs, requests cancellation of active runs, waits for observable settlement, flushes records, runs extension cleanup, and disposes sessions.
 - SDK resources are constructed under an async-context-local child marker so Secretary does not initialize another root controller inside a child.
 - Cleanup is idempotent and applies to partially initialized sessions as well as completed ones.
@@ -665,6 +666,9 @@ Retaining even unchanged isolated workspaces until explicit cleanup differs from
 - Completion records are keyed by run ID so a resumed agent can produce another distinct completion.
 - Foreground outcomes are returned by the waiting tool handler and do not also trigger an ordinary background completion turn. If the waiter is cancelled or delivery to it becomes uncertain, the service retains the outcome and uses the non-triggering recovery path in Section 7.4.
 - Background outcomes are delivered as bounded extension-owned messages to the owning parent, using the host's follow-up mechanism rather than impersonating user input.
+- A nested run's outcome is delivered to the session of the agent that launched it while that session is live.
+- When the owning session has ended before delivery, the outcome is retained and promoted to the nearest live ancestor session. The main session is the final recipient when no intermediate ancestor is live, so a nested result is not lost with the ended session.
+- Promotion changes the delivery recipient only. The completion record keeps its run identity and its recorded parentage, so deduplication and reconciliation are unchanged.
 - Delivery records progress from pending to submitted and then observed when matching parent transcript evidence exists.
 - Outcome acknowledgement is a separate field on the same record. It reports whether the parent holds the outcome, while the delivery state reports whether the completion notification reached the parent transcript.
 - Acknowledgement is set by either channel that informs the parent. It is set when the delivery state reaches observed, and it is set when a read of the run returns a terminal status.
@@ -701,6 +705,7 @@ stateDiagram-v2
 ### 10.2 Turn policy
 
 - A normal background result can request one parent follow-up turn from the host in a live owning session. The host owns scheduling policy; the subagent subsystem does not inspect goals to decide whether a turn may run.
+- A promoted nested outcome follows the same turn policy in the session that receives it, so it can request one follow-up turn in a live session and otherwise becomes available in that session's next context.
 - Results remain available for display and inspection whether or not the host schedules a follow-up.
 - Restoring a parent session does not replay old automatic follow-up requests. Outcomes the parent has not been informed of become available in its next context, and explicit inspection informs the parent as well.
 - A parent request receives one bounded current-agent snapshot listing relevant active runs and outcomes the parent has not been informed of. The listing reads run settlement and outcome acknowledgement rather than the delivery state, so it omits nothing that is settled and uninformed. Historical snapshots are replaced in the outgoing copy, not appended indefinitely.
@@ -728,6 +733,7 @@ stateDiagram-v2
 
 - Launch, guidance, resumption, inspection, and cancellation use session, request, operation, agent, and run identities.
 - Execution and usage events retain stable source identities and parent-child relationships so external consumers can correlate them without changing agent records.
+- Promoting a nested completion changes the delivery recipient, not the recorded parent-child relationship. External consumers continue to correlate the run by its stable identity and its originating parentage.
 - Usage recording is independent of external consumers. A missing goal association or accounting consumer does not prevent execution.
 - Completion delivery reports outcomes and requests host scheduling without interpreting another subsystem's state. A host decision not to schedule a follow-up does not discard the result.
 - Generic cancellation and host-supplied capability restrictions apply at supported execution boundaries, including asynchronous admission and nested runs. The agent module does not interpret the external policy that caused them.
@@ -908,7 +914,8 @@ type TranscriptFollowMode = "following" | "paused";
 
 - The types are discriminated unions. `TranscriptView`, `ActionTarget`, and `PendingOperation` are internal records described below, not additional public tool parameters.
 - A transcript view retains its follow mode, stable message anchor, relative display offset, tool-expansion setting, and bounded rendered window.
-- An action target retains the parent session, agent ID, and the relevant run ID or worktree ID. It records the revision observed when the shortcut or dialog was acted on, but the service evaluates actual identity and eligibility at execution.
+- An action target retains the session that captured the action, the agent ID, the relevant run ID or worktree ID, and the session that owns the agent record. It records the revision observed when the shortcut or dialog was acted on, but the service evaluates actual identity and eligibility at execution. Eligibility is evaluated against the agent record rather than by comparing the capturing session with the owning session, so a nested agent shown at a drill level is a valid target. A request for an agent owned by a child session is routed to that owning session, as worktree cleanup already is.
+- The overlay's retained row set is the delegation tree of the current session: the session's own child records plus every descendant reachable through parent agent identity. Session ownership determines which records belong to the session, and parent agent identity determines the level in which a record appears. Filtering the overlay by session identity alone discards nested records, because a nested record is owned by the child session that launched it.
 - A pending operation retains an operation ID, action, target, submitted text where applicable, and the view instance that originated it. A `stop-all` operation retains its captured run targets rather than resolving the fleet again at submission or receipt reconciliation.
 - The enclosing UI state retains the parent session ID, activation epoch, view instance ID, originating focus, and a monotonically increasing state revision.
 - Confirmation is rendered in the inspector overlay, not inside the bottom indicator. A direct command's dialog from the editor retains the editor as its return location.
@@ -966,6 +973,7 @@ transition(state, event, serviceSnapshot): {
 ### 12.5 State-machine verification
 
 - Table-driven reducer tests exercise every transition in Section 12.1.4 and each guard's rejection path. They also verify that unrelated state remains unchanged.
+- Reducer and adapter tests for drill levels use records produced by the service, so that session ownership and delegation parentage are both represented. A fixture that assigns the session identity to a nested record cannot detect a level-retention defect.
 - Tests assert both the resulting state and emitted effects. A correct rendered label does not compensate for an unintended service request.
 - Model-based tests traverse legal event sequences and assert focus uniqueness, target stability, one submission per operation, draft preservation, and absence of service effects after UI deactivation.
 - Adversarial event sequences include selecting B before A finishes loading, repeated Enter during submission, cancelling a modal during a pending response, a selected run finishing before its stop request is processed, and session replacement before an acknowledgment arrives.
@@ -1010,7 +1018,7 @@ type TranscriptEvent =
 
 #### 12.6.3 Fleet indicator and overlay view models
 
-`AgentService` publishes immutable view-model snapshots for the widgets in addition to the existing `AgentSnapshot` list. A row view model carries the agent identifier, parent agent identifier, name, explicit status, description, resolved model, `startedAt` timestamp, current activity, and optional usage labels. While at least one top-level execution is non-terminal, the fleet indicator renders the main row followed by rows whose parent is the main session and whose status is non-terminal; it renders no other rows, and it renders nothing when no such execution exists. The overlay groups rows by parent agent identifier to build its drill-down levels, and its filter drops or retains terminal statuses. Widgets never compute state; they render the snapshot.
+`AgentService` publishes immutable view-model snapshots for the widgets in addition to the existing `AgentSnapshot` list. A row view model carries the agent identifier, parent agent identifier, name, explicit status, description, resolved model, `startedAt` timestamp, current activity, and optional usage labels. While at least one top-level execution is non-terminal, the fleet indicator renders the main row followed by rows whose parent is the main session and whose status is non-terminal; it renders no other rows, and it renders nothing when no such execution exists. The overlay's row set is the current session's delegation tree, which is the session's own child records plus every descendant reachable through parent agent identity. It groups that set by parent agent identifier to build its drill-down levels, and its filter drops or retains terminal statuses. Widgets never compute state; they render the snapshot.
 
 Usage labels follow the [interaction design](../ux/subagents.md#22-fleet-indicator):
 
@@ -1132,7 +1140,7 @@ If a future release adds one of these runtime features, its surface is designed 
 | SA-08 | Standalone lifecycle and dependency tests cover subsystem independence. Separate composition tests cover blocked-goal recovery, request ordering, and accounting. The verification report records executed boundary coverage and limits. |
 | SA-09 | SDK and adapter tests cover host-mode restrictions and child UI lifecycles. Real-provider CLI tests separately exercise print-mode spawning and interactive-parent spawning with widget extensions. These do not establish every RPC client or extension combination. |
 | SA-10 | Structured-transcript parsing tests cover tool pairing, guidance notices, truncation bounds, and sanitization. View-model tests cover usage-label derivation, the no-zero-for-unknown rule, indicator row filtering, and overlay level grouping. Render-key tests cover deduplication and timer disposal. Keybinding-configuration tests cover validation, precedence, and hint consistency. Border and layout snapshot tests cover minimum width, narrow and wide panes, the split layout's 20–40-column navigation bounds and transcript minimum, constant frame height through selection and loading, and resize. Real main-screen and alternate-screen TUI composition tests inspect the resulting terminal cells for complete borders and stable coordinates. The recorded UI walkthrough additionally covers the fleet indicator and both display modes. |
-| SA-12 | Launch tests cover delegation-tool registration by depth, the maximum-depth rejection, parent-agent recording, and tree-wide shutdown. Reducer and layout tests cover drill-in, drill-out, selection restoration, and the terminal-agent filter. |
+| SA-12 | Launch tests cover delegation-tool registration by depth, the maximum-depth rejection, parent-agent recording, and tree-wide shutdown. Reducer and layout tests cover drill-in at every level, drill-out, selection restoration, retention of the session's whole delegation tree, and the terminal-agent filter, using records produced by the real service rather than fixture records that omit the owning session identity. Cancellation tests cover stopping a nested agent from a drill level without affecting its parent or its siblings. Completion tests cover delivery of a nested outcome to its delegating session and its promotion to a live ancestor, including the main session, when that session has ended. |
 | SA-11 | Configuration-schema validation, menu interaction and persistence tests, rendered-layout baselines, headless text-behavior tests, and the recorded UI walkthrough cover model fallback list management, including creation, renaming, removal, ordering, and picker filtering. The model-resolution scenarios in `agent-configuration.feature` cover fallback lists. |
 
 Additional release conditions are:

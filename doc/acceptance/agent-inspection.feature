@@ -158,7 +158,7 @@ Feature: Inspect delegated work without polling the parent model
 
   @ACC-SA-02-13 @proposed @SA-12
   Scenario: Drill into a nested agent level in the fleet view overlay.
-    Given agent A has two nested child agents.
+    Given agent A launched two nested child agents through the delegation contract.
     And the fleet view overlay lists A at the root level.
     When the user selects A and presses Enter.
     Then the list replaces itself with A's children.
@@ -178,3 +178,20 @@ Feature: Inspect delegated work without polling the parent model
     When the user selects it and presses Enter or Right.
     Then the list remains at the current level.
     And the transcript pane shows the selected agent.
+
+  @ACC-SA-02-15 @proposed @SA-12
+  Scenario: Drill through two nested levels and return to the root.
+    Given agent A launched nested agent B through the delegation contract.
+    And agent B launched nested agent C through the delegation contract.
+    And the fleet view overlay lists A at the root level.
+    When the user selects A and presses Enter.
+    Then the list replaces itself with A's children and selects B.
+    And the transcript pane shows B.
+    When the user presses Enter again.
+    Then the list replaces itself with B's children and selects C.
+    And the title row shows a drill path that includes A and B.
+    And the transcript pane shows C.
+    When the user presses Left.
+    Then the list returns to A's level with B re-selected.
+    When the user presses Left again.
+    Then the list returns to the root level with A re-selected.
