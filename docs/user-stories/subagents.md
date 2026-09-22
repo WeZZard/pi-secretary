@@ -2,7 +2,7 @@
 
 **Document type:** Software requirements specification.
 
-**Status:** Maintained requirements for the subagent subsystem. These stories state required outcomes; they do not certify release readiness. Executed checks and remaining limits are recorded in the [verification report](../testing/subagent-verification.md). Revised 2026-09-19: SA-02 and SA-10 now require a single unified fleet indicator and a split fleet view overlay in place of the former FleetView and async widget, and SA-12 adds nested delegation; both revisions are implemented.
+**Status:** Maintained requirements for the subagent subsystem. These stories state required outcomes; they do not certify release readiness. Executed checks and remaining limits are recorded in the [verification report](../testing/subagent-verification.md). Revised 2026-09-19: SA-02 and SA-10 now require a single unified fleet indicator and a split fleet view overlay in place of the former FleetView and async widget, and SA-12 adds nested delegation; both revisions are implemented. Revised 2026-09-23: SA-12 adds inspection at every nested level, stopping an individual nested agent from its drill level, and retention of a nested outcome whose delegating session has ended. These clauses are specified here and are not yet implemented.
 
 **Related documents:** [Research](../research/subagent-system-comparison.md), [interaction design](../ux/subagents.md), and [technical design](../arch/subagents.md).
 
@@ -161,8 +161,11 @@ As a parent agent, I want a delegated agent to decompose its task further so tha
 
 - A running agent can launch its own child agents through the same delegation contract, within the tool and permission restrictions it inherited.
 - A nested agent is recorded with its parent agent, and the fleet view overlay presents each agent's children as a drill-down level. The fleet indicator lists top-level agents only.
+- A nested agent that itself delegates can be inspected as a further drill-down level, so the user can follow the hierarchy to the deepest nested agent.
 - Nested usage retains its originating run identity for external accounting consumers. When composed with goals, the SA-08 accounting and completion rules apply outside the subagent module.
 - Stopping an agent stops its nested children; exiting the session stops the whole tree.
+- The user can stop one nested agent shown at a drill level without stopping its parent or its siblings, and stopping that nested agent also stops the agents it launched.
+- A nested agent's terminal outcome is not lost when the session that launched it has ended. When the delegating session can no longer receive the outcome, a live ancestor, or the top-level conversation when no ancestor is live, still learns the nested result.
 - Nesting is bounded by a documented maximum depth, and a launch beyond that depth fails with an actionable error.
 - The fleet indicator and the fleet view overlay present the agent hierarchy correctly in sessions where no agent has children.
 
@@ -195,5 +198,6 @@ The [subagent discovery contract](../arch/subagents.md#54-request-scoped-definit
 ## 4. Acceptance and Verification
 
 - Implemented requirements are validated through the scenarios linked from the technical design and executed by the acceptance suite. SA-13 has dedicated real-SDK request-boundary tests and acceptance bindings; generic serializer tests alone are not evidence of agent discovery.
+- SA-12 verification must exercise nested records produced by the real delegation contract. Fixture records that omit the owning session identity are not evidence of nested presentation, nested cancellation, or nested completion delivery.
 - Passing tests do not establish visual conformance; TUI interaction review and human approval are separate.
 - The [verification report](../testing/subagent-verification.md) records which checks have run and which remain open.

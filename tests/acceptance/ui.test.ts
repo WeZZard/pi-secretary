@@ -253,7 +253,7 @@ const bindings: ScenarioBindings = {
     assert.match(plain(h.inspector.render(140)).split("\n")[1]!, /b · running/, "the transcript pane follows the selection");
   },
   "ACC-SA-02-13": async () => {
-    const a = snapshot("a"), c1 = snapshot("c1"), c2 = snapshot("c2");
+    const a = snapshot("a"), c1 = snapshot("c1", "session-a"), c2 = snapshot("c2", "session-a");
     c1.agent.parentAgentId = "a"; c2.agent.parentAgentId = "a";
     const h = new UIHarness([a, c1, c2]);
     await h.execute(h.open("a"), port());
@@ -291,6 +291,31 @@ const bindings: ScenarioBindings = {
     h.inspector.handleInput("\x1b[C");
     assert.equal(h.state, before, "Right on a childless agent does not change state");
     assert.match(h.render(), /a · test\/model · running/, "the transcript pane still shows the selected agent");
+  },
+  "ACC-SA-02-15": async () => {
+    const a = snapshot("a"), b = snapshot("b", "session-a"), c = snapshot("c", "session-b");
+    b.agent.parentAgentId = "a"; c.agent.parentAgentId = "b";
+    const h = new UIHarness([a, b, c]);
+    await h.execute(h.open("a"), port());
+    h.inspector.handleInput("\r");
+    const intoA = h.effects.filter(e => e.type === "load").at(-1)!;
+    assert.equal(intoA.type === "load" && intoA.agentId, "b", "Enter drills into A and selects B");
+    await h.execute(intoA, port());
+    assert.match(h.render(140), /● b/, "A's level selects B");
+    h.inspector.handleInput("\r");
+    const intoB = h.effects.filter(e => e.type === "load").at(-1)!;
+    assert.equal(intoB.type === "load" && intoB.agentId, "c", "Enter drills into B and selects C");
+    await h.execute(intoB, port());
+    const deep = h.render(140);
+    assert.match(deep, /● c/, "B's level selects C");
+    assert.match(deep, /Agents › /, "the title row shows the drill path at depth two");
+    h.inspector.handleInput("\x1b[D");
+    const back = h.effects.filter(e => e.type === "load").at(-1)!;
+    assert.equal(back.type === "load" && back.agentId, "b", "Left returns to A's level with B re-selected");
+    await h.execute(back, port());
+    h.inspector.handleInput("\x1b[D");
+    const root = h.effects.filter(e => e.type === "load").at(-1)!;
+    assert.equal(root.type === "load" && root.agentId, "a", "Left returns to the root with A re-selected");
   },
   "ACC-SA-UI-01": async ({ t }) => {
     const service = await durableService(t), id = service.service.list()[0]!.agent.agentId;
@@ -546,6 +571,6 @@ const bindings: ScenarioBindings = {
   },
 };
 runFeatures(["agent-inspection", "ui-state-machine"], bindings, {
-  "agent-inspection": "bc002dd98af599024fd442d3edfbce3cdf76f0eec34fd9b15b43181d79d4810e",
+  "agent-inspection": "0f1a90637b99402a03c906c2d71df18105ae36a7b64c45c113d365dc383c0d83",
   "ui-state-machine": "4b6b3f33863aba14aca996503ca03b73574b2ad9e555a5e79d17a8fc932cdd81",
 });

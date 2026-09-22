@@ -16,3 +16,12 @@ export function registerLiveChildService(agentId: string, service: AgentService)
 export function liveChildService(agentId: string): AgentService | undefined {
   return live.get(agentId);
 }
+
+/**
+ * The live service serving a session, if any. A service that is shutting down no longer owns
+ * delivery for its session, so an ended owning session's completions can be promoted (§10.1).
+ */
+export function liveSessionOwner(sessionId: string): AgentService | undefined {
+  for (const service of live.values()) if (!service.shuttingDown() && service.sessionId() === sessionId) return service;
+  return undefined;
+}

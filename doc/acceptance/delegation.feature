@@ -82,3 +82,13 @@ Feature: Delegate work through Claude Code-style tools
     Then Secretary reports the tool-name collision and a configuration recovery action.
     And Secretary does not silently override the other tool or start its own child executions.
     And Secretary's existing goal tools remain available.
+
+  @ACC-SA-01-09 @proposed @SA-12
+  Scenario: Deliver a nested outcome after its delegating session has ended.
+    Given agent A launched nested agent B through the delegation contract.
+    And B reached a terminal status with a recorded outcome.
+    And the session that owns B has ended.
+    When the main session prepares its next model context.
+    Then the nested outcome is presented to the main session exactly once.
+    And the recorded parentage of B is unchanged.
+    And the outcome is not presented again after it is observed.

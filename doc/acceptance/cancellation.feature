@@ -66,3 +66,14 @@ Feature: Cancel selected work without losing evidence
     And the child is not reported as successfully completed.
     And its worktree is retained.
     And resumption is refused while the previous runner may still be active.
+
+  @ACC-SA-04-08 @proposed @SA-12
+  Scenario: Stop one nested agent from its drill level.
+    Given agent A launched nested agent B and nested agent C through the delegation contract.
+    And agent B launched nested agent D through the delegation contract.
+    And the fleet view overlay is drilled into A's level.
+    When the user stops B.
+    Then B is reported as cancelled.
+    And D is cancelled with B.
+    And A and C continue running.
+    And the request retains the identity it captured.

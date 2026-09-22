@@ -8,7 +8,7 @@ import { FleetView, startFleetPolling } from "./fleet-view.ts";
 import { Inspector, inspectorHeight } from "./inspector.ts";
 import { matchesStopAll, matchesStopSelected, type InspectorKeybindingsConfig } from "./keybindings.ts";
 import { runEffect, type AgentUIPort } from "./effects.ts";
-import { active, fleetRows, transition } from "./reducer.ts";
+import { active, fleetRows, sessionTree, transition } from "./reducer.ts";
 import { initialState, type UiEvent } from "./state.ts";
 import { sanitize } from "./transcript.ts";
 export type { AgentUIPort, OperationReceipt } from "./effects.ts";
@@ -189,7 +189,7 @@ export function registerAgentUI(pi: ExtensionAPI, port: AgentUIPort, resolveOpti
     handler: async (args, commandCtx) => {
       const words = args.trim().split(/\s+/).filter(Boolean), action = words[0] === "stop" || words[0] === "cleanup" ? words.shift() as "stop" | "cleanup" : undefined;
       const reference = words.join(" ");
-      const snapshots = port.list().filter(a => a.agent.parentId === commandCtx.sessionManager.getSessionId());
+      const snapshots = sessionTree(port.list(), commandCtx.sessionManager.getSessionId());
       const selected = snapshots.find(a => a.agent.agentId === reference || a.agent.name === reference || a.run?.runId === reference);
       if (commandCtx.mode !== "tui") {
         const text = action ? "Stop and cleanup commands require TUI confirmation. Use TaskStop for an explicit non-TUI stop." : snapshots.map(a => `${a.agent.agentId} ${a.agent.name ?? ""}: ${a.run?.status ?? "idle"} ${a.run?.outputPath ?? ""}`).join("\n") || "No agents in this session.";
