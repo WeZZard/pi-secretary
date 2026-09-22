@@ -46,7 +46,12 @@ The same identity confusion causes the lifecycle and completion defects.
 | `D-1` | The overlay receives `list()` instead of `tree()`, and the reducer filters by session identity. | `TC-01` |
 | `D-2` | The rows needed for a level are dropped before `overlayRows` runs. | `TC-02` |
 | `D-3` | `stopTargets` and `eligible` compare the agent's owning session with the capturing session, and the command builds candidates from `list()` filtered by session identity (`commands.ts` around line 192). | `TC-03` |
-| `D-4` | The completion write at `service.ts` around line 460 keys the record to the owning session, and `pendingCompletions()` around line 725 reads only the current session's rows. | `TC-05` |
+
+The same identity confusion also affects completion surfacing, but that is a proposed behaviour rather than a defect. Neither the original `SA-12` nor the original Section 10.1 required a nested outcome to survive the end of its delegating session; the original specification delivered a background outcome to the owning parent and stopped there. Phase 3 therefore proposes a behaviour instead of repairing one. It is recorded as `ACC-SA-01-09` under the `@proposed` tag, which marks a design-policy proposal and must not be treated as a user approval, and it follows the researched Claude Code behaviour in which a late nested background agent reports to the main conversation.
+
+| Addition | Current mechanism | Exercising case |
+| --- | --- | --- |
+| `D-4` | The completion write at `service.ts` around line 460 keys the record to the owning session, and `pendingCompletions()` around line 725 reads only the current session's rows, so a settled outcome whose owning session has ended has no reader. | `TC-05`, `ACC-SA-01-09` |
 
 ## 4. Non-goals
 
