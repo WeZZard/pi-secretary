@@ -22,7 +22,12 @@ export interface RawElement {
 
 export interface WindowRef { pid: number; windowId: number; app: string; title: string }
 
-export interface WindowTarget { app: string; windowTitle?: string }
+/**
+ * `windowId` names one window exactly, taken from an earlier read, and wins over `windowTitle`.
+ * `single` refuses to choose when several windows match, instead of taking the frontmost one:
+ * a Finder plan without a title acted on another Finder window (Pi task batch, 2026-09-23).
+ */
+export interface WindowTarget { app: string; windowTitle?: string; windowId?: number; single?: boolean }
 
 export interface Screenshot { data: string; mimeType: string }
 
@@ -85,7 +90,7 @@ export interface ExecutionBackend {
   close(): Promise<void>;
 }
 
-export type BackendErrorCode = "app_not_running" | "window_not_found" | "driver_failed" | "timeout" | "aborted";
+export type BackendErrorCode = "app_not_running" | "window_not_found" | "window_ambiguous" | "driver_failed" | "timeout" | "aborted";
 
 export class BackendError extends Error {
   readonly code: BackendErrorCode;

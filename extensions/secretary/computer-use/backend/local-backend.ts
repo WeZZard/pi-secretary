@@ -101,17 +101,26 @@ export class LocalDriverBackend implements ExecutionBackend {
     const app = target.app.trim().toLowerCase();
     const ofApp = (listed.windows ?? []).filter(window => window.app_name.toLowerCase() === app);
     if (ofApp.length === 0) throw new BackendError("app_not_running", `No window of ${target.app} is open. This tool does not launch applications.`);
+    const titles = () => ofApp.filter(window => window.title !== "").map(window => JSON.stringify(window.title)).join(", ") || "none with a title";
     const title = target.windowTitle?.toLowerCase();
-    const matching = ofApp.filter(window => title === undefined ? window.title !== "" : window.title.toLowerCase().includes(title));
+    const matching = target.windowId !== undefined ? ofApp.filter(window => window.window_id === target.windowId)
+      : ofApp.filter(window => title === undefined ? window.title !== "" : window.title.toLowerCase().includes(title));
+    if (target.windowId !== undefined && matching.length === 0) {
+      throw new BackendError("window_not_found", `The ${target.app} window that was observed is closed. Windows: ${titles()}.`);
+    }
     // A lower z_index is nearer the front: Safari at 13 was drawn over TextEdit at 36 (observed 2026-09-23).
-    const chosen = matching.filter(window => window.is_on_screen).sort((a, b) => (a.z_index ?? 0) - (b.z_index ?? 0))[0];
+    const onScreen = matching.filter(window => window.is_on_screen).sort((a, b) => (a.z_index ?? 0) - (b.z_index ?? 0));
+    if (target.single && target.windowId === undefined && onScreen.length > 1) {
+      throw new BackendError("window_ambiguous", `${onScreen.length} ${target.app} windows match${target.windowTitle ? ` ${JSON.stringify(target.windowTitle)}` : ""}: `
+        + `${onScreen.map(window => JSON.stringify(window.title)).join(", ")}. Name one with window_title, or plan against an observation of it with based_on.`);
+    }
+    const chosen = onScreen[0];
     if (!chosen && matching.length > 0) {
       // Observed 2026-09-23: a visible window briefly reported is_on_screen false.
       throw new BackendError("window_not_found", `The ${target.app} window ${JSON.stringify(matching[0]!.title)} exists but is not on screen; it may be minimized, hidden, or on another Space.`);
     }
     if (!chosen) {
-      const titles = ofApp.filter(window => window.title !== "").map(window => JSON.stringify(window.title)).join(", ") || "none with a title";
-      throw new BackendError("window_not_found", `No on-screen ${target.app} window matches${target.windowTitle ? ` ${JSON.stringify(target.windowTitle)}` : ""}. Windows: ${titles}.`);
+      throw new BackendError("window_not_found", `No on-screen ${target.app} window matches${target.windowTitle ? ` ${JSON.stringify(target.windowTitle)}` : ""}. Windows: ${titles()}.`);
     }
     return { pid: chosen.pid, windowId: chosen.window_id, app: chosen.app_name, title: chosen.title };
   }

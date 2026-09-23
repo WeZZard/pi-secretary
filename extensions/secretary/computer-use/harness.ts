@@ -60,7 +60,13 @@ const REOBSERVE_LIMIT = 2;
 const NO_CHANGE_LIMIT = 1;
 /** Keys that only move the insertion point or the selection; the accessibility tree does not show their effect. */
 const NAVIGATION_KEYS = new Set(["up", "down", "left", "right", "home", "end", "pageup", "pagedown"]);
-const DEFAULT_ATTEMPTS = 2;
+/**
+ * An action that changed the screen but missed its postcondition is not repeated unless the step is
+ * idempotent: through Pi, a second press of Calculator's Add followed a first press that had taken
+ * effect (observed 2026-09-23). A second press of Send would send twice.
+ */
+const DEFAULT_ATTEMPTS = 1;
+const DEFAULT_IDEMPOTENT_ATTEMPTS = 2;
 
 /** Returns the first problem with a plan, before any action (design §5.2). */
 export function validatePlan(plan: Plan, maxSteps: number, basedOn?: Observation): string | undefined {
@@ -80,6 +86,9 @@ export function validatePlan(plan: Plan, maxSteps: number, basedOn?: Observation
       catch (error) { return `step ${step.id}: ${(error as Error).message}`; }
     }
     if (step.maxAttempts !== undefined && (!Number.isInteger(step.maxAttempts) || step.maxAttempts < 1 || step.maxAttempts > 5)) return `step ${step.id}: maxAttempts must be 1 to 5`;
+    if ((step.maxAttempts ?? 1) > 1 && step.idempotent !== true) {
+      return `step ${step.id}: max_attempts above 1 needs idempotent: true, because repeating an action that took effect could act twice`;
+    }
     if (step.idempotent !== undefined && typeof step.idempotent !== "boolean") return `step ${step.id}: idempotent must be true or false`;
     if (step.text !== undefined && !checksText(step.postcondition)) {
       return `step ${step.id}: an enter_text step must check the typed text with {text:{endsWith}}, {text:{contains}} or {value:{name,equals}}`;
@@ -113,6 +122,7 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
   const outcomes: StepOutcome[] = plan.steps.map(step => ({ id: step.id, result: "not_run" }));
   let decisions = 0, actions = 0;
   let current: { read: WindowRead; observation: Observation } | undefined;
+  let target: WindowTarget = { ...plan.target, single: true };
 
   const checkCancelled = () => { if (signal?.aborted) throw new Stop(undefined, true); };
   const plannerView = () => current ? renderPlannerTable(current.observation) : undefined;
@@ -123,13 +133,16 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
     for (let attempt = 1; ; attempt++) {
       checkCancelled();
       let read: WindowRead;
-      try { read = await backend.readWindow(plan.target, { screenshot: config.stepPictures, signal }); }
+      try { read = await backend.readWindow(target, { screenshot: config.stepPictures, signal }); }
       catch (error) {
         if (error instanceof BackendError && error.code === "aborted") throw new Stop(undefined, true);
+        if (error instanceof BackendError && (error.code === "window_ambiguous" || error.code === "window_not_found")) return escalate(stepId, "window_unclear", error.message);
         return escalate(stepId, "backend_failed", error instanceof Error ? error.message : String(error));
       }
       const result: Observation | ObservationFailure = observe(read, { id: `${runId}-${String(++sequence).padStart(3, "0")}`, maxElements: config.maxElements, maxNameLength: config.maxNameLength });
       await telemetry.recordObservation(read, result, { attempt, purpose: `${purpose} ${stepId}` });
+      // Every later read and action uses the window this plan started on.
+      target = { app: plan.target.app, windowId: read.window.windowId };
       if (result.status === "ready") return { read, observation: result };
       if (result.status === "state_too_large") return escalate(stepId, "state_too_large", result.detail);
       if (attempt > REOBSERVE_LIMIT) return escalate(stepId, "no_progress", result.detail);
@@ -232,7 +245,10 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
         if (unchanged >= NO_CHANGE_LIMIT) {
           escalate(step.id, "no_progress", `${described} changed nothing on screen; it was not repeated, because a repeat could act twice`, decision.prior);
         }
-        if (attempts >= (step.maxAttempts ?? DEFAULT_ATTEMPTS)) escalate(step.id, "postcondition_failed", evaluation.detail, decision.prior);
+        if (attempts >= (step.maxAttempts ?? (step.idempotent ? DEFAULT_IDEMPOTENT_ATTEMPTS : DEFAULT_ATTEMPTS))) {
+          escalate(step.id, "postcondition_failed", attempts === 1 && !step.idempotent
+            ? `${evaluation.detail}. The action changed the screen, so it was not repeated; a repeat could act twice.` : evaluation.detail, decision.prior);
+        }
       }
     }
     await telemetry.recordPlan({ runId, outcome: "completed", steps: outcomes, decisions, actions, redact: config.redactTypedText, plan });

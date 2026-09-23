@@ -234,9 +234,9 @@ The planner calls this tool with a complete plan. The tool returns only when the
 
 | Field | Meaning |
 | --- | --- |
-| `app` and `window_title` | They name the target window, as for `computer_observe`. |
+| `app` and `window_title` | They name the target window, as for `computer_observe`. Without `window_title` or `based_on`, the plan escalates `window_unclear` when several windows of the app are on screen, instead of acting on the frontmost one. Every read in a plan after the first uses the same window. Through Pi, a Finder plan without a title read a second Finder window ([research Section 14](../research/computer-use-s0-s1.md#14-pi-task-batch-2026-09-23)). |
 | `goal` | It is the task-level goal in one sentence. The executor sees it in every request. |
-| `based_on` | It is optional. It names the observation the plan was written against. An unknown or expired identifier rejects the plan, and the session keeps the last 16 observations. |
+| `based_on` | It is optional. It names the observation the plan was written against. The plan acts on that observation's window. An unknown or expired identifier rejects the plan, and the session keeps the last 16 observations. |
 | `steps` | It is an ordered list of at most 50 steps. |
 | `allow_destructive` | It is a list of step identifiers that may perform destructive actions. It is empty by default. |
 
@@ -252,9 +252,10 @@ The planner calls this tool with a complete plan. The tool returns only when the
 | `postcondition` | It is a predicate from [Section 5.3](#53-postconditions) that must hold after the step. |
 | `idempotent` | It is optional. It states that repeating the step does no harm, so the harness may skip it when its postcondition already holds ([Section 9](#9-step-lifecycle)). The default is `false`. |
 | `position` | It is optional, for `enter_text` only: `end`, `start` or `replace`. It places the insertion point with keys after the click and before typing ([Section 7.2](#72-operations)). |
-| `max_attempts` | It is optional, from 1 to 5. It limits how often the harness may act for the step before escalating `postcondition_failed`. The default is 2. |
+| `max_attempts` | It is optional, from 1 to 5. It limits how often the harness may act for the step before escalating `postcondition_failed`. The default is 1, and 2 for an `idempotent` step. A value above 1 requires `idempotent`. |
 
 - The harness validates the whole plan before any observation. Repeated step identifiers, malformed postconditions, `enter_text` without `text`, `key_combo` without `keys`, and unknown `allow_destructive` identifiers reject the plan.
+- A step has `text` or `keys`, not both. Each key combination is parsed during validation, and an unknown key name rejects the plan with the list of valid names. The names `backspace`, `enter` and `esc` are accepted for `delete`, `return` and `escape`.
 - An `enter_text` step must check the typed text with `text { endsWith }`, `text { contains }` or `value { name, equals }`. In a live check, "the text contains Hello" was true although the words landed at the wrong place.
 - A `key_combo` step that sends only a navigation key, such as `cmd+down`, is rejected when its only postcondition is `changed`. Such a key moves the insertion point, which the tree does not show, so the step could never be verified. The validator names the `position` field instead.
 - When the plan names its observation in `based_on`, a `text` predicate whose string is the name of a control in that observation is rejected. The validator names `exists` instead. Through Pi, the planner wrote "text contains All Clear" to check a button, and a successful press was reported as failed ([research Section 11](../research/computer-use-s0-s1.md#11-first-checks-through-pi-2026-09-23)).
@@ -268,12 +269,14 @@ A postcondition is a small predicate over the accessibility tree. Code evaluates
 | `exists { name, role? }` | An element with this name, and this role when given, is present. |
 | `absent { name, role? }` | No such element is present. |
 | `value { name, equals }` | The named element's value equals the given string. |
+| `selected { name }` | The named element is selected, such as a file in a Finder list. |
 | `window { titleContains }` | The frontmost window title contains the given string. |
-| `text { contains }` or `text { endsWith }` | The value or descendant text of some on-screen element contains, or ends with, the given string. Exactly one of the two is given. Labels are not searched, because they name controls rather than show content. |
+| `text { contains }` or `text { endsWith }` | The value or descendant text of some on-screen element contains, or ends with, the given string. Exactly one of the two is given. Labels are not searched, because they name controls rather than show content. When the check fails and a control with a matching name is on screen, the failure names that control and says to check it with `exists` ([research Section 14](../research/computer-use-s0-s1.md#14-pi-task-batch-2026-09-23)). |
 | `changed` | The tree differs from the tree before the step. |
 | `all [ ... ]` and `any [ ... ]` | All or any of the nested predicates hold. |
 
 - The harness rejects a plan whose postconditions are malformed before it performs any action.
+- A `role` must be an accessibility role, such as `Button` or `AXButton`. Through Pi, a planner wrote `role: "selected"` to check a selection, so the check could never hold, and a successful click was reported as failed ([research Section 14](../research/computer-use-s0-s1.md#14-pi-task-batch-2026-09-23)).
 - A postcondition must be false before its step and true after it. A postcondition that already holds cannot show that the step worked, so the harness escalates instead of skipping the step ([Section 9](#9-step-lifecycle)).
 - A step whose only postcondition is `changed` is allowed, but its outcome is recorded as weakly verified.
 - Predicates count only elements that are on screen. An element is on screen when its frame is larger than 1 point in both dimensions and its center lies inside the window, or when it belongs to an open menu. This is the same rule the observer uses.
@@ -327,6 +330,7 @@ The result is compact, because it enters the planner's conversation.
 - The executor's element table has one line per element. Each line holds a label letter and the element's name, without role or kind ([research Section 4.5](../research/computer-use-s0-s1.md#45-name-only-labels-compared-with-verbose-descriptors-n--8-26-candidates)).
 - An element without an accessible name uses its value or its help text. An element with none of these is discarded with the reason `unnamed`.
 - Elements are listed under their group name, in the same format that was measured in [research Section 4.8](../research/computer-use-s0-s1.md#48-a-routing-question-with-one-speculative-question-per-group-n--12).
+- In the planner's table, a text field or text area also shows the last 200 characters of its content. Its name is the start of its content and is cut at the name length, so without this line a planner could not see a line it had just added. Through Pi, a planner in that position typed probe letters into the document to find its own edit ([research Section 14](../research/computer-use-s0-s1.md#14-pi-task-batch-2026-09-23)).
 - The planner's table in [Section 5.1](#51-computer_observe) ends with the text that the window shows outside its controls, under a line that says to check it with `text { contains }`. The text is the descendant text of the window and of on-screen containers, with at most 8 entries of at most 200 characters. Calculator's display is such text, and the planner could not read a result without it.
 - A shown text is listed even when it equals a control name, because Calculator's display can read "0" while a button is also named "0".
 
@@ -379,7 +383,7 @@ The harness sends one `POST /v1/systemone` request per step with `samples` set t
 | --- | --- | --- |
 | `region` | The table has more than one group. | One alternative per group name. Each alternative's description lists the names of the group's elements and states how many more are hidden beyond the visible area. |
 | `element_<n>` | Always, with one question per group. | The group's element letters, plus `none`, described as "None of these controls carries out the step." |
-| `operation` | Always. | The operations in [Section 7.2](#72-operations), plus `reobserve` and `abstain`. |
+| `operation` | The step does not fix the operation. | The operations that the step allows ([Section 7.2](#72-operations)), plus `reobserve` and `abstain`. |
 | `risk` | Always. | `safe`, `reversible` and `destructive`. |
 
 - The request never uses `depends_on` or `alone` ([research Section 4.3](../research/computer-use-s0-s1.md#43-question-coupling-on-a-mixed-role-list-of-26-candidates-n--48)).
@@ -399,7 +403,14 @@ The harness sends one `POST /v1/systemone` request per step with `samples` set t
 | `key_combo` | It sends the key combination to the frontmost window. | The step's `keys` field. |
 | `scroll_up` and `scroll_down` | They scroll by one page at the center of the chosen group's visible frame. A page moves about 80 percent of that frame's height. Containers are never element candidates, so a scroll targets a group rather than an element. This is how a target below the visible part of a list becomes reachable. | None. |
 
-The builder offers only operations whose literal source is present. For example, `enter_text` is offered only when the step has a `text` field.
+The planner decides the operation whenever the step states it, and the executor then chooses only the element and the risk.
+
+- A step with `keys` is offered only `key_combo`, and a step with `text` is offered only `enter_text`.
+- A step that names an `operation` is offered only that operation.
+- Only a step with none of these is offered the full set of `press`, `double_press`, `context_press`, `scroll_up` and `scroll_down`.
+- The reason is a Pi run in which a step with the key "Backspace" was answered with `press`, which clicked the text area instead of pressing the key ([research Section 14](../research/computer-use-s0-s1.md#14-pi-task-batch-2026-09-23)).
+- When the step fixes the operation, the request has no `operation` question. Through Pi, the executor answered `abstain` to such a question for a clear `enter_text` step. A missing target is still reported through each element question's `none`.
+- The `risk` question is always asked, so a key combination is still judged for destructive risk.
 
 ### 7.3 Token budget
 
@@ -437,7 +448,7 @@ stateDiagram-v2
     Decide --> Act: policy selects an action
     Act --> Verify
     Verify --> Advance: postcondition holds
-    Verify --> Decide: postcondition fails and attempts remain
+    Verify --> Decide: postcondition fails, step is idempotent, and attempts remain
     Verify --> Escalate: attempts exhausted or no change
     Advance --> Observe: more steps
     Advance --> [*]: plan complete
@@ -451,6 +462,7 @@ stateDiagram-v2
 - **Decide:** The harness sends one executor request and applies the policy.
 - **Act:** The actuator performs one action.
 - **Verify:** The harness waits for the configured settle interval, observes again, and evaluates the postcondition. It also compares the tree with the before-tree.
+- **No repeat after an effect:** An action that changed the screen but missed its postcondition ends the step with `postcondition_failed`, unless the step is `idempotent`. Through Pi, a planner checked Calculator's Add with a predicate that cannot hold, and the harness pressed Add a second time after the first press had taken effect ([research Section 14](../research/computer-use-s0-s1.md#14-pi-task-batch-2026-09-23)). A second press of a Send button would send twice.
 - **No change:** One action that changes nothing in the tree ends the step with `no_progress`. The action is not repeated, because the tree cannot show every effect, and a repeat could act twice. Through Pi, a Cmd+Down key moved the insertion point but changed nothing in the tree, and the earlier limit of two sent it twice ([research Section 11](../research/computer-use-s0-s1.md#11-first-checks-through-pi-2026-09-23)).
 - **Budgets:** The harness stops with `budget_exhausted` when the plan exceeds the configured action limit. The default limit is 100 actions per `computer_run_plan` call, taken from prior art. A separate limit bounds escalations per child run, with a default of 5. Neither default is measured.
 - **Cancellation:** The harness checks the tool's abort signal before each executor request and before each action. An action already sent to the relay is not interrupted, and its outcome is recorded.
@@ -499,6 +511,7 @@ An escalation ends the `computer_run_plan` call and returns control to the plann
 | `budget_exhausted` | The action limit was reached. | Report partial progress to the parent. |
 | `executor_unavailable` | The executor service failed or timed out. | Report the failure. The planner must not perform the steps itself in this release. |
 | `backend_failed` | The relay refused an action, reported an uncertain outcome, or lost the lease. | Report the failure. The harness never replays an uncertain action. |
+| `window_unclear` | Several windows of the app match and none was named, or the window the plan started on has closed. No action was taken on another window. | Name the window with `window_title`, or observe it and plan with `based_on`. |
 
 - Every escalation carries the step identifier, the reason, the last executor answers, and a fresh observation when one can be taken.
 - When the escalation limit is reached, the tool rejects further `computer_run_plan` calls in the child run, and the planner must report to the parent.
@@ -536,7 +549,7 @@ The backend interface has four operations.
 - The `list_apps` call also scans installed applications and took about one second in Phase 1. A cheaper source of the active application is needed before per-step observation in Phase 5.
 - With `foregroundDelivery` on, clicks and shortcuts with Command, Control or Option use the driver's `foreground` delivery. The driver brings the window forward for the action and then restores the previous app. Scrolls, plain keys and arrow, Home, End and Page keys with any modifier, such as Cmd+Up and Cmd+Down, stay in `background` delivery, because text-navigation keys worked there.
 - The reason is that a background click into a TextEdit document moved the insertion point in 0 of 3 trials in one lease and 3 of 3 in another, while foreground delivery moved it in 6 of 6 ([research Section 12.1](../research/computer-use-s0-s1.md#12-fix-checks-through-pi-2026-09-23)). A background click depends on hidden app state, and the covering window is not the cause.
-- `list_windows` reports a `z_index`, and a lower value is nearer the front. The driver's own tool description says the opposite, but a virtual machine screenshot showed Safari at 13 drawn over TextEdit at 36, and the covering check then named Safari in every trial of the second click lease ([research Section 12.1](../research/computer-use-s0-s1.md#12-fix-checks-through-pi-2026-09-23)). The backend picks the frontmost matching window, and it ignores the driver's own full-screen overlay window, named `cua-driver`, when it looks for covering windows.
+- `list_windows` reports a `z_index`, and a lower value is nearer the front. The driver's own tool description says the opposite, but a virtual machine screenshot showed Safari at 13 drawn over TextEdit at 36, and the covering check then named Safari in every trial of the second click lease ([research Section 12.1](../research/computer-use-s0-s1.md#12-fix-checks-through-pi-2026-09-23)). Without a window identifier, the backend picks the frontmost matching window, unless the harness asks it to refuse a choice among several. It ignores the driver's own full-screen overlay window, named `cua-driver`, when it looks for covering windows.
 - `bring_to_front` activates the app but did not raise its window above Safari, so it is not used for actions.
 
 ### 11.4 Accessibility activation mode
@@ -581,7 +594,8 @@ Step wall time includes the relay's screenshot captures, so it must not be compa
 | How often is the correct element missing from the table? | Measured in Phase 2: 6 of 19 labelled intents, for four causes. The target was scrolled out of view, reachable only through a closed menu, disabled, or an unnamed title-bar button ([research Section 9.2](../research/computer-use-s0-s1.md#92-retrieval-on-recorded-trees)). The first three are correct exclusions, which the plan must handle with scroll, menu or shortcut steps. | No. |
 | How does a step reach a target below the visible part of a list? | The executor never chose to scroll in 18 unlisted-target cases, even with the hidden count in the request. When the plan's step asked for a scroll, the executor routed to the list and chose `scroll_down` in 2 of 2 decisions of a standalone script run ([research Section 10.4](../research/computer-use-s0-s1.md#10-standalone-script-checks-in-a-macos-virtual-machine-2026-09-23)). Scrolling should come from the plan. A harness-side search of hidden names remains an option. | No. |
 | Does a click reach a covered window? | Closed. A background click depends on whether the app was recently active, not on the covering window. Foreground delivery moved the insertion point in 6 of 6 trials, and it is now the default for clicks ([Section 11.3](#113-local-driver-backend-for-development), [research Section 12.1](../research/computer-use-s0-s1.md#12-fix-checks-through-pi-2026-09-23)). An `enter_text` step places the insertion point with its `position` field. | No. |
-| How does a step close or zoom a window? | The title-bar buttons have no name in the tree. The planner should use key combinations such as `cmd+w` until the driver exposes their names. | No. |
+| How does a step close or zoom a window? | The title-bar buttons have no name in the tree. The planner should use key combinations such as `cmd+w` until the driver exposes their names. Menu shortcuts had no effect in the checks so far, so this depends on the next question. | No. |
+| How does a step run a menu command, such as Save? | Cmd+A and Cmd+S had no effect through the driver with either delivery mode, and menu bar items are not in the element table ([research Section 14.3](../research/computer-use-s0-s1.md#143-escalations-in-the-third-batch)). Measure whether any delivery reaches a menu key equivalent. If none does, add a menu operation that opens the menu bar item and presses the named menu item. | Yes, because a menu operation adds an operation and a table source. |
 | Should actions use direct accessibility activation? | Keep real input by default, as owner decision D3 requires. | Yes, because D3 is an owner decision. |
 | What does a real screenshot cost the planner? | Measured in Phase 1: the cost is proportional to pixel area, and a 1312×844 window screenshot costs 1,068 input tokens on Qwen 3.8 27B ([research Section 8](../research/computer-use-s0-s1.md#8-phase-1-observations-2026-09-23)). Choose the default image scale when the planner prompt is written in Phase 6. | No. |
 | Should the executor also receive screenshots? | Do not send them in the first release. The accessibility tree is the executor's only input until screenshot cost is measured. | No. |

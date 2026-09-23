@@ -495,3 +495,93 @@ The service writes each answer into a fixed template of question identifiers and
 - The client reports the length rejection as its own error. The harness then sends the request once more without history, and escalates `state_too_large` if it is still rejected. A retry is safe, because a decision request acts on nothing.
 
 **Verification limits:** The limits belong to the executor deployment measured on 2026-09-23. A change of model, tokenizer, answer format or model length changes them, and the script must then run again. Non-Latin text, such as Chinese window content, was not measured. Its estimate ratio is likely higher than Calculator's, and the executor's rejection is the safeguard for it.
+
+## 14. Pi task batch (2026-09-23)
+
+The script `scripts/computer-use/pi-task-batch.ts` runs Pi on three fixed tasks and checks each outcome with code. The Pi setup matches [Section 11](#11-first-checks-through-pi-2026-09-23): Pi 0.85.1, the Qwen 3.8 27B planner, the two computer-use tools, and the live executor. Safari is opened over the target window before each run. Foreground delivery and step pictures are on.
+
+| Task | Prompt | Code check after Pi exits |
+| --- | --- | --- |
+| Calculator | Compute 7 plus 3 and tell the result shown on the display. The display is cleared first. | The display text ends with "10". |
+| TextEdit | Add a new last line "Hello from Pi" to the open document `scratch.txt`. The file is rewritten and TextEdit is restarted first. | The document's value is the original text followed by a new line "Hello from Pi". |
+| Finder | Select the file "Zoning notes.txt" in the window "Fixture Folder". The folder holds 40 files, and the target sorts last, below the visible part of the list. | "Zoning notes.txt" is the only selected item. |
+
+**Formulas.** These formulas hold for every number in this section:
+
+- **Task done:** After Pi exits, the code check of the task holds.
+- **Answer states the result:** Pi's final text contains the checked result, which is 10, the typed line, or the file name. It does not test whether the answer claims checks that were not made.
+- **Pi wall time:** The time from starting Pi to its exit, in seconds.
+- **Driver call time:** The time from spawning `cua-driver call` to its parsed output, over 10 calls, in milliseconds.
+
+### 14.1 Earlier rounds
+
+- A smoke round and a second batch each ran every task once. Every task was done by the code check in both rounds. They exposed four defects, which were fixed in commit `6c33cd5` before the third batch:
+  - A planner that had just typed into TextEdit could not see its own line, because an element's name is cut at the name length. It typed probe letters into the document to find it. The planner's table now shows the last 200 characters of a text field or text area.
+  - A step with the key "Backspace" was answered with `press`, which clicked the text area. A step with `keys` is now offered only `key_combo`, a step with `text` only `enter_text`, and keys are validated with common aliases.
+  - The executor abstained on a clear text-entry step, because it was also asked to choose the operation. A step that fixes its operation no longer asks the operation question.
+  - A planner wrote `role: "selected"` to check a Finder selection, so a successful click was reported as failed. A `selected` predicate was added, and a role must now look like an accessibility role.
+- The first relay execution of the smoke round ran all three tasks in one command. The relay reported that command as uncertain. Its output was extracted read-only and not replayed. Later rounds ran one task per relay command.
+
+### 14.2 Third batch: 15 runs
+
+The third batch ran each task 5 times, on the code of commit `6c33cd5`, in lease `relay-computer-use-batch-3-968add37`.
+
+| Task | Task done | Answer states the result | Plan calls per run | Runs with no escalation or rejection | Pi wall time (s) |
+| --- | --- | --- | --- | --- | --- |
+| Calculator | 5 of 5 | 5 of 5 | 2 to 4 | 0 of 5 | 54 to 343 |
+| TextEdit | 5 of 5 | 5 of 5 | 1 to 3 | 3 of 5 | 49 to 233 |
+| Finder | 5 of 5 | 5 of 5 | 1 to 4 | 1 of 5 | 30 to 139 |
+
+- Every run reached the checked result. The escalations and rejections cost plan calls and time, not correctness.
+- In Calculator, every first plan was rejected by the plan validator. In 4 runs, the reason was a text check for "7", which is the name of a button. In the fifth run, the reason was an unsupported `equals` text check, and a later call added a `name` field to each step, which the tool's schema rejected. Pi corrected each rejection in the next call.
+- The first Calculator run took 343 seconds, and the relay reported its command as uncertain. Its evidence was extracted read-only.
+
+### 14.3 Escalations in the third batch
+
+**The harness pressed a button twice after the first press took effect.** In the first Calculator run, the Add step had a postcondition that could not hold. The first press changed the display, and the harness pressed Add a second time, because the step allowed two attempts. The step pictures show different before and after images for the first attempt. A second press of a Send button would send twice. Fix, after the batch: an action that changed the screen but missed its postcondition is not repeated, unless the step is `idempotent`, and a step may allow more than one attempt only when it is `idempotent`.
+
+**A plan acted on another window.** Two Finder runs planned without `window_title`. The backend then took the frontmost titled Finder window, which was a second window showing the batch's `content` folder, not "Fixture Folder". In one run, the plan also named an observation of "Fixture Folder" in `based_on`, and the harness still read the other window. The executor abstained in two of these plans, and in a third its choice, the file "cover.html", fell below the confidence gate. No wrong action was taken. How the second Finder window was opened is not established. Fix, after the batch:
+
+- A plan with `based_on` acts on the window of that observation.
+- A plan without `based_on` or `window_title` escalates `window_unclear` when several windows of the app are on screen, instead of taking the frontmost one.
+- Every read after the first one in a plan uses the same window. A closed window escalates `window_unclear`.
+
+**A text check for a control's name.** In three Finder runs, the scroll step checked `text contains "Zoning notes"`. The file's name is the label of a list item, and text checks do not search labels, so the check failed while the file was in view. The step escalated `postcondition_failed` in one run. In the two runs that allowed more attempts, a further scroll changed nothing, and the step escalated `no_progress`. The later plans selected the file directly. Fix, after the batch: when a text check fails and a control with a matching name is on screen, the failure names the control and says to check it with `exists`.
+
+**A check that held before the step.** In one Finder run, the select step checked `exists "Zoning notes.txt"`, which already held after the scroll. The harness stopped with `already_satisfied` before any action, as designed, and the next plan checked `selected`.
+
+**A save that the harness could not confirm.** In one TextEdit run, Pi added a Cmd+S step with the postcondition `changed`, although the task did not ask to save. The tree did not change, and the step escalated `no_progress`. Pi then tried the File menu, which escalated `target_not_found` because menu bar items are not in the table, and sent Cmd+S once more.
+
+- The title bar of the TextEdit window has a disabled menu button labelled "Edited" after a change and "document actions" before one. It stayed "Edited" after both Cmd+S steps, so Cmd+S did not save the document.
+- The file on disk still ended with the new line in all 5 TextEdit runs, including the 4 runs without Cmd+S. TextEdit's autosave wrote it. The file on disk is therefore no evidence of a save.
+- Cmd+S was sent with foreground delivery. With [Section 12.1](#121-why-a-click-into-a-covered-window-did-not-move-the-insertion-point), where Cmd+A selected nothing in either delivery mode, this is a second menu shortcut that had no effect through the driver.
+- Pi's final answer said the document was saved with Cmd+S and explained the missing change away. The harness had reported the step as failed. This is a claim that the "Answer states the result" formula does not detect.
+- No fix was made. Saving and other menu commands need either a menu operation or a proven way to deliver menu shortcuts, which is a design decision.
+
+### 14.4 Driver call time
+
+Each run of the batch script measured each call 10 times. The table gives the lowest and highest of those per-run medians over the smoke round and batches 2 and 3.
+
+| Call | Driver call time, median (ms) |
+| --- | --- |
+| `list_apps` | 438 to 630 |
+| `list_windows` | 11 to 13 |
+| `get_window_state` | 159 to 179 |
+| `lsappinfo front`, then `lsappinfo info -only pid` | 6 to 8 |
+
+- The backend calls `list_apps` only to learn which application is active, and the call also scans installed applications. The two `lsappinfo` calls answer the same question about 70 times faster.
+- The `lsappinfo` output was compared with `list_apps` in the batch script only, not in the backend.
+
+### 14.5 Relay limits met
+
+- A lease cannot be staged twice, so a code change needs a new lease.
+- A detached process started by a relay command is stopped when the command ends, so the batch cannot run in the background.
+- A relay command that runs longer than about 5 minutes can return "request failed", which the relay records as an uncertain outcome. Running one task per command kept each command short.
+
+**Evidence:** The relay manifests are under `relay-evidence/relay-computer-use-batch-db90647b/`, `relay-evidence/relay-computer-use-batch-2-6373b845/` and `relay-evidence/relay-computer-use-batch-3-968add37/`, which are not versioned. Each run has `events.jsonl`, the harness records, the step pictures and `review.md`. The batch-3 lease finished with delivery verified and execution uncertain, because of the first Calculator run.
+
+**Verification limits:**
+
+- The fixes made after the third batch are covered by harness, backend and verifier tests. They have not yet run through Pi.
+- Five runs per task show that the paths work repeatedly on three tasks. They do not give a rate for other applications.
+- A person has not reviewed the step pictures.

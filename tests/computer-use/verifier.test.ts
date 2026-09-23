@@ -76,6 +76,9 @@ test("descendant text counts as visible change and as a name, without bidirectio
   after.elements.push({ element_index: 9100, role: "AXButton", label: "7", depth: 1, parent_index: window,
     frame: { ...after.elements.find(element => element.element_index === window)!.frame!, w: 40, h: 40 } });
   assert.equal(evaluatePostcondition({ text: { contains: "7" } }, after).holds, false, "A button labelled 7 is not content");
+  assert.match(evaluatePostcondition({ text: { contains: "7" } }, after).detail,
+    /does not contain "7"; a control named "7" is on screen, and text checks do not search control names, so check it with \{exists:\{name\}\}$/);
+  assert.equal(evaluatePostcondition({ text: { contains: "11" } }, after).detail, "on-screen text does not contain \"11\"");
   assert.equal(validatePostcondition({ text: { contains: "" } }), "text needs exactly one of contains or endsWith");
   assert.equal(validatePostcondition({ text: { contains: "a", endsWith: "b" } }), "text needs exactly one of contains or endsWith");
   assert.equal(validatePostcondition({ text: { contains: "10" } }), undefined);

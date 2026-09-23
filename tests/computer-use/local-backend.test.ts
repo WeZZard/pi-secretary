@@ -66,6 +66,20 @@ test("a closed application and an unmatched title are typed errors that list the
     (error: BackendError) => error.code === "window_not_found" && /exists but is not on screen/.test(error.message));
 });
 
+test("a plan names one window: an observed window id wins, a closed one is an error, and several matches are refused", async () => {
+  const { run } = recorder({ elements: [] });
+  const backend = new LocalDriverBackend({ run, maxTreeNodes: 500 });
+  // Observed 2026-09-23: a Finder plan without a title acted on the batch's own "content" window.
+  assert.equal((await backend.readWindow({ app: "TextEdit", windowId: 3 }, { screenshot: false })).window.title, "draft.txt");
+  assert.equal((await backend.readWindow({ app: "TextEdit", windowTitle: "notes", windowId: 3 }, { screenshot: false })).window.windowId, 3);
+  await assert.rejects(backend.readWindow({ app: "TextEdit", windowId: 8 }, { screenshot: false }),
+    (error: BackendError) => error.code === "window_not_found" && /observed is closed/.test(error.message));
+  await assert.rejects(backend.readWindow({ app: "TextEdit", single: true }, { screenshot: false }),
+    (error: BackendError) => error.code === "window_ambiguous" && /2 TextEdit windows match: "notes.txt", "draft.txt"/.test(error.message));
+  assert.equal((await backend.readWindow({ app: "TextEdit", windowTitle: "draft", single: true }, { screenshot: false })).window.windowId, 3);
+  assert.equal((await backend.readWindow({ app: "Finder", single: true }, { screenshot: false })).window.windowId, 4);
+});
+
 test("a page scroll sends enough wheel notches to move most of the scrolled region", () => {
   // The Finder list's visible part was 384 points tall; one notch moved it 100 points.
   assert.equal(pageNotches(384), 3);

@@ -163,7 +163,11 @@ export function evaluatePostcondition(condition: Postcondition, after: WindowRea
     const holds = visibleElements(after).some(element => [element.value, after.descendantText?.[element.element_index]]
       .some(text => typeof text === "string" && (ends ? normalize(text).endsWith(wanted) : normalize(text).includes(wanted))));
     const verb = ends ? (holds ? "ends with" : "does not end with") : (holds ? "contains" : "does not contain");
-    return { holds, detail: `on-screen text ${verb} ${JSON.stringify(target)}` };
+    // A Finder scroll checked text for a file's name, which is a control label, and failed with the
+    // file in view (Pi task batch, 2026-09-23). The failure names the control so the plan can switch check.
+    const control = holds ? undefined : visibleElements(after).find(element => typeof element.label === "string" && normalize(element.label).includes(wanted));
+    return { holds, detail: `on-screen text ${verb} ${JSON.stringify(target)}`
+      + (control ? `; a control named ${JSON.stringify(control.label)} is on screen, and text checks do not search control names, so check it with {exists:{name}}` : "") };
   }
   if ("changed" in condition) {
     if (!before) return { holds: false, detail: "no earlier observation to compare with" };

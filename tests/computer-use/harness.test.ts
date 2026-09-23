@@ -57,6 +57,16 @@ test("a plan completes: one request per step, a real click at the element center
   assert.ok(!("depends_on" in exec.bodies[0]!.questions.operation!));
 });
 
+test("the first read refuses to guess among several windows, and every later read uses the same window", async (t) => {
+  const { backend, deps } = setup(t, [form, submitted]);
+  await runPlan(deps(executor(() => ({ element: "Submit", operation: "press" }))), plan([{ id: "submit", intent: "Submit the form", postcondition: { exists: { name: "Done" } } }]));
+  assert.deepEqual(backend.reads, [{ app: "Form", single: true }, { app: "Form", windowId: form.window.windowId }]);
+  const lost = setup(t, [new BackendError("window_ambiguous", "2 Form windows match")]);
+  const result = await runPlan(lost.deps(executor(() => ({ element: "Submit", operation: "press" }))), plan([{ id: "submit", intent: "Submit", postcondition: { exists: { name: "Done" } } }]));
+  assert.equal(result.escalation?.reason, "window_unclear");
+  assert.equal(lost.backend.actions.length, 0);
+});
+
 test("a postcondition that already holds stops the plan with already_satisfied before any request or action", async (t) => {
   // Observed through Pi on 2026-09-23: "text contains 7" held before the Add step, so Add was skipped.
   const { backend, deps } = setup(t, [submitted]);
@@ -73,9 +83,14 @@ test("an idempotent step whose postcondition already holds is skipped without an
   assert.deepEqual([result.outcome, result.steps[0]!.result, result.decisions], ["completed", "skipped", 0]);
 });
 
-test("a failed postcondition is retried and then escalated as postcondition_failed", async (t) => {
-  const { deps } = setup(t, [form, window([{ name: "Submit" }, { name: "Cancel" }, { name: "Error" }]), window([{ name: "Submit" }, { name: "Cancel" }, { name: "Error 2" }])]);
-  const result = await runPlan(deps(executor(() => ({ element: "Submit", operation: "press" }))), plan([{ id: "s", intent: "Submit", postcondition: { exists: { name: "Done" } } }]));
+test("an action that took effect but missed its postcondition is not repeated, unless the step is idempotent", async (t) => {
+  const reads = () => [form, window([{ name: "Submit" }, { name: "Cancel" }, { name: "Error" }]), window([{ name: "Submit" }, { name: "Cancel" }, { name: "Error 2" }])];
+  const once = setup(t, reads());
+  const single = await runPlan(once.deps(executor(() => ({ element: "Submit", operation: "press" }))), plan([{ id: "s", intent: "Submit", postcondition: { exists: { name: "Done" } } }]));
+  assert.deepEqual([single.escalation!.reason, single.actions], ["postcondition_failed", 1]);
+  assert.match(single.escalation!.detail, /changed the screen, so it was not repeated/);
+  const { deps } = setup(t, reads());
+  const result = await runPlan(deps(executor(() => ({ element: "Submit", operation: "press" }))), plan([{ id: "s", intent: "Submit", idempotent: true, postcondition: { exists: { name: "Done" } } }]));
   assert.equal(result.outcome, "escalated");
   assert.deepEqual([result.escalation!.reason, result.actions], ["postcondition_failed", 2]);
   assert.match(result.escalation!.observation!, /A Button "Submit"/, "An escalation carries a fresh observation for replanning");
@@ -85,7 +100,7 @@ test("an action that changes nothing on screen is not repeated and escalates no_
   // Observed through Pi on 2026-09-23: invisible clicks and keys were each sent twice.
   const { backend, deps } = setup(t, [form]);
   const result = await runPlan(deps(executor(() => ({ element: "Submit", operation: "press" }))),
-    plan([{ id: "s", intent: "Submit", maxAttempts: 5, postcondition: { exists: { name: "Done" } } }]));
+    plan([{ id: "s", intent: "Submit", maxAttempts: 5, idempotent: true, postcondition: { exists: { name: "Done" } } }]));
   assert.deepEqual([result.escalation!.reason, result.actions, backend.actions.length], ["no_progress", 1, 1]);
   assert.match(result.escalation!.detail, /changed nothing on screen; it was not repeated/);
 });
@@ -229,4 +244,5 @@ test("text entry must check the text, and a key that only moves the insertion po
     "A step with text is text entry whether or not it names the operation");
   assert.match(validatePlan(plan([{ id: "k", intent: "Erase", keys: "Hyper+x", postcondition: { changed: true } }]), 50) ?? "", /step k: "Hyper\+x" is not a key combination/);
   assert.match(validatePlan(plan([{ id: "b", intent: "Both", text: "a", keys: "cmd+a", postcondition: { text: { contains: "a" } } }]), 50) ?? "", /text or keys, not both/);
+  assert.match(validatePlan(plan([{ id: "r", intent: "Send", maxAttempts: 3, postcondition: { exists: { name: "Sent" } } }]), 50) ?? "", /max_attempts above 1 needs idempotent: true/);
 });

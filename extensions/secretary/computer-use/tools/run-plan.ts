@@ -21,9 +21,10 @@ export interface RunPlanContext {
 const rejected = (error: string): AgentToolResult<RunPlanDetails> =>
   ({ content: [{ type: "text", text: `Plan rejected: ${error}` }], details: { outcome: "rejected", decisions: 0, actions: 0, error } });
 
-export function toPlan(params: Static<typeof runPlanSchema>): Plan {
+/** A plan made against an observation acts on that observation's window (Pi task batch, 2026-09-23). */
+export function toPlan(params: Static<typeof runPlanSchema>, basedOn?: Observation): Plan {
   return {
-    target: { app: params.app, ...(params.window_title ? { windowTitle: params.window_title } : {}) },
+    target: { app: params.app, ...(params.window_title ? { windowTitle: params.window_title } : {}), ...(basedOn ? { windowId: basedOn.window.windowId } : {}) },
     goal: params.goal,
     allowDestructive: params.allow_destructive ?? [],
     steps: params.steps.map(step => ({ id: step.id, intent: step.intent, postcondition: step.postcondition as Postcondition,
@@ -78,7 +79,7 @@ export async function executeRunPlan(context: RunPlanContext, params: Static<typ
   if (params.based_on !== undefined && !basedOn) {
     return rejected(`observation ${JSON.stringify(params.based_on)} is unknown or expired; call computer_observe and plan against the new observation.`);
   }
-  const plan = toPlan(params);
+  const plan = toPlan(params, basedOn);
   const problem = validatePlan(plan, 50, basedOn);
   if (problem) return rejected(problem);
   const result = await runPlan(context.deps, plan, signal);

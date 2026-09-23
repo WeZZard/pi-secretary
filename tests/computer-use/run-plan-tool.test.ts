@@ -52,6 +52,12 @@ test("plans are rejected before execution for an unknown observation, a malforme
   assert.equal(exhausted.details.outcome, "rejected");
 });
 
+test("a plan based on an observation acts on that observation's window", async (t) => {
+  const { context: ctx } = context(t);
+  await executeRunPlan(ctx, { ...params, based_on: "obs-1" });
+  assert.deepEqual((ctx.deps.backend as FakeBackend).reads[0], { app: "Form", windowId: form.window.windowId, single: true });
+});
+
 test("a completed result lists each step compactly", () => {
   assert.equal(formatResult({ outcome: "completed", decisions: 1, actions: 1, steps: [
     { id: "a", result: "verified", action: "press", element: "Submit", detail: "\"Done\" is on screen" },
