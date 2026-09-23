@@ -435,3 +435,63 @@ The script `scripts/computer-use/click-placement.ts` clicked the center of TextE
 - Each Pi task ran once, and the click experiment ran 3 times per method in each lease. The results show that the paths work, not how often they work.
 - The step pictures are recorded evidence. A person has not reviewed them yet.
 - Only Calculator and TextEdit were tested through Pi. A Finder scrolling task was not rerun.
+
+## 13. Executor token budget (2026-09-23)
+
+These measurements set the answer reserve in [design Section 7.3](../arch/computer-use.md#73-token-budget). The script is `scripts/computer-use/measure-token-budget.ts`, and it prints its formulas. It ran against the live executor at `http://jev.home.arpa`.
+
+**Formulas:**
+
+- Answer tokens are the service's `usage.output_tokens`. This is the output length that the service's reads request from vLLM.
+- Input tokens are the service's `usage.input_tokens`.
+- The estimate is the request builder's `ceil(JSON characters / 3)` of the request body.
+- The estimate ratio is input tokens divided by the estimate, for the same request.
+
+### 13.1 The model-length limit
+
+- The service accepts a request when input tokens plus answer tokens are at most 4,096. A request with 4,088 input tokens and 8 answer tokens was accepted, and a request one input token longer was rejected.
+- A rejected request returns HTTP 502 with vLLM's message "This model's maximum context length is 4096 tokens". The client previously reported this as an unavailable executor.
+
+### 13.2 Answer tokens by group count
+
+The service writes each answer into a fixed template of question identifiers and single-letter labels. The answer length therefore depends only on the questions, and the request builder's questions depend only on the group count. The script sent the builder's question shape for every group count from 1 to 26.
+
+| Groups | Questions | Answer tokens |
+| --- | --- | --- |
+| 1 | 3 | 18 |
+| 2 | 5 | 28 |
+| 5 | 8 | 46 |
+| 7 | 10 | 58 |
+| 8 | 11 | 43 |
+| 10 | 13 | 52 |
+| 25 | 28 | 127 |
+| 26 | 29 | 137, in two reads |
+
+- The answer grows by about 6 tokens per question up to 10 questions. Above 10 questions, the service switches to a shorter answer format that costs 5 tokens per question.
+- At 26 groups, the service splits the answer into two reads. No single read requested more than 127 answer tokens.
+- 26 groups is the largest possible count, because the routing question has one option per group and the service accepts at most 26 options.
+- The questions alone cost 3,768 input tokens at 25 groups, before any element name. A window with that many groups cannot fit, so input, not the answer, limits the group count in practice.
+
+### 13.3 Estimate error
+
+77 distinct requests from the Phase 4 evaluation, the standalone script checks and the Pi runs had both an estimate and the service's input tokens.
+
+| Window | Requests | Estimate ratio |
+| --- | --- | --- |
+| Calculator, 106 buttons | 14 | 1.21 to 1.26 |
+| Safari test page | 11 | 0.91 to 0.99 |
+| Finder folder | 17 | 0.91 to 0.94 |
+| TextEdit document and Open dialog | 7 | 0.84 to 0.93 |
+| Plans run in the virtual machine | 28 | 0.83 to 1.02 |
+
+- The estimate undercounted Calculator by up to 514 tokens and overcounted a TextEdit document by up to 17 percent.
+- The Calculator requests hold many short digit and symbol names. Such text costs more tokens per character than prose.
+- No fixed reserve can absorb this error in both directions. A reserve large enough for Calculator would refuse TextEdit requests that fit.
+
+### 13.4 Consequence for the design
+
+- The answer reserve is 128 tokens, which covers every single read that the request builder can cause. The earlier default of 512 tokens was not measured.
+- The executor decides whether a request fits, because only it counts tokens exactly. The estimate only decides how much history to send.
+- The client reports the length rejection as its own error. The harness then sends the request once more without history, and escalates `state_too_large` if it is still rejected. A retry is safe, because a decision request acts on nothing.
+
+**Verification limits:** The limits belong to the executor deployment measured on 2026-09-23. A change of model, tokenizer, answer format or model length changes them, and the script must then run again. Non-Latin text, such as Chinese window content, was not measured. Its estimate ratio is likely higher than Calculator's, and the executor's rejection is the safeguard for it.

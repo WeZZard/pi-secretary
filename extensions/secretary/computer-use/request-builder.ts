@@ -20,14 +20,17 @@ export interface QuestionMap {
   risk: string;
 }
 
-export type BuiltRequest =
-  | { status: "ready"; body: DecisionRequestBody; questions: QuestionMap; offered: Operation[]; estimatedTokens: number; historyUsed: number }
-  | { status: "too_large"; estimatedTokens: number; budget: number };
+/** The executor decides whether a request fits (design §7.3), so the builder always returns a request. */
+export interface BuiltRequest { status: "ready"; body: DecisionRequestBody; questions: QuestionMap; offered: Operation[]; estimatedTokens: number; historyUsed: number }
 
 /** The executor's model length (research §2.2). */
 export const EXECUTOR_MODEL_LENGTH = 4096;
-/** Used until Phase 4 calibrates `answerReserveTokens` from the service's usage reports. */
-export const UNCALIBRATED_ANSWER_RESERVE = 512;
+/**
+ * The largest answer one executor read can need. The answer's length depends only on the
+ * question ids, so it is fixed by the group count: 18 tokens for one group, 127 for 25, and 26
+ * groups split into two reads (research §13).
+ */
+export const ANSWER_RESERVE_TOKENS = 128;
 
 const OPERATION_TEXT: Record<Operation, string> = {
   press: "Click the chosen element once.",
@@ -43,8 +46,8 @@ const REOBSERVE = "The window is still changing or loading, so look again before
 const ABSTAIN = "No listed control can carry out the step.";
 
 /**
- * Estimated input tokens. It is a character-based estimate checked against the service's
- * `usage.input_tokens` in telemetry, so it can be corrected from real data (design §7.3).
+ * Estimated input tokens. It chooses how much history to send and nothing else, because it was
+ * off by -17 to +26 percent against the service's `usage.input_tokens` (research §13).
  */
 export const estimateTokens = (body: DecisionRequestBody): number => Math.ceil(JSON.stringify(body).length / 3);
 
@@ -106,8 +109,9 @@ export function buildDecisionRequest(input: {
 
   const elements = observation.groups.map(group =>
     `${group.name.toUpperCase()}\n${group.elements.map(element => `  ${element.letter} ${element.name}`).join("\n")}${group.hidden ? `\n  (${group.hidden} more hidden below; scroll to reveal)` : ""}`).join("\n");
-  const budget = EXECUTOR_MODEL_LENGTH - (input.answerReserveTokens ?? UNCALIBRATED_ANSWER_RESERVE);
-  // Drop the oldest history first until the request fits (design §7.3).
+  const budget = EXECUTOR_MODEL_LENGTH - (input.answerReserveTokens ?? ANSWER_RESERVE_TOKENS);
+  // Drop the oldest history first until the estimate fits (design §7.3). Without history the
+  // request is sent even when the estimate is over, because only the executor can count exactly.
   for (let used = input.recent.length; used >= 0; used--) {
     const recent = input.recent.slice(input.recent.length - used);
     const state: Record<string, unknown> = {
@@ -116,8 +120,7 @@ export function buildDecisionRequest(input: {
     };
     const body: DecisionRequestBody = { state, questions, samples: 1 };
     const estimatedTokens = estimateTokens(body);
-    if (estimatedTokens <= budget) return { status: "ready", body, questions: map, offered, estimatedTokens, historyUsed: recent.length };
-    if (used === 0) return { status: "too_large", estimatedTokens, budget };
+    if (estimatedTokens <= budget || used === 0) return { status: "ready", body, questions: map, offered, estimatedTokens, historyUsed: recent.length };
   }
   throw new Error("unreachable");
 }

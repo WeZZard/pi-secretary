@@ -110,6 +110,11 @@ test("executor failure, untypeable text and backend failure escalate without rep
     plan([{ id: "s", intent: "Submit", postcondition: { exists: { name: "Done" } } }]));
   assert.deepEqual([unavailable.escalation!.reason, unavailable.decisions], ["executor_unavailable", 0]);
 
+  const huge = setup(t, [form]);
+  const tooLong = new ExecutorError("too_large", "the request does not fit the executor's model length");
+  const oversize = await runPlan(huge.deps(executor(() => tooLong)), plan([{ id: "s", intent: "Submit", postcondition: { exists: { name: "Done" } } }]));
+  assert.deepEqual([oversize.escalation!.reason, oversize.decisions], ["state_too_large", 0], "Without history, the executor's length rejection is final");
+
   const text = setup(t, [window([{ role: "AXTextField", name: "Email" }])]);
   const needsText = await runPlan(text.deps(executor(() => ({ element: "Email", operation: "enter_text" }))),
     plan([{ id: "s", intent: "Enter the email", text: "a@b.c", postcondition: { value: { name: "Email", equals: "a@b.c" } } }]));
@@ -119,6 +124,20 @@ test("executor failure, untypeable text and backend failure escalate without rep
   broken.backend.actionFailures.push(new BackendError("driver_failed", "cua-driver click failed"));
   const failed = await runPlan(broken.deps(executor(() => ({ element: "Submit", operation: "press" }))), plan([{ id: "s", intent: "Submit", postcondition: { exists: { name: "Done" } } }]));
   assert.deepEqual([failed.escalation!.reason, failed.actions, broken.backend.actions.length], ["backend_failed", 0, 0]);
+});
+
+test("a request the executor finds too long is sent once more without history", async (t) => {
+  const next = window([{ name: "Next" }]);
+  const { deps } = setup(t, [form, next, window([{ name: "Finished" }])]);
+  const exec = executor((body, call) => call === 2 ? new ExecutorError("too_large", "the request does not fit the executor's model length")
+    : { element: call === 1 ? "Submit" : "Next", operation: "press" });
+  const result = await runPlan(deps(exec), plan([
+    { id: "a", intent: "Submit", postcondition: { exists: { name: "Next" } } },
+    { id: "b", intent: "Continue", postcondition: { exists: { name: "Finished" } } }]));
+  assert.equal(result.outcome, "completed");
+  const recent = (body: DecisionRequestBody) => (body.state as { recent?: unknown[] }).recent?.length ?? 0;
+  assert.deepEqual(exec.bodies.map(recent), [0, 1, 0], "The rejected request carried history, and its retry carried none");
+  assert.equal(result.decisions, 2, "A rejected request is not a decision");
 });
 
 test("cancellation stops before the next request or action", async (t) => {

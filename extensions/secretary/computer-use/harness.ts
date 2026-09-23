@@ -152,21 +152,30 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
       let attempts = 0, reobserves = 0, unchanged = 0;
       for (;;) {
         if (actions >= config.maxActionsPerPlan) escalate(step.id, "budget_exhausted", `the plan used its ${config.maxActionsPerPlan} actions`);
-        const built = buildDecisionRequest({ goal: plan.goal, step, observation: current.observation, recent: history.recent(), answerReserveTokens: config.answerReserveTokens });
-        if (built.status === "too_large") escalate(step.id, "state_too_large", `the executor request needs about ${built.estimatedTokens} tokens; ${built.budget} are available`);
-        if (built.status !== "ready") break;
-        checkCancelled();
-        let response: DecisionResponse;
-        try { response = await executor.decide(built.body, signal); }
-        catch (error) {
-          if (error instanceof ExecutorError && error.code === "aborted") throw new Stop(undefined, true);
-          return escalateAfter(step.id, "executor_unavailable", error instanceof Error ? error.message : String(error));
+        const observation = current.observation;
+        const build = (recent: ReturnType<typeof history.recent>) =>
+          buildDecisionRequest({ goal: plan.goal, step, observation, recent, answerReserveTokens: config.answerReserveTokens });
+        let built = build(history.recent());
+        let response: DecisionResponse | undefined;
+        // The executor counts tokens exactly and the estimate does not. A request it finds too long
+        // is sent once more without history, which is safe because a decision acts on nothing.
+        while (!response) {
+          checkCancelled();
+          try { response = await executor.decide(built.body, signal); }
+          catch (error) {
+            if (error instanceof ExecutorError && error.code === "aborted") throw new Stop(undefined, true);
+            if (error instanceof ExecutorError && error.code === "too_large") {
+              if (built.historyUsed > 0) { built = build([]); continue; }
+              escalate(step.id, "state_too_large", `the window is too large for the executor even without history (estimated ${built.estimatedTokens} tokens): ${error.message}`);
+            }
+            return escalateAfter(step.id, "executor_unavailable", error instanceof Error ? error.message : String(error));
+          }
         }
         decisions++;
         const decision: Decision = decide({ response, questions: built.questions, observation: current.observation, step,
           allowDestructive: plan.allowDestructive.includes(step.id), confidenceGate: config.confidenceGate });
         await telemetry.recordStep({ runId, stepId: step.id, attempt: attempts + 1, estimatedTokens: built.estimatedTokens,
-          inputTokens: response.inputTokens, roundTripMs: response.roundTripMs, request: built.body, answers: response.answers, decision: summarize(decision) });
+          inputTokens: response.inputTokens, outputTokens: response.outputTokens, historyUsed: built.historyUsed, roundTripMs: response.roundTripMs, request: built.body, answers: response.answers, decision: summarize(decision) });
         if (decision.kind === "reobserve") {
           if (++reobserves > REOBSERVE_LIMIT) escalate(step.id, "no_progress", "the executor kept asking to look again", decision.prior);
           await sleep(config.settleMs, signal);

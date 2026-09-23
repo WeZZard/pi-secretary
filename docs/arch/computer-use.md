@@ -199,7 +199,7 @@ The module reads a top-level `computerUse` object from the same `secretary.json`
 | `executorUrl` | It is the base address of the executor service. | None, so `computer_run_plan` stays unregistered. |
 | `executorTimeoutMs` | It bounds one executor request. | 10,000, not measured. |
 | `confidenceGate` | It is the gate in [Section 8](#8-decision-policy), rule 7. | 0.4, from prior art. |
-| `answerReserveTokens` | It is the token reserve in [Section 7.3](#73-token-budget). | None. It must be calibrated in Phase 4 of the plan. |
+| `answerReserveTokens` | It is the answer reserve in [Section 7.3](#73-token-budget). | 128, the largest answer one executor read can need ([research Section 13](../research/computer-use-s0-s1.md#13-executor-token-budget-2026-09-23)). |
 | `maxElements` | It is the observer's element limit in [Section 6.3](#63-grouping). | 240, the largest measured list. |
 | `maxTreeNodes` | It is the walk limit passed to `cua-driver` as `max_elements`. Reaching it marks the tree as truncated. | 2,000, the driver's own default. |
 | `maxNameLength` | It truncates element names, because a text area's label can be the whole document. | 48, not measured. |
@@ -402,10 +402,12 @@ The builder offers only operations whose literal source is present. For example,
 
 ### 7.3 Token budget
 
-- The builder estimates the request size before sending it. The estimate is calibrated to the measured cost of roughly seven tokens per element-table line ([research Section 4.6](../research/computer-use-s0-s1.md#46-cost-of-a-name-only-element-list-as-it-grows)).
-- The request must leave the answer reserve free within the 4,096-token model length. The reserve is configurable and has no measured default yet.
-- The harness first drops older `recent` records to fit the budget. If the request still does not fit, the harness returns `state_too_large`.
-- After each response, telemetry records the service's `usage.input_tokens` next to the estimate, so that the estimator can be corrected from real data.
+- The executor accepts a request when its input tokens plus its answer tokens are at most 4,096 ([research Section 13.1](../research/computer-use-s0-s1.md#13-executor-token-budget-2026-09-23)).
+- The answer length depends only on the questions, and the questions depend only on the group count. The largest answer one read can need is 127 tokens, so the answer reserve is 128 tokens ([research Section 13.2](../research/computer-use-s0-s1.md#13-executor-token-budget-2026-09-23)).
+- The builder estimates the request size as the request body's characters divided by three. The estimate was off by −17 to +26 percent against the service's count, depending on the window's text ([research Section 13.3](../research/computer-use-s0-s1.md#13-executor-token-budget-2026-09-23)). It therefore decides only how much history to send, and it never refuses a request.
+- The builder drops the oldest `recent` records until the estimate fits within 4,096 tokens minus the reserve. When no history is left, it sends the request anyway.
+- The executor is the only exact counter. When it rejects a request as longer than its model length, the harness sends the request once more without history. A second rejection, or a first rejection without history, escalates `state_too_large`. The retry is safe, because a decision request acts on nothing.
+- After each response, telemetry records the service's input and answer tokens next to the estimate and the number of history records sent.
 
 ## 8. Decision policy
 
@@ -486,7 +488,7 @@ An escalation ends the `computer_run_plan` call and returns control to the plann
 | Reason | Raised when | Expected planner response |
 | --- | --- | --- |
 | `needs_text` | The step's text contains characters that the backend cannot type with real key presses. A step without `text` is never offered `enter_text`, so missing text cannot reach the executor. | Rewrite the text with typeable characters, or split the step. |
-| `state_too_large` | The tree was truncated, or the table exceeds the element or token budget. | Narrow the target, for example by closing panels or choosing a smaller window. |
+| `state_too_large` | The tree was truncated, the table exceeds the element limit, or the executor rejects the request as too long even without history. | Narrow the target, for example by closing panels or choosing a smaller window. |
 | `uncertain` | Confidence is below the gate, or the element and operation are incompatible. The answers are returned as a prior. | Confirm the prior or rewrite the step more specifically. |
 | `target_not_found` | The executor abstained. | Check the returned observation and revise the step. |
 | `already_satisfied` | The postcondition held before the step, and the step is not marked `idempotent`. No action was taken. | Write a postcondition that is false before the step, or mark the step `idempotent` when repeating it does no harm. |

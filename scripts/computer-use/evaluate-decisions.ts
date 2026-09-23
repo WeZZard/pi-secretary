@@ -52,7 +52,6 @@ for (const target of targets) {
     if (inTable) present++; else retrievalMisses++;
     const step = { id: "s", intent: intent.intent, ...(intent.text ? { text: intent.text } : {}), ...(intent.keys ? { keys: intent.keys } : {}) };
     const built = buildDecisionRequest({ goal: target.goal ?? intent.intent, step, observation, recent: [], answerReserveTokens: config.answerReserveTokens, regionDescriptions, noneOption });
-    if (built.status !== "ready") { rows.push(`| ${target.label} | ${intent.intent} | ${observation.groups.length} | ${inTable} | state_too_large | escalation | | ${built.estimatedTokens} | |`); escalations++; continue; }
     let response;
     try { response = await client.decide({ ...built.body, seed }); }
     catch (error) { rows.push(`| ${target.label} | ${intent.intent} | ${observation.groups.length} | ${inTable} | ${(error as Error).message} | escalation | | (${built.estimatedTokens}) | |`); escalations++; continue; }

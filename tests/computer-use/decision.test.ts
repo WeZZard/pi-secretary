@@ -36,15 +36,15 @@ test("a small window has no routing question, and literals decide which operatio
   assert.deepEqual(Object.keys(built.body.questions.element_1!.criteria), ["A", "none"], "Every element question offers none");
 });
 
-test("history is dropped oldest first to fit the budget, and an oversized state is reported", () => {
+test("history is dropped oldest first to fit the budget, and a request over the estimate is still built without history", () => {
   const build = (history: typeof recent, answerReserveTokens: number) =>
     buildDecisionRequest({ goal: "g", step: { id: "s", intent: "i" }, observation: finder(), recent: history, answerReserveTokens });
   const full = ready(build(recent, 0)).estimatedTokens, bare = ready(build([], 0)).estimatedTokens;
   assert.ok(bare < full);
   const trimmed = ready(build(recent, 4096 - Math.floor((full + bare) / 2)));
   assert.ok(trimmed.historyUsed > 0 && trimmed.historyUsed < 5, "Older records are dropped first until the request fits");
-  const tooLarge = build(recent, 4096 - bare + 1);
-  assert.equal(tooLarge.status, "too_large");
+  const over = ready(build(recent, 4096 - bare + 1));
+  assert.equal(over.historyUsed, 0, "Only the executor can say that a request without history is too long");
 });
 
 function response(answers: Record<string, [string, number]>): DecisionResponse {
@@ -87,6 +87,12 @@ test("the client reports timeout, rejection, malformed answers and usage", async
   let clock = 0;
   const ok = new ExecutorClient({ baseUrl: "http://jev/", timeoutMs: 1000, now: () => (clock += 250), fetch: reply(200, JSON.stringify({ answers: { q: { choice: "B", confidence: 0.7 } }, usage: { input_tokens: 42 } })) });
   assert.deepEqual(await ok.decide(body), { answers: { q: { choice: "B", confidence: 0.7 } }, inputTokens: 42, roundTripMs: 250 });
+  const counted = new ExecutorClient({ baseUrl: "http://jev/", timeoutMs: 1000, fetch: reply(200, JSON.stringify({ answers: { q: null }, usage: { input_tokens: 42, output_tokens: 18 } })) });
+  assert.equal((await counted.decide(body)).outputTokens, 18);
+  // The service's wording on 2026-09-23 for a request one token over the model length.
+  const overLength = JSON.stringify({ error: { message: "upstream 400: {\"error\":{\"message\":\"This model's maximum context length is 4096 tokens. However, you requested 8 output tokens and your prompt contains at least 4089 input tokens\"}}", type: "server_error" } });
+  await assert.rejects(new ExecutorClient({ baseUrl: "http://jev", timeoutMs: 1000, fetch: reply(502, overLength) }).decide(body), (error: ExecutorError) => error.code === "too_large");
+  await assert.rejects(new ExecutorClient({ baseUrl: "http://jev", timeoutMs: 1000, fetch: reply(502, "bad gateway") }).decide(body), (error: ExecutorError) => error.code === "failed");
   await assert.rejects(new ExecutorClient({ baseUrl: "http://jev", timeoutMs: 1000, fetch: reply(422, "at most 26 alternatives") }).decide(body), (error: ExecutorError) => error.code === "rejected");
   await assert.rejects(new ExecutorClient({ baseUrl: "http://jev", timeoutMs: 1000, fetch: reply(200, JSON.stringify({ answers: { q: { choice: "Z", confidence: 1 } } })) }).decide(body), (error: ExecutorError) => error.code === "malformed");
   const hang: Fetch = (_url, init) => new Promise((_resolve, reject) => init.signal.addEventListener("abort", () => reject(new Error("aborted"))));

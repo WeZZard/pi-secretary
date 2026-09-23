@@ -13,12 +13,17 @@ export interface DecisionResponse {
   answers: Record<string, ChoiceAnswer | null>;
   /** The service's `usage.input_tokens`. */
   inputTokens?: number;
+  /** The service's `usage.output_tokens`: the answer tokens its reads requested. */
+  outputTokens?: number;
   /** Executor round-trip latency: harness-side time from sending the request to receiving the full response (design §12.2). */
   roundTripMs: number;
 }
 
+const CONTEXT_LENGTH = /maximum context length/i;
+
 export class ExecutorError extends Error {
-  readonly code: "timeout" | "unreachable" | "rejected" | "failed" | "malformed" | "aborted";
+  /** `too_large`: the request does not fit the executor's model length, counted by the executor itself. */
+  readonly code: "timeout" | "unreachable" | "rejected" | "too_large" | "failed" | "malformed" | "aborted";
   constructor(code: ExecutorError["code"], message: string) { super(message); this.name = "ExecutorError"; this.code = code; }
 }
 
@@ -56,9 +61,11 @@ export class ExecutorClient {
       clearTimeout(timer);
     }
     const roundTripMs = this.#now() - started;
+    // The service wraps vLLM's length rejection as HTTP 502 "upstream 400" (research §13).
+    if (!response.ok && CONTEXT_LENGTH.test(text)) throw new ExecutorError("too_large", `the request does not fit the executor's model length: ${text.slice(0, 300)}`);
     if (response.status === 422) throw new ExecutorError("rejected", `the executor rejected the request: ${text.slice(0, 300)}`);
     if (!response.ok) throw new ExecutorError("failed", `the executor returned HTTP ${response.status}: ${text.slice(0, 300)}`);
-    let parsed: { answers?: Record<string, { choice?: unknown; confidence?: unknown } | null>; usage?: { input_tokens?: unknown } };
+    let parsed: { answers?: Record<string, { choice?: unknown; confidence?: unknown } | null>; usage?: { input_tokens?: unknown; output_tokens?: unknown } };
     try { parsed = JSON.parse(text); } catch { throw new ExecutorError("malformed", "the executor response is not JSON"); }
     if (!parsed.answers || typeof parsed.answers !== "object") throw new ExecutorError("malformed", "the executor response has no answers");
     const answers: Record<string, ChoiceAnswer | null> = {};
@@ -71,6 +78,7 @@ export class ExecutorClient {
       answers[id] = { choice: answer.choice, confidence: answer.confidence };
     }
     const inputTokens = typeof parsed.usage?.input_tokens === "number" ? parsed.usage.input_tokens : undefined;
-    return { answers, ...(inputTokens !== undefined ? { inputTokens } : {}), roundTripMs };
+    const outputTokens = typeof parsed.usage?.output_tokens === "number" ? parsed.usage.output_tokens : undefined;
+    return { answers, ...(inputTokens !== undefined ? { inputTokens } : {}), ...(outputTokens !== undefined ? { outputTokens } : {}), roundTripMs };
   }
 }
