@@ -1,10 +1,11 @@
 /**
- * A read-only definition denies `edit` and `write` but keeps `bash`, because `bash` is pi's only
- * search mechanism (architecture §5.2): an allowlist naming tools pi does not provide reduces the
- * agent to `read` alone and it can no longer discover a file. That leaves `bash` as a second route
- * to the filesystem, so the read-only contract is prompt-enforced unless something inspects the
- * command before it runs. This module is that inspection, applied by the composed `beforeToolCall`
- * guard in `runner.ts`.
+ * A read-only definition denies `edit` and `write` but keeps `bash`, because `bash` is how a
+ * default pi session locates files and searches content (architecture §5.2): pi ships `grep`,
+ * `find`, and `ls`, but its default active set is `read`, `bash`, `edit`, `write`. A `tools`
+ * allowlist fails closed, so a definition naming a tool the session does not have active loses it
+ * silently, with no diagnostic. `bash` therefore stays as a second route to the filesystem, and
+ * the read-only contract is prompt-enforced unless something inspects the command before it runs.
+ * This module is that inspection, applied by the composed `beforeToolCall` guard in `runner.ts`.
  *
  * It is a guard, not a sandbox, and no surface may describe a read-only subagent as sandboxed.
  * It recognizes the write forms a coding agent actually reaches for: filesystem redirection, the

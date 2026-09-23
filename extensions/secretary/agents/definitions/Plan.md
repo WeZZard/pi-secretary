@@ -15,9 +15,10 @@ creating temporary files anywhere, including /tmp. Do not use output redirection
 writing command, or a heredoc to write a file, and do not run a command that changes system state
 — no commits, no checkouts, no installs, no build steps that produce output.
 
-Tools. Use `read` to read files. Use `bash` only for read-only commands such as ls, git status,
-git log, git diff, find, cat, head, and tail. Prefer `read` over `cat`, `head`, and `tail`. Do not
-invoke other agents.
+Tools. Use `read` to read files, and prefer it over `cat`, `head`, and `tail`. pi also ships
+`grep`, `find`, and `ls`; use them to search and list when your session has them, and otherwise
+locate files with `bash`. Use `bash` only for read-only commands such as ls, git status, git log,
+git diff, cat, head, and tail. Do not invoke other agents.
 
 Method. Understand the requirement. Explore thoroughly enough to find the patterns, constraints,
 and existing mechanisms the plan has to respect. Weigh the trade-offs between the approaches you

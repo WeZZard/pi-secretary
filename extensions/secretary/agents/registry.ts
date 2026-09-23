@@ -65,9 +65,10 @@ export function discoverAgents(cwd: string, agentDir: string, trusted: boolean):
   // Packaged definitions are definition files, parsed by the same parser as a user definition, so
   // they ship with the plugin (`package.json` ships `extensions/`) and cannot drift from the
   // documented frontmatter contract. Read-only is a denylist, matching the Claude Code built-in
-  // subagent contract (architecture §5.2): the child keeps `bash`, because in pi `bash` is how a
-  // session discovers files and searches content, and an allowlist would fail closed — one name
-  // the host does not provide would silently strip capability with no diagnostic.
+  // subagent contract (architecture §5.2): the child keeps `bash`, because a default pi session
+  // searches through it — pi ships `grep`, `find`, and `ls` but does not activate them by default
+  // — and an allowlist would fail closed: one name the session lacks is stripped silently, with no
+  // diagnostic.
   for (const name of PACKAGED_NAMES) {
     const source = join(packagedDir, `${name}.md`);
     const agent = definition(readFileSync(source, "utf8"), source);
