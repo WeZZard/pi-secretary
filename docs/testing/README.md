@@ -8,6 +8,7 @@ Use this guide to choose a verification layer. Test procedures explain how to re
 | --- | --- | --- |
 | Run the routine development gate. | `npm run verify` runs type checking, the default tests, Mermaid validation, and acceptance linting. | The tests use deterministic fixtures and do not make paid model requests. |
 | Run focused subagent tests. | `npm run test:subagents` runs component and SDK regressions. | The tests use temporary state and deterministic providers. |
+| Run focused computer-use tests. | `npm run test:computer-use` runs the harness, observer, verifier, backend and delegation tests. | The tests use a fake desktop, a scripted executor and a deterministic provider. |
 | Execute the Gherkin acceptance bindings. | `npm run test:acceptance` runs scenario-specific adapters. | The tests use isolated fixtures rather than a live provider. |
 | Check acceptance syntax and identities only. | `npm run lint:acceptance` parses the specifications. | This command does not execute the scenarios. |
 | Run all real-provider E2E cases. | `npm run test:e2e` runs headless and interactive cases sequentially. | A configured LiteLLM installation is required, and model calls may incur charges. |
@@ -21,6 +22,7 @@ The default `npm test` and `npm run verify` commands do not include the paid-pro
 ## Procedures and references
 
 - The [inline tool wireframe tests](inline-tool-wireframes.md) compare registered tools' composed Pi rows against UX wireframes A–I and are included in the default test gate. Run `python3 scripts/record-inline-tools.py` for the separate deterministic keyboard-driven compact/full walkthrough; it launches an isolated real Pi PTY, records fresh evidence under `test-results/`, and checks the replayed terminal grids.
+- Computer-use checks on a real desktop run in a disposable macOS virtual machine through the relay, never on the development machine. `scripts/computer-use/pi-task-batch.ts` runs Pi on fixed Calculator, TextEdit and Finder tasks and checks each outcome with code; `scripts/computer-use/menu-shortcut.ts` measures menu shortcut delivery. The procedures, formulas and results are in [research Section 14](../research/computer-use-s0-s1.md#14-pi-task-batch-2026-09-23).
 - Follow [Subagent E2E Tests](subagent-e2e.md) for provider setup, interaction modes, fixture layout, and live-run evidence.
 - The shared-store concurrency case `tests/e2e/cases/interactive/goal-widget-storage-lock.test.ts` ([architecture §13.7](../arch/architecture.md#137-verification-requirements)) drives the interactive TUI with a real provider while an external process holds a write transaction on the goals database; its fast complement asserts the storage read succeeds under the lock. Run it with the interactive suite (`npm run test:e2e:interactive`) or by file path.
 - Follow the [deterministic TUI recording procedure](../../doc/acceptance/tui-recording.md) for the longer inspector and keyboard walkthrough.

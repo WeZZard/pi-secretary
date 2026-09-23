@@ -48,6 +48,7 @@
     "test": "node --experimental-strip-types --test --test-concurrency=1 tests/**/*.test.ts",
     "test:serial": "node --experimental-strip-types --test --test-concurrency=1 tests/**/*.test.ts",
     "test:subagents": "node --experimental-strip-types --test --test-concurrency=1 tests/agents/*.test.ts",
+    "test:computer-use": "node --experimental-strip-types --test --test-concurrency=1 tests/computer-use/*.test.ts",
     "test:e2e": "node --experimental-strip-types --test --test-concurrency=1 tests/e2e/cases/non-interactive/*.test.ts tests/e2e/cases/interactive/*.test.ts",
     "test:e2e:headless": "node --experimental-strip-types --test --test-concurrency=1 tests/e2e/cases/non-interactive/*.test.ts",
     "test:e2e:interactive": "node --experimental-strip-types --test --test-concurrency=1 tests/e2e/cases/interactive/*.test.ts",

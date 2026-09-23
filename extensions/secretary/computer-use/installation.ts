@@ -33,7 +33,7 @@ export interface ComputerUseInstallOptions {
 
 export function createBackend(config: ComputerUseConfiguration): ExecutionBackend {
   if (config.backend === "local") return new LocalDriverBackend({ run: cuaDriverRunner(config.localDriverPath), maxTreeNodes: config.maxTreeNodes, foregroundDelivery: config.foregroundDelivery, frontmostPid: lsappinfoFrontmost });
-  // design §11.2: the relay backend waits for an enclosure-manager export from pi-vm-relay (plan Phase 7).
+  // design §11.2: the relay backend, a client of an mcp-vm-relay server session, is plan Phase 7.
   throw new Error(`computerUse.backend ${config.backend} is not available in this build; use local for development`);
 }
 
@@ -93,7 +93,7 @@ export function installComputerUse(pi: ExtensionAPI, options: ComputerUseInstall
     pi.registerTool(defineTool<typeof runPlanSchema, RunPlanDetails>({
       name: "computer_run_plan",
       label: "Run Plan",
-      description: "Carry out a complete plan in one application window. Code observes the window, a structured-decision executor chooses one control per step, real pointer and keyboard input performs it, and code checks each step's postcondition. Returns when every step is verified, when the harness escalates with a typed reason and the current window, or when cancelled. Every literal text must be complete in the plan. Use key combinations such as cmd+w for unnamed title-bar buttons, and plan menu or scroll steps for controls that are not visible.",
+      description: "Carry out a complete plan in one application window. Code observes the window, a structured-decision executor chooses one control per step, real pointer and keyboard input performs it, and code checks each step's postcondition. Returns when every step is verified, when the harness escalates with a typed reason and the current window, or when cancelled. Every literal text must be complete in the plan. Plan scroll steps for controls that are not visible. Menu bar items are not in the table, and menu shortcuts had no effect in checks so far.",
       parameters: runPlanSchema,
       executionMode: "sequential",
       async execute(_id, params, signal) {

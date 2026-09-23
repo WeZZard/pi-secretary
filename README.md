@@ -103,6 +103,39 @@ model: inherit
 - Runtime compatibility is tested against pi 0.85.1. Parent-only inline tools that cannot be rediscovered for a child fail explicitly rather than silently disappearing.
 - See the [subagent architecture](docs/arch/subagents.md), [BDD specifications](doc/acceptance/README.md), and [verification report](docs/testing/subagent-verification.md) for scope and verification limits.
 
+## Computer use
+
+Secretary can delegate a task in one open macOS application window to a computer-use agent. The agent observes the window through its accessibility tree, a structured-decision executor chooses each control, real pointer and keyboard input performs it, and code checks every step. The requirements are CU-01 to CU-07 in the [computer-use requirements](docs/user-stories/computer-use.md), and the design is the [computer-use design](docs/arch/computer-use.md).
+
+- Only the development backend, `local`, is available. It operates this machine's desktop through `cua-driver`, so use it only in a disposable virtual machine or against disposable windows. The relay backend, which runs in a fresh virtual machine through `mcp-vm-relay`, is not built yet.
+- The tools `computer_observe` and `computer_run_plan` are registered only when `computerUse` is configured. They are registered in the parent session too, because a delegated agent's tools are the parent's tools narrowed by its allowlist.
+- The agent definition runs in the background, so delegation needs the interactive terminal or RPC mode. A `pi --print` parent cannot delegate to it.
+
+**Install the agent definition.** Copy the template into the agent directory:
+
+```bash
+mkdir -p ~/.pi/agent/agents
+cp extensions/secretary/computer-use/templates/computer-use.md ~/.pi/agent/agents/computer-use.md
+```
+
+**Configure it** in `~/.pi/agent/secretary.json`. The model identifier is an example placeholder; use a configured model that accepts images.
+
+```json
+{
+  "agents": {
+    "modelFallbackLists": { "computer-use": ["your-provider/your-vision-model"] },
+    "subagentModels": { "computer-use": "computer-use" }
+  },
+  "computerUse": {
+    "backend": "local",
+    "allowLocalDesktop": true,
+    "executorUrl": "http://your-executor-host"
+  }
+}
+```
+
+The other `computerUse` fields and their defaults are listed in [design Section 4.5](docs/arch/computer-use.md#45-configuration).
+
 ## Development
 
 ```bash
