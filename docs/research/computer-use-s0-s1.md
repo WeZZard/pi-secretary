@@ -243,7 +243,7 @@ These observations come from recording real accessibility trees and replaying th
 - Calculator in programmer mode exposed 106 buttons as direct children of the window, with no containers.
 - The title-bar buttons of every window had no label, value or descendant text.
 - Finder's Back button was named `back` and was disabled, because the folder had no history.
-- While these checks ran, every window, including other applications' windows, was reported off screen twice for minutes at a time. This is consistent with a Space switch or a locked screen. Live re-recording and the Phase 3 live check could not run during those periods on the development Mac. Both were later run in a relay virtual machine, as [Section 10](#10-live-checks-in-a-macos-virtual-machine-2026-09-23) records.
+- While these checks ran, every window, including other applications' windows, was reported off screen twice for minutes at a time. This is consistent with a Space switch or a locked screen. Live re-recording and the Phase 3 live check could not run during those periods on the development Mac. Both were later run as standalone scripts in a relay virtual machine, as [Section 10](#10-standalone-script-checks-in-a-macos-virtual-machine-2026-09-23) records.
 
 ### 9.2 Retrieval on recorded trees
 
@@ -285,9 +285,17 @@ The first two runs grouped by 26 elements, before the `none` option existed. The
 - The executor judged "Submit the form" and "Sign out of every device" destructive in some seeds, which produced `approval_required` escalations with the correct element as the prior.
 - These results come from 19 intents on five windows. They show the direction of each change but do not establish rates for other applications.
 
-## 10. Live checks in a macOS virtual machine (2026-09-23)
+## 10. Standalone script checks in a macOS virtual machine (2026-09-23)
 
-These checks ran the Phase 2, Phase 3 and Phase 5 scripts inside a disposable macOS 26 virtual machine leased through `pi-vm-relay`. The guest ran `cua-driver` through the local driver backend. Every action used real pointer or keyboard input, as owner decision D3 requires. The test content was a scratch TextEdit document, Calculator, a Finder window on a folder of 40 dummy files, and a local Safari test page. Safari stayed in front, so TextEdit, Calculator and Finder were partly or fully covered during every action.
+These checks ran the Phase 2, Phase 3 and Phase 5 scripts under Node.js inside a disposable macOS 26 virtual machine. Claude Code leased the machine and started the scripts through the `mcp-vm-relay` plugin. The guest ran `cua-driver` through the local driver backend.
+
+**Scope:** Pi did not run in these checks, so they are not live checks of the Pi extension.
+
+- The staged copy replaced Pi's package, `@earendil-works/pi-coding-agent`, with a stub.
+- The scripts called the harness function `executeRunPlan` directly, which is the function that the `computer_run_plan` tool calls.
+- The plans were written by hand, so the planner model was not tested.
+- Pi's extension loading, tool registration, tool-call input from the planner, cancellation signal and session hooks were not tested.
+- The results are therefore evidence for the harness modules and for `cua-driver` behavior in the guest. They are not evidence for the Pi infrastructure. The fix plan requires the same checks to be repeated with Pi running the extension. Every action used real pointer or keyboard input, as owner decision D3 requires. The test content was a scratch TextEdit document, Calculator, a Finder window on a folder of 40 dummy files, and a local Safari test page. Safari stayed in front, so TextEdit, Calculator and Finder were partly or fully covered during every action.
 
 **Formulas:**
 
@@ -326,9 +334,9 @@ Each defect below made a check fail although the action had worked. Each fix has
 - **A page scroll moved much less than a page.** One page-sized wheel notch moved Finder's list by 100 points. The local backend now sends enough notches to move about 80 percent of the scrolled region's height.
 - **The verifier counted elements scrolled out of the window.** After a scroll, Finder still reported the first file 140 points above the window, and `absent` failed. The verifier now uses the observer's rule that an element's center must lie inside the window unless it belongs to a menu.
 
-### 10.4 The harness with the live executor
+### 10.4 The harness function with the live executor, without Pi
 
-`scripts/computer-use/run-plan-live.ts` ran `computer_run_plan` inputs through the real harness, the local backend and the live executor at `http://jev.home.arpa`. The planner was not involved, because the plans were written by hand.
+`scripts/computer-use/run-plan-live.ts` ran `computer_run_plan` inputs through the real harness, the local backend and the live executor at `http://jev.home.arpa`. Pi did not run, and the planner was not involved, because the plans were written by hand.
 
 | Plan | Outcome | Executor decisions | Round-trip latency, per decision | Input tokens, per decision |
 | --- | --- | --- | --- | --- |
@@ -342,7 +350,7 @@ Each defect below made a check fail although the action had worked. Each fix has
 
 ### 10.5 Verification limits
 
-- These checks used hand-written plans. The planner model, the Pi tool call and the relay backend were not part of the loop.
+- These checks used standalone scripts and hand-written plans. Pi, the planner model, the Pi tool call and the relay backend were not part of the loop.
 - The screenshots in the relay evidence show the desktop, where Safari covered the other windows. They do not show Calculator's display or Finder's list, so the accessibility tree is the only evidence for those results.
 - Each check ran once. The results show that the path works, not how often it works.
 
