@@ -2,7 +2,7 @@
 
 **Document type:** Research record.
 
-**Status:** Recorded evidence from a design investigation on 2026-09-22. Section 8 adds observations from implementing Phase 1 on 2026-09-23. This record does not describe current Secretary behavior, and it does not approve any requirement. The [technical design](../arch/computer-use.md) cites this record as the evidence for its decisions.
+**Status:** Recorded evidence from a design investigation on 2026-09-22. Sections 8 and 9 add observations from implementing Phases 1 to 4 on 2026-09-23. This record does not describe current Secretary behavior, and it does not approve any requirement. The [technical design](../arch/computer-use.md) cites this record as the evidence for its decisions.
 
 **Related documents:** [Computer-use technical design](../arch/computer-use.md), [subagent architecture](../arch/subagents.md), and [documentation responsibilities](../README.md).
 
@@ -230,3 +230,57 @@ These observations come from implementing Phase 1 of the plan. They were taken o
 - The cost is close to one token per 32×32-pixel patch, so it scales with pixel area.
 - A full Retina screen would cost more than ten thousand tokens by the same proportion. That extrapolation was not measured.
 - The script is `scripts/computer-use/measure-image-tokens.ts`, and it prints its formula.
+
+## 9. Phase 2 to 4 observations (2026-09-23)
+
+These observations come from recording real accessibility trees and replaying them against the live executor. The windows were a disposable TextEdit document and its Open dialog, Calculator, a Finder window on a folder of 40 dummy files, and a local Safari test page with look-alike links. The development Mac ran `cua-driver` 0.12.6. The recording and evaluation scripts are `scripts/computer-use/record-trees.ts` and `scripts/computer-use/evaluate-decisions.ts`, and both print their formulas.
+
+### 9.1 Tree facts
+
+- The structured `elements` array holds only indexed elements. In Finder and in the Open dialog, the names of sidebar rows, such as "Downloads", exist only as unindexed static text in the Markdown rendering. The observer now takes those names from the Markdown, but this was verified only against recorded Markdown, because the windows were unavailable for a live re-read.
+- Safari's first read of the test page had no web area at all. The second read had all 28 links and the form controls.
+- In Safari, more than 90 percent of the walked nodes were closed-menu items, mostly from the History and Bookmarks menus. The menu bar is walked first, so large menus can consume the node cap before the window content.
+- Calculator in programmer mode exposed 106 buttons as direct children of the window, with no containers.
+- The title-bar buttons of every window had no label, value or descendant text.
+- Finder's Back button was named `back` and was disabled, because the folder had no history.
+- While these checks ran, every window, including other applications' windows, was reported off screen twice for minutes at a time. This is consistent with a Space switch or a locked screen. Live re-recording and the Phase 3 live check could not run during those periods, and the Phase 3 live check was not executed.
+
+### 9.2 Retrieval on recorded trees
+
+19 step intents were labelled with their correct element before any tree was inspected. One more intent, creating a folder in the Open dialog, was withdrawn because that dialog has no such control.
+
+| Cause | Intents | Assessment |
+| --- | --- | --- |
+| The target was below the visible part of Finder's list. | 2 | The exclusion is correct. A scroll is needed first. |
+| The target was only a menu item of a closed menu. | 1 | The exclusion is correct. A menu or shortcut step is needed. |
+| The target was disabled. | 1 | The exclusion is correct. |
+| The target was an unnamed title-bar button. | 1 | This is a real gap. |
+| The target's name was only in the Markdown. | 1 | This is fixed in code and verified on recorded Markdown only. |
+
+**Retrieval miss rate:** 6 of 19 labelled intents had their target absent from the executor's table.
+
+### 9.3 Executor decisions on recorded trees
+
+**Formulas:** Each labelled intent was sent as one request per seed, with seeds 1, 2 and 3, so each run has 57 decisions.
+
+- A correct action means the policy acted on an expected element.
+- A judgment miss means the expected element was in the table and the policy acted on another element. Its rate is over the 39 decisions whose element was in the table.
+- A wrong action on an unlisted target means the expected element was absent and the policy acted anyway. Its rate is over the 18 decisions whose element was absent.
+- Executor round-trip latency, median (ms), is the harness-side time from sending the request to the full response.
+
+The first two runs grouped by 26 elements, before the `none` option existed. The last two grouped by 25 elements and included the hidden-item note in region descriptions.
+
+| Run | Correct actions | Judgment misses | Wrong actions on unlisted targets | Escalations | Round-trip latency, median |
+| --- | --- | --- | --- | --- | --- |
+| Plain region names, 26 per group | 22 of 57 | 11 of 39 | not recorded | 10 | 175 ms |
+| Region descriptions with member names, 26 per group | 34 of 57 | 0 of 39 | not recorded | 8 | 187 ms |
+| Member names, 25 per group, no `none` | 35 of 57 | 0 of 39 | 16 of 18 | 6 | 190 ms |
+| Member names, 25 per group, with `none` | 33 of 57 | 0 of 39 | 7 of 18 | 17 | 193 ms |
+
+- Every judgment miss with plain region names occurred in windows split into meaningless parts, which were Calculator and the Safari page. In an earlier single-seed run with plain region names, seed 42, the five wrong answers carried element confidences between 0.80 and 0.98, so the confidence gate could not catch them.
+- Member-name descriptions raised the input tokens reported by the service. On Calculator they rose from 1,950 to 2,480, which is 61 percent of the executor's 4,096-token model length.
+- Adding `none` to every element question adds a 27th alternative to a full 26-element group. The service rejected those requests with HTTP 422 until groups were capped at 25.
+- With `none`, three of the seven remaining wrong actions on unlisted targets chose a plausible path. Finder's Action menu contains New Folder, and the Open dialog's "Where:" menu leads to folders. The three "close the document window" decisions clicked the text area, because the close button has no name.
+- The executor never chose to scroll when the target was below the visible part of a list, in 18 of 18 decisions, even when the request stated how many items were hidden.
+- The executor judged "Submit the form" and "Sign out of every device" destructive in some seeds, which produced `approval_required` escalations with the correct element as the prior.
+- These results come from 19 intents on five windows. They show the direction of each change but do not establish rates for other applications.

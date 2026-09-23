@@ -166,6 +166,7 @@ extensions/secretary/computer-use/
     backend.ts           execution backend interface
     relay-backend.ts     adapter for the pi-vm-relay enclosure manager
     local-backend.ts     development adapter for the host cua-driver
+    cua-markdown.ts      descendant text from the driver's Markdown rendering
     fake-backend.ts      deterministic test desktop
   templates/
     computer-use.md      user-level agent definition template
@@ -256,13 +257,16 @@ A postcondition is a small predicate over the accessibility tree. Code evaluates
 | `exists { name, role? }` | An element with this name, and this role when given, is present. |
 | `absent { name, role? }` | No such element is present. |
 | `value { name, equals }` | The named element's value equals the given string. |
-| `focused { name }` | The named element has keyboard focus. |
 | `window { titleContains }` | The frontmost window title contains the given string. |
 | `changed` | The tree differs from the tree before the step. |
 | `all [ ... ]` and `any [ ... ]` | All or any of the nested predicates hold. |
 
 - The harness rejects a plan whose postconditions are malformed before it performs any action.
 - A step whose only postcondition is `changed` is allowed, but its outcome is recorded as weakly verified.
+- Predicates count only elements that are on screen, which means elements with a frame larger than 1 point in both dimensions. A closed menu's items are in the tree without frames, so `exists "Save"` would otherwise always hold.
+- A name matches an element's label, value or descendant text ([Section 6.1](#61-reading-the-tree)), ignoring case and extra whitespace. `value` compares the value exactly.
+- `changed` compares the role, label, value, state and rounded frame of every on-screen element before and after the step.
+- A `focused` predicate was specified earlier and is withdrawn. `cua-driver` 0.12.6 reports no focus state, so code cannot evaluate it.
 
 ### 5.4 Result
 
@@ -277,7 +281,9 @@ The result is compact, because it enters the planner's conversation.
 
 ### 6.1 Reading the tree
 
-- The observer reads the window through the `cua-driver` window-state call and parses the structured `elements` array ([Section 2.3.1](#231-constraints-from-cua-driver)). It never parses the Markdown rendering.
+- The observer reads the window through the `cua-driver` window-state call and parses the structured `elements` array ([Section 2.3.1](#231-constraints-from-cua-driver)).
+- The structured array holds only indexed elements. The text that names many rows and cells, such as a sidebar's "Downloads", is an unindexed static-text child that appears only in the Markdown rendering. The backend therefore parses the Markdown for one purpose only: it attaches each unindexed static text to its nearest indexed ancestor. The observer uses that descendant text as a name when the element's own label and value are empty. The driver documents the Markdown shape as stable for text-parsing callers.
+- The first read of each window in a backend's lifetime is a warm-up read, and its result is discarded. Safari's first read lacked the whole web area, and the second read had it.
 - Step observations use the tree-only form. The planner's observation in `computer_observe` requests the screenshot.
 - The relay caps standard output at 64 KiB, and `cua-driver` caps the walk at its element limit. When either cap truncates the tree, the observer must not treat the partial tree as complete. It returns the escalation `state_too_large`.
 - A tree without a window element is a window that is still appearing. The observer returns `window_missing`, and the caller reads again after `settleMs`, at most twice. This was observed on the first read after a background launch of TextEdit.
@@ -307,14 +313,17 @@ The result is compact, because it enters the planner's conversation.
 
 ### 6.3 Grouping
 
-Groups exist so that no question exceeds 26 alternatives. The grouping rule is not yet validated on real trees ([Section 13](#13-open-questions)).
+Groups exist so that no question exceeds 26 alternatives. Every element question reserves one alternative for `none` ([Section 7.1](#71-request-composition)), so a group holds at most 25 elements. The rule was evaluated on five recorded windows in Phase 2 and Phase 4 ([research Section 9](../research/computer-use-s0-s1.md#9-phase-2-to-4-observations-2026-09-23)).
 
 1. A modal sheet or dialog, when present, is the only group. Elements behind it are discarded with the reason `behind_modal`.
 2. An open menu, when present, forms its own group.
 3. Otherwise, the observer forms groups from the nearest container with a landmark role, such as toolbar, outline or sidebar, tab group, table or list, and the remaining window content.
-4. A group with more than 26 elements is split in reading order into consecutive groups, which are named with a numeric suffix.
-5. A window with 26 elements or fewer forms a single group, and the request omits the routing question.
+4. A group with more than 25 elements is split in reading order into consecutive groups, named `part 1`, `part 2` and so on.
+5. A window with 25 elements or fewer forms a single group, and the request omits the routing question.
 6. When the element count exceeds the configured maximum, the observer returns `state_too_large` rather than dropping elements silently.
+7. A group records how many named elements of its container lie outside the window, such as rows below the visible part of a list.
+
+- Real windows often lack landmark containers. Calculator's 106 buttons and a web page's links and form controls all fell into one content region, so the split parts carry no meaning. [Section 7.1](#71-request-composition) compensates by describing each region with its members' names.
 
 ### 6.4 Retrieval record
 
@@ -347,13 +356,16 @@ The harness sends one `POST /v1/systemone` request per step with `samples` set t
 
 | Question | Present when | Alternatives |
 | --- | --- | --- |
-| `region` | The table has more than one group. | One alternative per group name. |
-| `<group>_element` | Always, with one question per group. | The group's element labels. |
+| `region` | The table has more than one group. | One alternative per group name. Each alternative's description lists the names of the group's elements and states how many more are hidden beyond the visible area. |
+| `element_<n>` | Always, with one question per group. | The group's element letters, plus `none`, described as "None of these controls carries out the step." |
 | `operation` | Always. | The operations in [Section 7.2](#72-operations), plus `reobserve` and `abstain`. |
 | `risk` | Always. | `safe`, `reversible` and `destructive`. |
 
 - The request never uses `depends_on` or `alone` ([research Section 4.3](../research/computer-use-s0-s1.md#43-question-coupling-on-a-mixed-role-list-of-26-candidates-n--48)).
 - The `reobserve` alternative means that the window is changing or loading. The `abstain` alternative means that no listed element fits the step. Every question's instructions describe these meanings explicitly, because conventions must be stated rather than assumed.
+- Region descriptions carry the member names because routing over meaningless part names failed. Over three seeds on recorded trees, judgment misses fell from 11 of 39 to 0 of 39 when the descriptions were added. The cost is more input tokens, up to 61 percent of the executor's model length on Calculator ([research Section 9.3](../research/computer-use-s0-s1.md#93-executor-decisions-on-recorded-trees)).
+- Every element question offers `none` because the executor otherwise clicked some other control when the target was not listed. Over three seeds, such wrong actions fell from 16 of 18 to 7 of 18, while correct actions fell from 35 to 33 of 57.
+- The request may carry the fork's `seed` extension for evaluation. Production requests omit it, so the server's default seed makes them deterministic.
 
 ### 7.2 Operations
 
@@ -362,9 +374,9 @@ The harness sends one `POST /v1/systemone` request per step with `samples` set t
 | `press` | It clicks the element's frame center once. | None. |
 | `double_press` | It double-clicks the element's frame center. | None. |
 | `context_press` | It right-clicks the element's frame center. | None. |
-| `enter_text` | It focuses the element and types the text. | The step's `text` field. |
+| `enter_text` | It clicks the element's frame center, then presses one key per character. Characters outside the backend's key vocabulary are refused before any input. | The step's `text` field. |
 | `key_combo` | It sends the key combination to the frontmost window. | The step's `keys` field. |
-| `scroll_up` and `scroll_down` | They scroll the chosen element's scroll area by one page. | None. |
+| `scroll_up` and `scroll_down` | They scroll by one page at the center of the chosen group's container. Containers are never element candidates, so a scroll targets a group rather than an element. This is how a target below the visible part of a list becomes reachable. | None. |
 
 The builder offers only operations whose literal source is present. For example, `enter_text` is offered only when the step has a `text` field.
 
@@ -381,7 +393,7 @@ The policy runs in code after each response. It applies the following rules in o
 
 1. If the service is unreachable, times out, or returns an error, the policy returns `executor_unavailable`.
 2. If `operation` is `reobserve`, the harness observes again and repeats the decision. It does this at most twice per step, and then it returns `no_progress`.
-3. If `operation` is `abstain`, the policy returns `target_not_found`.
+3. If `operation` is `abstain`, or the routed element question answers `none`, the policy returns `target_not_found`.
 4. If the table has several groups, the policy reads the element answer from the question of the group chosen by `region`. It never compares confidences across questions ([research Section 4.7](../research/computer-use-s0-s1.md#47-merging-independent-heads-by-confidence-n--8)).
 5. If the chosen element and operation are incompatible, the policy returns `uncertain`. For example, `enter_text` on an element that is not a text field is incompatible.
 6. If `risk` is `destructive` and the step is not listed in `allowDestructive`, the policy returns `approval_required`. The risk answer can only add caution. It never authorizes an action.
@@ -484,7 +496,8 @@ The backend interface has four operations.
 - Every read uses `inputMode: "ordinary"`. Every action uses real pointer or keyboard input at coordinates computed from the element's frame, as required by owner decision D3.
 - The backend labels each relay step with the plan step identifier and intent, so that the relay's evidence package lines up with the step telemetry.
 - An `uncertain` or `refused` outcome from the relay becomes `backend_failed`. The backend never retries such an action.
-- The exact `cua-driver` calls for tree reading and real-input text entry must be confirmed against the guest driver before implementation. The relay refuses macOS `type_text` outside accessibility mode, so text entry may need a key-event sequence instead.
+- Pixel actions take window-local screenshot pixels. The backend converts screen points by subtracting the window's current bounds and multiplying by a scale learned from a screenshot of that window. The driver's reported display scale cannot be used, because it reported 1.0 while a 656-point window produced a 1312-pixel screenshot.
+- Text entry uses `press_key` once per character. `type_text` is not used, because it inserts text through accessibility first and falls back to keystrokes only when that fails. The documented `press_key` vocabulary covers letters, digits, space, return, tab and named keys, so other characters are refused until a real-keystroke path for them is found.
 
 ### 11.3 Local driver backend for development
 
@@ -530,7 +543,9 @@ Step wall time includes the relay's screenshot captures, so it must not be compa
 | --- | --- | --- |
 | Should the 26-alternative limit be patched in the service? | Do not patch it. The routing question removes the need without changing shared infrastructure. | Yes, if a flat schema is preferred. |
 | Is the grouping rule in [Section 6.3](#63-grouping) sound on real trees? | Validate it on recorded trees from at least three applications before implementing the executor path. | No. |
-| How often is the correct element missing from the table? | Measure it first, using the retrieval record, before tuning anything else. This is the largest unresolved risk. | No. |
+| How often is the correct element missing from the table? | Measured in Phase 2: 6 of 19 labelled intents, for four causes. The target was scrolled out of view, reachable only through a closed menu, disabled, or an unnamed title-bar button ([research Section 9.2](../research/computer-use-s0-s1.md#92-retrieval-on-recorded-trees)). The first three are correct exclusions, which the plan must handle with scroll, menu or shortcut steps. | No. |
+| How does a step reach a target below the visible part of a list? | The executor never chose to scroll in 18 unlisted-target cases, even with the hidden count in the request. Scrolling must come from the plan or from a harness-side search of hidden names; this is unresolved. | No. |
+| How does a step close or zoom a window? | The title-bar buttons have no name in the tree. The planner should use key combinations such as `cmd+w` until the driver exposes their names. | No. |
 | Should actions use direct accessibility activation? | Keep real input by default, as owner decision D3 requires. | Yes, because D3 is an owner decision. |
 | What does a real screenshot cost the planner? | Measured in Phase 1: the cost is proportional to pixel area, and a 1312×844 window screenshot costs 1,068 input tokens on Qwen 3.8 27B ([research Section 8](../research/computer-use-s0-s1.md#8-phase-1-observations-2026-09-23)). Choose the default image scale when the planner prompt is written in Phase 6. | No. |
 | Should the executor also receive screenshots? | Do not send them in the first release. The accessibility tree is the executor's only input until screenshot cost is measured. | No. |
