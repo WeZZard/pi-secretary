@@ -252,6 +252,10 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
       groups.push({ name, elements: slice.map((entry, position) => toElement(entry, name, position)), ...(frame ? { frame } : {}), ...(hidden ? { hidden } : {}) });
     }
   }
+  // The routing question has one option per group, and the executor accepts at most 26 (research §2.4).
+  if (groups.length > MAX_ALTERNATIVES) {
+    return { status: "state_too_large", ...base, detail: `the window splits into ${groups.length} groups; the executor can route among at most ${MAX_ALTERNATIVES}.` };
+  }
   return { status: "ready", id: options.id, window: read.window, snapshotId: read.snapshotId, groups, discards, rawCount: read.elements.length, ...shownTexts() };
 }
 

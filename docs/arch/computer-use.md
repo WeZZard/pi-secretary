@@ -340,6 +340,7 @@ Groups exist so that no question exceeds 26 alternatives. Every element question
 4. A group with more than 25 elements is split in reading order into consecutive groups, named `part 1`, `part 2` and so on.
 5. A window with 25 elements or fewer forms a single group, and the request omits the routing question.
 6. When the element count exceeds the configured maximum, the observer returns `state_too_large` rather than dropping elements silently.
+   The observer also returns `state_too_large` when the window splits into more than 26 groups, because the routing question offers one option per group. The executor would otherwise reject the request, and the rejection would be reported as an unavailable executor.
 7. A group records how many named elements of its container lie outside the window, such as rows below the visible part of a list.
 8. A group's frame is its container's frame clipped to the window. A scroll container's frame spans its whole content, so its center can lie outside the window, as Finder's icon view showed in a standalone script check ([research Section 10.3](../research/computer-use-s0-s1.md#10-standalone-script-checks-in-a-macos-virtual-machine-2026-09-23)).
 
@@ -535,7 +536,7 @@ The backend interface has four operations.
 - The `list_apps` call also scans installed applications and took about one second in Phase 1. A cheaper source of the active application is needed before per-step observation in Phase 5.
 - With `foregroundDelivery` on, clicks and shortcuts with Command, Control or Option use the driver's `foreground` delivery. The driver brings the window forward for the action and then restores the previous app. Scrolls, plain keys and arrow, Home, End and Page keys with any modifier, such as Cmd+Up and Cmd+Down, stay in `background` delivery, because text-navigation keys worked there.
 - The reason is that a background click into a TextEdit document moved the insertion point in 0 of 3 trials in one lease and 3 of 3 in another, while foreground delivery moved it in 6 of 6 ([research Section 12.1](../research/computer-use-s0-s1.md#12-fix-checks-through-pi-2026-09-23)). A background click depends on hidden app state, and the covering window is not the cause.
-- `list_windows` reports a `z_index`, and a lower value is nearer the front. The backend picks the frontmost matching window, and it ignores the driver's own full-screen overlay window, named `cua-driver`, when it looks for covering windows.
+- `list_windows` reports a `z_index`, and a lower value is nearer the front. The driver's own tool description says the opposite, but a virtual machine screenshot showed Safari at 13 drawn over TextEdit at 36, and the covering check then named Safari in every trial of the second click lease ([research Section 12.1](../research/computer-use-s0-s1.md#12-fix-checks-through-pi-2026-09-23)). The backend picks the frontmost matching window, and it ignores the driver's own full-screen overlay window, named `cua-driver`, when it looks for covering windows.
 - `bring_to_front` activates the app but did not raise its window above Safari, so it is not used for actions.
 
 ### 11.4 Accessibility activation mode

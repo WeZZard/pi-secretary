@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { cleanName, discardSummary, observe, renderExecutorTable, renderPlannerTable, type Observation } from "../../extensions/secretary/computer-use/observer.ts";
 import { finderRead, textEditRead } from "./fixtures/trees.ts";
+import type { RawElement } from "../../extensions/secretary/computer-use/backend/backend.ts";
 
 const options = { id: "obs-test", maxElements: 240, maxNameLength: 48 };
 const read = (value: ReturnType<typeof textEditRead>) => ({ ...value, readMs: 0 });
@@ -50,6 +51,16 @@ test("truncation, a missing window element, and the element limit are failures, 
   const tooMany = observe(read(finderRead({ contentItems: 60 })), { ...options, maxElements: 50 });
   assert.equal(tooMany.status, "state_too_large");
   assert.match((tooMany as { detail: string }).detail, /71 elements remain after filtering; the limit is 50/);
+
+  // 27 toolbars of one button each: more groups than the routing question can offer.
+  const toolbars: RawElement[] = [{ element_index: 0, role: "AXWindow", label: "Many", depth: 0, frame: { x: 0, y: 0, w: 2000, h: 2000 } }];
+  for (let i = 0; i < 27; i++) {
+    toolbars.push({ element_index: 1 + i * 2, role: "AXToolbar", parent_index: 0, depth: 1, frame: { x: 10, y: 10 + i * 60, w: 400, h: 50 } });
+    toolbars.push({ element_index: 2 + i * 2, role: "AXButton", label: `Button ${i + 1}`, parent_index: 1 + i * 2, depth: 2, frame: { x: 20, y: 20 + i * 60, w: 80, h: 20 } });
+  }
+  const manyGroups = observe({ window: { pid: 1, windowId: 1, app: "Many", title: "Many" }, appActive: true, truncated: false, elements: toolbars, readMs: 0 }, options);
+  assert.equal(manyGroups.status, "state_too_large");
+  assert.match((manyGroups as { detail: string }).detail, /27 groups; the executor can route among at most 26/);
 });
 
 test("a background application's framed menu bar is discarded, and a active one is kept", () => {
