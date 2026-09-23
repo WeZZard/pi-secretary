@@ -354,3 +354,31 @@ Each defect below made a check fail although the action had worked. Each fix has
 - The screenshots in the relay evidence show the desktop, where Safari covered the other windows. They do not show Calculator's display or Finder's list, so the accessibility tree is the only evidence for those results.
 - Each check ran once. The results show that the path works, not how often it works.
 
+
+## 11. First checks through Pi (2026-09-23)
+
+These checks ran Pi itself. Pi 0.85.1 ran non-interactively inside a disposable macOS 26 virtual machine, with `--print --mode json`. It loaded only this worktree's secretary extension and the LiteLLM provider. The planner was Qwen 3.8 27B, and the allowed tools were `computer_observe` and `computer_run_plan`. The executor was the live service at `http://jev.home.arpa`. Claude Code started the virtual machine and collected the evidence, but it did not take part in the runs. Safari covered the other windows, as in [Section 10](#10-standalone-script-checks-in-a-macos-virtual-machine-2026-09-23).
+
+| Run | Task | Tool calls | Result |
+| --- | --- | --- | --- |
+| 1 | Compute 7 plus 3 in Calculator. | 2 observations and 3 plans | The final answer, 10, was correct and verified by the last plan. |
+| 2 | Add a new last line "Hello from Pi" to the TextEdit document. | 3 observations and 4 plans | The line landed at the end of the document. The final answer claimed more than the harness verified. |
+
+**What worked:**
+
+- Pi loaded the extension, registered both tools, and passed the planner's calls to the harness.
+- Each observation carried a screenshot to the planner.
+- A plan with an empty postcondition was rejected before any action, and the planner corrected it.
+
+**What failed:**
+
+- **Postconditions that were already true.** The planner twice wrote a postcondition that held before its step: "text contains 7" for the Add step, and "window title contains scratch.txt" for a Cmd+Down step. The precheck skipped both steps. In run 1 the skipped Add step made the sum wrong until the planner replanned.
+- **Content missing from the element table.** The table listed Calculator's buttons but not its display, because the display is descendant text of the window rather than an element. The planner could not read the result from the table.
+- **Actions with no visible effect.** A click into the text area and the Cmd+Down key changed nothing in the element tree. The harness therefore sent each action twice and escalated `no_progress`, although the later text entry shows that Cmd+Down had moved the insertion point to the end.
+- **A label used as content.** The planner wrote "text contains All Clear" to check a button name. The `text` predicate searches values and descendant text only, so a successful press was reported as failed.
+- **An unverified final claim.** The final answer of run 2 said that the text was "the new last line". The harness had verified only that the document contained it.
+- **Covered windows in the evidence.** The relay's desktop screenshots show Safari in front and only an edge of TextEdit.
+
+**Test tooling:** An `osascript` query to System Events in the guest stalled until the relay timed out, and the relay recorded that run as uncertain. The document text was then read from the harness's own observation records instead.
+
+**Verification limits:** Each task ran once. The covered-window typing problem of Section 10.2 did not recur, because the planner moved the insertion point with Cmd+Down before typing, so its cause is still unknown. The fixes are planned in `.plans/2026-09-23-computer-use-live-fixes.md`, which is not versioned.
