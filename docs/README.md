@@ -36,6 +36,13 @@
 | [Session rewind investigation](research/subagent-session-rewind.md) | It records the reproduced cross-branch state leak, independent name conflict, selected cancellation policy, and verification limits. |
 | [Upstream research](research/subagent-system-comparison.md) | It records the dated source comparison that informed the design. It does not describe current Secretary behavior. |
 
+## Computer-use documents
+
+| Document | Current role |
+| --- | --- |
+| [Technical design](arch/computer-use.md) | It is a draft design for a computer-use subagent in which a planner model plans, a structured-decision executor chooses one element per step, and code verifies each step. Nothing in it is implemented, and its required outcomes await approval in a requirements document. |
+| [Planner and executor investigation](research/computer-use-s0-s1.md) | It records the 2026-09-22 measurements of the executor service, the target infrastructure, prior art, and verification limits that the design cites. |
+
 ## Generated test artifacts
 
 - Follow the [test artifact policy](testing/test-artifacts.md) and the corresponding project rule in [CLAUDE.md](../CLAUDE.md).
