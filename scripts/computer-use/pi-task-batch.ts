@@ -15,14 +15,15 @@
  *   It does not test whether the answer claims checks that were not made.
  * - Pi wall time (s): from starting Pi to its exit.
  * - Driver call time, median (ms): from spawning `cua-driver call` to its parsed output, over 10 calls. The lsappinfo row
- *   times two lsappinfo processes the same way.
+ *   times the backend's lsappinfoFrontmost, which runs two lsappinfo processes, the same way.
+ * - Active application agreement: with each app brought to front, lsappinfo's pid equals the one active pid of list_apps.
  */
 import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { RawElement, WindowRead } from "../../extensions/secretary/computer-use/backend/backend.ts";
-import { cuaDriverRunner, LocalDriverBackend } from "../../extensions/secretary/computer-use/backend/local-backend.ts";
+import { cuaDriverRunner, LocalDriverBackend, lsappinfoFrontmost } from "../../extensions/secretary/computer-use/backend/local-backend.ts";
 import { BIDI_MARKS, observe, type Observation } from "../../extensions/secretary/computer-use/observer.ts";
 
 const repeats = Number(process.argv[2] ?? 3);
@@ -172,16 +173,21 @@ for (const [tool, args] of [["list_apps", {}], ["list_windows", {}], ["get_windo
   for (let i = 0; i < 10; i++) { const started = performance.now(); await run(tool, args, { timeoutMs: 30_000 }); times.push(performance.now() - started); }
   timings.push(`| ${tool} | ${Math.round(median(times))} | ${Math.round(Math.min(...times))} | ${Math.round(Math.max(...times))} |`);
 }
-// A candidate replacement for list_apps as the source of the active application: macOS's own lsappinfo.
+// The backend's source of the active application, lsappinfo, timed and compared with list_apps
+// with each test application in front, then with Safari in front.
+const agreement: string[] = [];
 {
   const times: number[] = [];
-  let front = "";
-  for (let i = 0; i < 10; i++) {
-    const started = performance.now();
-    front = execFileSync("/usr/bin/lsappinfo", ["info", "-only", "pid", execFileSync("/usr/bin/lsappinfo", ["front"], { encoding: "utf8" }).trim()], { encoding: "utf8" }).trim();
-    times.push(performance.now() - started);
+  for (let i = 0; i < 10; i++) { const started = performance.now(); await lsappinfoFrontmost({ timeoutMs: 30_000 }); times.push(performance.now() - started); }
+  timings.push(`| lsappinfo front, then info -only pid | ${Math.round(median(times))} | ${Math.round(Math.min(...times))} | ${Math.round(Math.max(...times))} |`);
+  for (const app of ["Calculator", "TextEdit", "Finder", "Safari"]) {
+    sh(`open -a ${app}`); await wait(1500);
+    const front = await lsappinfoFrontmost({ timeoutMs: 30_000 });
+    const listed = await run("list_apps", {}, { timeoutMs: 30_000 }) as { apps?: { pid: number; name?: string; active?: boolean }[] } | { pid: number; name?: string; active?: boolean }[];
+    const active = (Array.isArray(listed) ? listed : listed.apps ?? []).filter(entry => entry.active === true);
+    const same = active.length === 1 && active[0]!.pid === front;
+    agreement.push(`| ${app} | ${front ?? "none"} | ${active.map(entry => `${entry.name ?? "?"} ${entry.pid}`).join(", ") || "none"} | ${same ? "yes" : "no"} |`);
   }
-  timings.push(`| lsappinfo front, then info -only pid (${front.replace(/\|/g, "/")}) | ${Math.round(median(times))} | ${Math.round(Math.min(...times))} | ${Math.round(Math.max(...times))} |`);
 }
 
 const tasks = [calculator, textEdit, finder].filter(task => !only || only.includes(task.name));
@@ -215,7 +221,8 @@ const summary = tasks.map(task => {
 const report = ["# Pi task batch", "", `Date: ${new Date().toISOString()}. Repeats: ${repeats}.`, "",
   "## Summary", "", "| Task | Runs with a clean setup | Task done | Answer states the result |", "| --- | --- | --- | --- |", ...summary, "",
   "## Runs", "", "| Run | Task | Answer states the result | Observe calls / plan calls | Plan outcomes | Pi wall time (s) | Check |", "| --- | --- | --- | --- | --- | --- | --- |", ...rows, "",
-  "## Driver call time", "", "| Call | Median (ms) | Min (ms) | Max (ms) |", "| --- | --- | --- | --- |", ...timings, ""].join("\n");
+  "## Driver call time", "", "| Call | Median (ms) | Min (ms) | Max (ms) |", "| --- | --- | --- | --- |", ...timings, "",
+  "## Active application: lsappinfo and list_apps", "", "| Brought to front | lsappinfo pid | list_apps active | Same |", "| --- | --- | --- | --- |", ...agreement, ""].join("\n");
 writeFileSync(join(out, "report.md"), report);
 writeFileSync(join(out, "runs.json"), `${JSON.stringify(results, null, 1)}\n`);
 console.log(`\n${report}\nOutput: ${out}`);

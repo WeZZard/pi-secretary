@@ -12,7 +12,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { actionsFor, type ActuatorRequest, type Operation } from "../../extensions/secretary/computer-use/actuator.ts";
-import { cuaDriverRunner, LocalDriverBackend } from "../../extensions/secretary/computer-use/backend/local-backend.ts";
+import { cuaDriverRunner, LocalDriverBackend, lsappinfoFrontmost } from "../../extensions/secretary/computer-use/backend/local-backend.ts";
 import type { WindowRead } from "../../extensions/secretary/computer-use/backend/backend.ts";
 import { defaultComputerUseConfiguration } from "../../extensions/secretary/computer-use/configuration.ts";
 import { observe, type Observation } from "../../extensions/secretary/computer-use/observer.ts";
@@ -29,7 +29,7 @@ for (const step of plan.steps) {
 const config = defaultComputerUseConfiguration();
 const out = resolve("test-results/computer-use", `scripted-${new Date().toISOString().replace(/[:.]/g, "-")}`);
 mkdirSync(out, { recursive: true });
-const backend = new LocalDriverBackend({ run: cuaDriverRunner(process.env.CUA_DRIVER ?? config.localDriverPath), maxTreeNodes: config.maxTreeNodes, foregroundDelivery: config.foregroundDelivery });
+const backend = new LocalDriverBackend({ run: cuaDriverRunner(process.env.CUA_DRIVER ?? config.localDriverPath), maxTreeNodes: config.maxTreeNodes, foregroundDelivery: config.foregroundDelivery, frontmostPid: lsappinfoFrontmost });
 const telemetry = new Telemetry(out);
 const target = { app: plan.app, ...(plan.windowTitle ? { windowTitle: plan.windowTitle } : {}) };
 const wait = (ms: number) => new Promise(done => setTimeout(done, ms));

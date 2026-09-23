@@ -80,6 +80,16 @@ test("a plan names one window: an observed window id wins, a closed one is an er
   assert.equal((await backend.readWindow({ app: "Finder", single: true }, { screenshot: false })).window.windowId, 4);
 });
 
+test("the active application comes from frontmostPid, and list_apps answers only when it fails or cannot tell", async () => {
+  for (const [frontmost, active, listApps] of [[async () => 7, true, 0], [async () => 9, false, 0],
+    [async () => undefined, false, 1], [async () => { throw new Error("lsappinfo failed"); }, false, 1]] as const) {
+    const { calls, run } = recorder({ elements: [] });
+    const read = await new LocalDriverBackend({ run, maxTreeNodes: 500, frontmostPid: frontmost }).readWindow({ app: "TextEdit" }, { screenshot: false });
+    assert.equal(read.appActive, active);
+    assert.equal(calls.filter(call => call.tool === "list_apps").length, listApps);
+  }
+});
+
 test("a page scroll sends enough wheel notches to move most of the scrolled region", () => {
   // The Finder list's visible part was 384 points tall; one notch moved it 100 points.
   assert.equal(pageNotches(384), 3);

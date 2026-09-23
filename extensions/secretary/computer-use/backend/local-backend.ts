@@ -28,6 +28,23 @@ export function cuaDriverRunner(driverPath: string): DriverRunner {
   });
 }
 
+/** Returns the process id of the active application, or undefined when it cannot tell. */
+export type FrontmostPid = (options: { timeoutMs: number; signal?: AbortSignal }) => Promise<number | undefined>;
+
+const lsappinfo = (args: string[], timeoutMs: number, signal?: AbortSignal) => new Promise<string>((resolve, reject) =>
+  execFile("/usr/bin/lsappinfo", args, { timeout: timeoutMs, signal }, (error, stdout) => error ? reject(error) : resolve(stdout)));
+
+/**
+ * The active application from macOS's own `lsappinfo`: two processes that took 6 to 8 ms, where
+ * `list_apps` took 438 to 630 ms because it also scans installed applications (research §14.4).
+ */
+export const lsappinfoFrontmost: FrontmostPid = async ({ timeoutMs, signal }) => {
+  const front = (await lsappinfo(["front"], timeoutMs, signal)).trim();
+  if (!front) return undefined;
+  const pid = /"pid"=(\d+)/.exec(await lsappinfo(["info", "-only", "pid", front], timeoutMs, signal))?.[1];
+  return pid === undefined ? undefined : Number(pid);
+};
+
 interface ListedWindow { window_id: number; pid: number; app_name: string; title: string; is_on_screen: boolean; z_index?: number; layer?: number;
   bounds?: { x: number; y: number; width: number; height: number } }
 
@@ -51,6 +68,8 @@ export interface LocalBackendOptions {
    * observed 2026-09-23). Typed characters, text navigation keys and scrolls stay background.
    */
   foregroundDelivery?: boolean;
+  /** A faster source of the active application. When it fails or cannot tell, `list_apps` answers. */
+  frontmostPid?: FrontmostPid;
 }
 
 const TEXT_NAVIGATION_KEYS = new Set(["up", "down", "left", "right", "home", "end", "pageup", "pagedown"]);
@@ -127,12 +146,24 @@ export class LocalDriverBackend implements ExecutionBackend {
 
   get #timeout(): number { return this.#options.timeoutMs ?? 15_000; }
 
+  async #isActive(pid: number, signal?: AbortSignal): Promise<boolean> {
+    if (this.#options.frontmostPid) {
+      try {
+        const front = await this.#options.frontmostPid({ timeoutMs: this.#timeout, signal });
+        if (front !== undefined) return front === pid;
+      } catch (error) {
+        if (signal?.aborted) throw new BackendError("aborted", "reading the active application was cancelled");
+      }
+    }
+    const apps = await this.#options.run("list_apps", {}, { timeoutMs: this.#timeout, signal }) as { apps?: { pid: number; active?: boolean }[] } | { pid: number; active?: boolean }[];
+    return (Array.isArray(apps) ? apps : apps.apps ?? []).some(app => app.pid === pid && app.active === true);
+  }
+
   async readWindow(target: WindowTarget, options: ReadOptions): Promise<WindowRead> {
     const now = this.#options.now ?? (() => performance.now());
     const started = now();
     const window = await this.#findWindow(target, options.signal);
-    const apps = await this.#options.run("list_apps", {}, { timeoutMs: this.#timeout, signal: options.signal }) as { apps?: { pid: number; active?: boolean }[] } | { pid: number; active?: boolean }[];
-    const appActive = (Array.isArray(apps) ? apps : apps.apps ?? []).some(app => app.pid === window.pid && app.active === true);
+    const appActive = await this.#isActive(window.pid, options.signal);
     const shotDir = options.screenshot ? await mkdtemp(join(tmpdir(), "secretary-computer-use-")) : undefined;
     try {
       const key = `${window.pid}:${window.windowId}`;
@@ -210,13 +241,12 @@ export class LocalDriverBackend implements ExecutionBackend {
   }
 
   /**
-   * Fix plan F-3. The active flag comes from `list_apps`. A window covers the point when it is an
+   * Fix plan F-3. The active flag comes from `frontmostPid`, else `list_apps`. A window covers the point when it is an
    * on-screen layer-0 window nearer the front, which means a lower `z_index`, whose bounds contain
    * the point. The driver's own overlay window is ignored.
    */
   async foreground(window: WindowRef, point: Point | undefined, signal?: AbortSignal): Promise<ForegroundState> {
-    const apps = await this.#options.run("list_apps", {}, { timeoutMs: this.#timeout, signal }) as { apps?: { pid: number; active?: boolean }[] } | { pid: number; active?: boolean }[];
-    const active = (Array.isArray(apps) ? apps : apps.apps ?? []).some(app => app.pid === window.pid && app.active === true);
+    const active = await this.#isActive(window.pid, signal);
     const listed = await this.#options.run("list_windows", {}, { timeoutMs: this.#timeout, signal }) as { windows?: ListedWindow[] };
     const windows = listed.windows ?? [];
     const target = windows.find(candidate => candidate.window_id === window.windowId);

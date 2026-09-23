@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { defineTool, getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ExecutionBackend } from "./backend/backend.ts";
-import { cuaDriverRunner, LocalDriverBackend } from "./backend/local-backend.ts";
+import { cuaDriverRunner, LocalDriverBackend, lsappinfoFrontmost } from "./backend/local-backend.ts";
 import { loadComputerUseConfiguration, observationAvailable, planExecutionAvailable, type ComputerUseConfiguration } from "./configuration.ts";
 import { ExecutorClient } from "./executor-client.ts";
 import type { Executor } from "./harness.ts";
@@ -32,7 +32,7 @@ export interface ComputerUseInstallOptions {
 }
 
 export function createBackend(config: ComputerUseConfiguration): ExecutionBackend {
-  if (config.backend === "local") return new LocalDriverBackend({ run: cuaDriverRunner(config.localDriverPath), maxTreeNodes: config.maxTreeNodes, foregroundDelivery: config.foregroundDelivery });
+  if (config.backend === "local") return new LocalDriverBackend({ run: cuaDriverRunner(config.localDriverPath), maxTreeNodes: config.maxTreeNodes, foregroundDelivery: config.foregroundDelivery, frontmostPid: lsappinfoFrontmost });
   // design §11.2: the relay backend waits for an enclosure-manager export from pi-vm-relay (plan Phase 7).
   throw new Error(`computerUse.backend ${config.backend} is not available in this build; use local for development`);
 }
