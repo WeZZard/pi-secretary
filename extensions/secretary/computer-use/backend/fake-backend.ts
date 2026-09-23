@@ -1,4 +1,4 @@
-import { BackendError, type ExecutionBackend, type ReadOptions, type WindowRead, type WindowTarget } from "./backend.ts";
+import { BackendError, type ActionOutcome, type BackendAction, type ExecutionBackend, type ReadOptions, type WindowRead, type WindowRef, type WindowTarget } from "./backend.ts";
 
 /**
  * Deterministic test desktop (design §4.2). Each application key yields its scripted reads
@@ -7,6 +7,9 @@ import { BackendError, type ExecutionBackend, type ReadOptions, type WindowRead,
 export class FakeBackend implements ExecutionBackend {
   readonly kind = "fake" as const;
   readonly reads: WindowTarget[] = [];
+  readonly actions: { window: WindowRef; action: BackendAction }[] = [];
+  /** Scripted failures for the next actions, consumed in order. */
+  readonly actionFailures: Error[] = [];
   closed = false;
   readonly #script: Map<string, (Omit<WindowRead, "readMs"> | Error)[]>;
   constructor(script: Record<string, (Omit<WindowRead, "readMs"> | Error)[]>) {
@@ -22,6 +25,14 @@ export class FakeBackend implements ExecutionBackend {
     if (next instanceof Error) throw next;
     const { screenshot, ...rest } = structuredClone(next);
     return { ...rest, ...(options.screenshot && screenshot ? { screenshot } : {}), readMs: 0 };
+  }
+
+  async act(window: WindowRef, action: BackendAction, signal?: AbortSignal): Promise<ActionOutcome> {
+    if (signal?.aborted) throw new BackendError("aborted", "action was cancelled");
+    const failure = this.actionFailures.shift();
+    if (failure) throw failure;
+    this.actions.push({ window, action });
+    return action.kind === "key" ? { kind: "unverifiable" } : { kind: "completed" };
   }
 
   async close(): Promise<void> { this.closed = true; }

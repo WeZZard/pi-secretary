@@ -5,7 +5,10 @@ import type { Frame, RawElement, WindowRead, WindowRef } from "./backend/backend
  * elements to a grouped, lettered element table, with every discard recorded (§6.4).
  */
 
+/** The executor's limit per question (research §2.4). */
 export const MAX_ALTERNATIVES = 26;
+/** Elements per group: one alternative of every element question is reserved for "none". */
+export const MAX_GROUP_ELEMENTS = MAX_ALTERNATIVES - 1;
 
 export type DiscardReason =
   | "container"        // structural role used for grouping, not a target
@@ -32,7 +35,11 @@ export interface ObservedElement {
   letter: string;
 }
 
-export interface ObservedGroup { name: string; elements: ObservedElement[] }
+/**
+ * `frame` is the group's container, or the window for the single-group and content cases; scrolling targets it.
+ * `hidden` counts named elements of the group's container that lie outside the window, such as rows below the visible part of a list.
+ */
+export interface ObservedGroup { name: string; elements: ObservedElement[]; frame?: Frame; hidden?: number }
 
 export interface Observation {
   status: "ready";
@@ -118,6 +125,7 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
   const insideWindow = (frame: Frame) => !windowFrame || (frame.x + frame.w / 2 >= windowFrame.x && frame.x + frame.w / 2 <= windowFrame.x + windowFrame.w
     && frame.y + frame.h / 2 >= windowFrame.y && frame.y + frame.h / 2 <= windowFrame.y + windowFrame.h);
 
+  const hiddenBy = new Map<number | "content", number>();
   const kept: { element: RawElement; name: string; landmark?: RawElement }[] = [];
   for (const element of read.elements) {
     if (CONTAINER_ROLES.has(element.role)) { discard(element, "container"); continue; }
@@ -125,8 +133,16 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
     if (!visible(element)) { discard(element, "collapsed_frame"); continue; }
     if (element.enabled === false) { discard(element, "disabled"); continue; }
     if (!read.appActive && underMenuBar(element)) { discard(element, "inactive_menu_bar"); continue; }
-    if (!underMenu(element) && !insideWindow(element.frame!)) { discard(element, "outside_window"); continue; }
-    const name = cleanName(element.label, options.maxNameLength) ?? cleanName(element.value, options.maxNameLength);
+    if (!underMenu(element) && !insideWindow(element.frame!)) {
+      discard(element, "outside_window");
+      if (!CONTAINER_ROLES.has(element.role) && (cleanName(element.label, options.maxNameLength) ?? cleanName(element.value, options.maxNameLength) ?? cleanName(read.descendantText?.[element.element_index], options.maxNameLength))) {
+        const landmark = landmarkOf(element);
+        hiddenBy.set(landmark?.element_index ?? "content", (hiddenBy.get(landmark?.element_index ?? "content") ?? 0) + 1);
+      }
+      continue;
+    }
+    const name = cleanName(element.label, options.maxNameLength) ?? cleanName(element.value, options.maxNameLength)
+      ?? cleanName(read.descendantText?.[element.element_index], options.maxNameLength);
     if (!name) { discard(element, "unnamed"); continue; }
     kept.push({ element, name, landmark: landmarkOf(element) });
   }
@@ -154,12 +170,14 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
     frame: entry.element.frame!, group, letter: letterAt(position),
   });
 
+  const hiddenTotal = () => { const total = [...hiddenBy.values()].reduce((sum, count) => sum + count, 0); return total ? { hidden: total } : {}; };
   // Rule 5: a small window is one group, so the request needs no routing question.
   const ordered = [...candidates].sort((a, b) => readingOrder({ frame: a.element.frame! }, { frame: b.element.frame! }));
-  if (ordered.length <= MAX_ALTERNATIVES) {
+  if (ordered.length <= MAX_GROUP_ELEMENTS) {
     const name = "window";
     return { status: "ready", id: options.id, window: read.window, snapshotId: read.snapshotId, discards, rawCount: read.elements.length,
-      groups: ordered.length === 0 ? [] : [{ name, elements: ordered.map((entry, position) => toElement(entry, name, position)) }] };
+      groups: ordered.length === 0 ? [] : [{ name, elements: ordered.map((entry, position) => toElement(entry, name, position)), ...(windowFrame ? { frame: windowFrame } : {}),
+        ...hiddenTotal() }] };
   }
 
   // Rules 2 and 3: group by the nearest landmark container instance. Groups follow the reading
@@ -189,11 +207,13 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
     kindCount.set(kind, occurrence);
     const baseName = kindTotal.get(kind)! > 1 ? `${kind} ${occurrence}` : kind;
     // Rule 4: split an oversized group in reading order.
-    const parts = Math.ceil(entries.length / MAX_ALTERNATIVES);
+    const parts = Math.ceil(entries.length / MAX_GROUP_ELEMENTS);
     for (let part = 0; part < parts; part++) {
       const name = parts > 1 ? `${baseName} part ${part + 1}` : baseName;
-      const slice = entries.slice(part * MAX_ALTERNATIVES, (part + 1) * MAX_ALTERNATIVES);
-      groups.push({ name, elements: slice.map((entry, position) => toElement(entry, name, position)) });
+      const slice = entries.slice(part * MAX_GROUP_ELEMENTS, (part + 1) * MAX_GROUP_ELEMENTS);
+      const frame = containerFrame(key) ?? windowFrame;
+      const hidden = part === parts - 1 ? hiddenBy.get(key) ?? 0 : 0;
+      groups.push({ name, elements: slice.map((entry, position) => toElement(entry, name, position)), ...(frame ? { frame } : {}), ...(hidden ? { hidden } : {}) });
     }
   }
   return { status: "ready", id: options.id, window: read.window, snapshotId: read.snapshotId, groups, discards, rawCount: read.elements.length };

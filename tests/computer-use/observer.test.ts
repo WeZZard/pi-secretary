@@ -15,7 +15,7 @@ test("a small window is one group without routing, and every other element is a 
   assert.equal(result.discards.length + 1, result.rawCount, "Every raw element is either kept or discarded with a reason");
 });
 
-test("a window above 26 elements is grouped by landmark container in reading order", () => {
+test("a window above 25 elements is grouped by landmark container in reading order", () => {
   const result = ready(observe(read(finderRead()), options));
   assert.deepEqual(result.groups.map(group => [group.name, group.elements.length]), [["toolbar", 6], ["outline", 5], ["list", 20]]);
   assert.equal(result.groups[0]!.elements.find(element => element.name === "New Folder")!.letter, "C");
@@ -25,12 +25,12 @@ test("a window above 26 elements is grouped by landmark container in reading ord
   assert.match(renderExecutorTable(result), /^TOOLBAR\n {2}A Back\n/);
 });
 
-test("an oversized group is split in reading order so no group exceeds 26 alternatives", () => {
+test("an oversized group is split in reading order, leaving each element question one alternative for none", () => {
   const result = ready(observe(read(finderRead({ contentItems: 60 })), options));
   const list = result.groups.filter(group => group.name.startsWith("list"));
-  assert.deepEqual(list.map(group => [group.name, group.elements.length]), [["list part 1", 26], ["list part 2", 26], ["list part 3", 8]]);
-  assert.ok(result.groups.every(group => group.elements.length <= 26));
-  assert.equal(list[1]!.elements[0]!.name, "File 27");
+  assert.deepEqual(list.map(group => [group.name, group.elements.length]), [["list part 1", 25], ["list part 2", 25], ["list part 3", 10]]);
+  assert.ok(result.groups.every(group => group.elements.length <= 25));
+  assert.equal(list[1]!.elements[0]!.name, "File 26");
 });
 
 test("an open sheet is the only group and elements behind it are discarded as behind_modal", () => {
@@ -75,4 +75,17 @@ test("names drop automatic identifiers, collapse whitespace, and are truncated",
   assert.equal(cleanName("_NS:834", 48), undefined);
   assert.equal(cleanName("  Save \n As…  ", 48), "Save As…");
   assert.equal(cleanName("x".repeat(60), 10), `${"x".repeat(9)}…`);
+});
+
+test("named elements below the visible part of a container are counted as hidden on that group", () => {
+  const small = finderRead();
+  small.elements.find(element => element.role === "AXWindow")!.frame = { x: 0, y: 0, w: 1200, h: 400 };
+  const single = ready(observe(read(small), options));
+  assert.deepEqual(single.groups.map(group => [group.name, group.elements.length, group.hidden]), [["window", 25, 6]], "Rows centered below y = 400 are hidden");
+
+  const large = finderRead({ contentItems: 40 });
+  large.elements.find(element => element.role === "AXWindow")!.frame = { x: 0, y: 0, w: 1200, h: 600 };
+  const grouped = ready(observe(read(large), options));
+  assert.equal(grouped.groups.find(group => group.name === "list")!.hidden, 17);
+  assert.equal(grouped.groups.find(group => group.name === "toolbar")!.hidden, undefined);
 });

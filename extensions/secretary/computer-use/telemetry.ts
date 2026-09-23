@@ -30,6 +30,7 @@ export class Telemetry {
       readMs: read.readMs,
       screenshotCaptured: read.screenshot !== undefined,
       tree: read.elements,
+      descendantText: read.descendantText,
       executorTable: result.status === "ready" ? renderExecutorTable(result) : undefined,
       groups: result.status === "ready"
         ? result.groups.map(group => ({ name: group.name, elements: group.elements.map(element => ({ letter: element.letter, index: element.index, name: element.name })) }))

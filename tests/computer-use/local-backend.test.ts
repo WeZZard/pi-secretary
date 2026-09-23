@@ -29,10 +29,13 @@ test("the frontmost titled window is read tree-only with the configured walk cap
   const read = await backend.readWindow({ app: "textedit" }, { screenshot: false });
   assert.deepEqual(read.window, { pid: 7, windowId: 3, app: "TextEdit", title: "draft.txt" });
   assert.equal(read.appActive, false, "Finder is the active application");
-  assert.deepEqual(calls[2], { tool: "get_window_state", args: { pid: 7, window_id: 3, max_elements: 500, include_screenshot: false } });
+  assert.deepEqual(calls[2], { tool: "get_window_state", args: { pid: 7, window_id: 3, max_elements: 500, include_screenshot: false } }, "The first read of a window is a warm-up");
+  assert.deepEqual(calls[3], { tool: "get_window_state", args: { pid: 7, window_id: 3, max_elements: 500, include_screenshot: false } });
   assert.equal(read.truncated, false);
   assert.equal(read.screenshot, undefined);
-  assert.deepEqual(calls.map(call => call.tool), ["list_windows", "list_apps", "get_window_state"], "Reading never launches, focuses, or clicks");
+  assert.deepEqual(calls.map(call => call.tool), ["list_windows", "list_apps", "get_window_state", "get_window_state"], "Reading never launches, focuses, or clicks");
+  await backend.readWindow({ app: "textedit" }, { screenshot: false });
+  assert.equal(calls.filter(call => call.tool === "get_window_state").length, 3, "A window already read needs no warm-up");
 });
 
 test("a title filter selects the window, and a screenshot is returned as base64 PNG", async () => {
@@ -41,7 +44,7 @@ test("a title filter selects the window, and a screenshot is returned as base64 
   assert.equal(read.window.windowId, 2);
   const finder = await new LocalDriverBackend({ run, maxTreeNodes: 500 }).readWindow({ app: "Finder" }, { screenshot: false });
   assert.equal(finder.appActive, true);
-  assert.equal(typeof calls[2]!.args.screenshot_out_file, "string");
+  assert.equal(typeof calls[3]!.args.screenshot_out_file, "string");
   assert.deepEqual(read.screenshot, { data: Buffer.from("png-bytes").toString("base64"), mimeType: "image/png" });
 });
 

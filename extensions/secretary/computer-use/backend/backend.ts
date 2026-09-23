@@ -1,6 +1,7 @@
 /**
  * Execution backend interface (design docs/arch/computer-use.md §11.1).
- * Phase 1 implements window reading and lifetime only; actions arrive in Phase 3.
+ * Every action is real pointer or keyboard input (relay decision D3); no backend action
+ * activates an element through the accessibility API.
  */
 
 export interface Frame { x: number; y: number; w: number; h: number }
@@ -30,6 +31,11 @@ export interface WindowRead {
   snapshotId?: string;
   elements: RawElement[];
   /**
+   * Text of unindexed static-text descendants, keyed by the nearest indexed ancestor's
+   * element_index. It names rows and cells whose own label is empty.
+   */
+  descendantText?: Record<number, string>;
+  /**
    * True when the window's application is the system's active application, which owns the
    * menu bar. A background application's menu bar reports frames where the active
    * application's menu bar is drawn, so real input there would reach another application.
@@ -46,9 +52,21 @@ export interface WindowRead {
 
 export interface ReadOptions { screenshot: boolean; signal?: AbortSignal }
 
+/** A point in screen coordinates, in points, with a top-left origin, as accessibility frames report them. */
+export interface Point { x: number; y: number }
+
+export type BackendAction =
+  | { kind: "click"; point: Point; button: "left" | "right"; count: 1 | 2 }
+  | { kind: "key"; key: string; modifiers: string[] }
+  | { kind: "scroll"; point: Point; direction: "up" | "down"; by: "page" };
+
+/** `unverifiable` is the driver's normal report for key input; code verifies the effect afterwards. */
+export interface ActionOutcome { kind: "completed" | "unverifiable"; detail?: string }
+
 export interface ExecutionBackend {
   readonly kind: "local" | "relay" | "fake";
   readWindow(target: WindowTarget, options: ReadOptions): Promise<WindowRead>;
+  act(window: WindowRef, action: BackendAction, signal?: AbortSignal): Promise<ActionOutcome>;
   close(): Promise<void>;
 }
 
