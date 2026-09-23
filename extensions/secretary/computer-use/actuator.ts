@@ -8,7 +8,7 @@ export type Operation = "press" | "double_press" | "context_press" | "enter_text
 
 export type ActuatorRequest =
   | { operation: "press" | "double_press" | "context_press" | "scroll_up" | "scroll_down"; frame: Frame }
-  | { operation: "enter_text"; frame: Frame; text: string }
+  | { operation: "enter_text"; frame: Frame; text: string; position?: "end" | "start" | "replace" }
   | { operation: "key_combo"; keys: string };
 
 export class ActuatorError extends Error {
@@ -60,7 +60,14 @@ export function actionsFor(request: ActuatorRequest): BackendAction[] {
     case "enter_text": {
       // Validate the whole literal before any input, so a refused character never leaves partial text.
       const keys = keystrokesFor(request.text);
-      return [{ kind: "click", point: center(request.frame), button: "left", count: 1 }, ...keys];
+      // Fix plan F-3: a click cannot be relied on to place the insertion point, and its effect is
+      // invisible in the tree, so the position is set with fixed keys after the click.
+      const place: BackendAction[] = request.position === "end" ? [{ kind: "key", key: "down", modifiers: ["cmd"] }]
+        : request.position === "start" ? [{ kind: "key", key: "up", modifiers: ["cmd"] }]
+        // Cmd+A is a menu shortcut and did not select all in either delivery mode (observed 2026-09-23);
+        // the text-editing key bindings Cmd+Up and Shift+Cmd+Down select the whole text instead.
+        : request.position === "replace" ? [{ kind: "key", key: "up", modifiers: ["cmd"] }, { kind: "key", key: "down", modifiers: ["shift", "cmd"] }] : [];
+      return [{ kind: "click", point: center(request.frame), button: "left", count: 1 }, ...place, ...keys];
     }
   }
 }

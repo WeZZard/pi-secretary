@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { writeFileSync } from "node:fs";
 import { BackendError } from "../../extensions/secretary/computer-use/backend/backend.ts";
-import { LocalDriverBackend, pageNotches, type DriverRunner } from "../../extensions/secretary/computer-use/backend/local-backend.ts";
+import { deliveryFor, LocalDriverBackend, pageNotches, type DriverRunner } from "../../extensions/secretary/computer-use/backend/local-backend.ts";
 
 const windows = { windows: [
   { window_id: 1, pid: 7, app_name: "TextEdit", title: "", is_on_screen: false, z_index: 1 },
@@ -27,10 +27,11 @@ test("the frontmost titled window is read tree-only with the configured walk cap
   const { calls, run } = recorder({ elements: [{ element_index: 0, role: "AXWindow", depth: 0 }], element_count: 1, snapshot_id: "s1" });
   const backend = new LocalDriverBackend({ run, maxTreeNodes: 500 });
   const read = await backend.readWindow({ app: "textedit" }, { screenshot: false });
-  assert.deepEqual(read.window, { pid: 7, windowId: 3, app: "TextEdit", title: "draft.txt" });
+  // A lower z_index is nearer the front (observed 2026-09-23), so notes.txt at 3 is in front of draft.txt at 5.
+  assert.deepEqual(read.window, { pid: 7, windowId: 2, app: "TextEdit", title: "notes.txt" });
   assert.equal(read.appActive, false, "Finder is the active application");
-  assert.deepEqual(calls[2], { tool: "get_window_state", args: { pid: 7, window_id: 3, max_elements: 500, include_screenshot: false } }, "The first read of a window is a warm-up");
-  assert.deepEqual(calls[3], { tool: "get_window_state", args: { pid: 7, window_id: 3, max_elements: 500, include_screenshot: false } });
+  assert.deepEqual(calls[2], { tool: "get_window_state", args: { pid: 7, window_id: 2, max_elements: 500, include_screenshot: false } }, "The first read of a window is a warm-up");
+  assert.deepEqual(calls[3], { tool: "get_window_state", args: { pid: 7, window_id: 2, max_elements: 500, include_screenshot: false } });
   assert.equal(read.truncated, false);
   assert.equal(read.screenshot, undefined);
   assert.deepEqual(calls.map(call => call.tool), ["list_windows", "list_apps", "get_window_state", "get_window_state"], "Reading never launches, focuses, or clicks");
@@ -70,4 +71,31 @@ test("a page scroll sends enough wheel notches to move most of the scrolled regi
   assert.equal(pageNotches(384), 3);
   assert.equal(pageNotches(40), 1, "A small region still scrolls");
   assert.equal(pageNotches(100_000), 50, "The driver accepts at most 50 notches");
+});
+
+test("clicks and modifier shortcuts use foreground delivery, and typed characters and scrolls stay in the background", () => {
+  const point = { x: 1, y: 1 };
+  assert.equal(deliveryFor({ kind: "click", point, button: "left", count: 1 }, true), "foreground");
+  assert.equal(deliveryFor({ kind: "key", key: "a", modifiers: ["cmd"] }, true), "foreground", "Cmd+A did nothing in the background");
+  assert.equal(deliveryFor({ kind: "key", key: "a", modifiers: [] }, true), "background");
+  assert.equal(deliveryFor({ kind: "key", key: "down", modifiers: ["cmd"] }, true), "background", "Cmd+Down worked in the background");
+  assert.equal(deliveryFor({ kind: "key", key: "a", modifiers: ["shift"] }, true), "background");
+  assert.equal(deliveryFor({ kind: "scroll", point, direction: "down", by: "page", extent: 400 }, true), "background");
+  assert.equal(deliveryFor({ kind: "click", point, button: "left", count: 1 }, false), undefined, "Off, the driver default applies");
+  assert.equal(deliveryFor({ kind: "click", point, button: "left", count: 1, delivery: "background" }, true), "background", "An explicit choice wins");
+});
+
+test("a window nearer the front covers a point, and the driver's overlay covers nothing", async () => {
+  const run: DriverRunner = async (tool) => {
+    if (tool === "list_apps") return [{ pid: 7, active: true }];
+    return { windows: [
+      { window_id: 1, pid: 3, app_name: "Safari", title: "Page", is_on_screen: true, layer: 0, z_index: 13, bounds: { x: 300, y: 40, width: 1300, height: 900 } },
+      { window_id: 2, pid: 5, app_name: "cua-driver", title: "", is_on_screen: true, layer: 0, z_index: 20, bounds: { x: 0, y: 0, width: 1920, height: 1080 } },
+      { window_id: 3, pid: 7, app_name: "TextEdit", title: "scratch.txt", is_on_screen: true, layer: 0, z_index: 36, bounds: { x: 200, y: 80, width: 670, height: 440 } },
+      { window_id: 4, pid: 9, app_name: "Finder", title: "Fixture Folder", is_on_screen: true, layer: 0, z_index: 42, bounds: { x: 500, y: 160, width: 920, height: 436 } }] };
+  };
+  const backend = new LocalDriverBackend({ run, maxTreeNodes: 10 });
+  const window = { pid: 7, windowId: 3, app: "TextEdit", title: "scratch.txt" };
+  assert.deepEqual(await backend.foreground(window, { x: 540, y: 300 }), { active: true, coveredBy: ["Safari"] });
+  assert.deepEqual(await backend.foreground(window, { x: 250, y: 300 }), { active: true, coveredBy: [] });
 });

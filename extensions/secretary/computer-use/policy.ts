@@ -5,7 +5,7 @@ import type { QuestionMap, StepSpec } from "./request-builder.ts";
 
 /** Decision policy (design §8): rules applied in order after each executor response. */
 
-export type EscalationReason = "needs_text" | "state_too_large" | "uncertain" | "target_not_found" | "postcondition_failed" | "no_progress"
+export type EscalationReason = "needs_text" | "state_too_large" | "uncertain" | "already_satisfied" | "target_not_found" | "postcondition_failed" | "no_progress"
   | "approval_required" | "budget_exhausted" | "executor_unavailable" | "backend_failed";
 
 export interface Prior { region?: string; element?: string; operation?: string; confidences: Record<string, number> }
@@ -80,7 +80,7 @@ export function decide(input: {
   // Rule 8.
   const request: ActuatorRequest = operation === "key_combo" ? { operation, keys: step.keys! }
     : operation === "scroll_up" || operation === "scroll_down" ? { operation, frame: group.frame! }
-    : operation === "enter_text" ? { operation, frame: element!.frame, text: step.text! }
+    : operation === "enter_text" ? { operation, frame: element!.frame, text: step.text!, ...(step.position ? { position: step.position } : {}) }
     : { operation, frame: element!.frame };
   return { kind: "act", request, operation, group, ...(element ? { element } : {}), risk: risk?.choice ?? "unknown", prior };
 }

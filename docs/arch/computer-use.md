@@ -209,6 +209,8 @@ The module reads a top-level `computerUse` object from the same `secretary.json`
 | `redactTypedText` | It replaces typed literals in telemetry with their length. | `true` |
 | `allowLocalDesktop` | It acknowledges that the `local` backend operates this machine's desktop. | `false` |
 | `localDriverPath` | It is the `cua-driver` executable used by the `local` backend. | `cua-driver` |
+| `foregroundDelivery` | It sends clicks and menu shortcuts with the driver's foreground delivery ([Section 11.3](#113-local-driver-backend-for-development)). | `true` |
+| `stepPictures` | It records a picture of the target window before and after each action, and writes a review page ([Section 12.1](#121-records)). | `false` |
 
 - Unknown fields in `computerUse` fail validation with an error that names the field.
 - The `local` backend is accepted only when `allowLocalDesktop` is `true`, which is the developer setting in [Section 11.3](#113-local-driver-backend-for-development).
@@ -248,9 +250,14 @@ The planner calls this tool with a complete plan. The tool returns only when the
 | `text` | It is an optional literal string for text entry. It must be complete, because the executor cannot generate text. |
 | `keys` | It is an optional key combination for a keyboard shortcut, for example `cmd+shift+n`. |
 | `postcondition` | It is a predicate from [Section 5.3](#53-postconditions) that must hold after the step. |
+| `idempotent` | It is optional. It states that repeating the step does no harm, so the harness may skip it when its postcondition already holds ([Section 9](#9-step-lifecycle)). The default is `false`. |
+| `position` | It is optional, for `enter_text` only: `end`, `start` or `replace`. It places the insertion point with keys after the click and before typing ([Section 7.2](#72-operations)). |
 | `max_attempts` | It is optional, from 1 to 5. It limits how often the harness may act for the step before escalating `postcondition_failed`. The default is 2. |
 
 - The harness validates the whole plan before any observation. Repeated step identifiers, malformed postconditions, `enter_text` without `text`, `key_combo` without `keys`, and unknown `allow_destructive` identifiers reject the plan.
+- An `enter_text` step must check the typed text with `text { endsWith }`, `text { contains }` or `value { name, equals }`. In a live check, "the text contains Hello" was true although the words landed at the wrong place.
+- A `key_combo` step that sends only a navigation key, such as `cmd+down`, is rejected when its only postcondition is `changed`. Such a key moves the insertion point, which the tree does not show, so the step could never be verified. The validator names the `position` field instead.
+- When the plan names its observation in `based_on`, a `text` predicate whose string is the name of a control in that observation is rejected. The validator names `exists` instead. Through Pi, the planner wrote "text contains All Clear" to check a button, and a successful press was reported as failed ([research Section 11](../research/computer-use-s0-s1.md#11-first-checks-through-pi-2026-09-23)).
 
 ### 5.3 Postconditions
 
@@ -262,11 +269,12 @@ A postcondition is a small predicate over the accessibility tree. Code evaluates
 | `absent { name, role? }` | No such element is present. |
 | `value { name, equals }` | The named element's value equals the given string. |
 | `window { titleContains }` | The frontmost window title contains the given string. |
-| `text { contains }` | The value or descendant text of some on-screen element contains the given string. Labels are not searched, because they name controls rather than show content. |
+| `text { contains }` or `text { endsWith }` | The value or descendant text of some on-screen element contains, or ends with, the given string. Exactly one of the two is given. Labels are not searched, because they name controls rather than show content. |
 | `changed` | The tree differs from the tree before the step. |
 | `all [ ... ]` and `any [ ... ]` | All or any of the nested predicates hold. |
 
 - The harness rejects a plan whose postconditions are malformed before it performs any action.
+- A postcondition must be false before its step and true after it. A postcondition that already holds cannot show that the step worked, so the harness escalates instead of skipping the step ([Section 9](#9-step-lifecycle)).
 - A step whose only postcondition is `changed` is allowed, but its outcome is recorded as weakly verified.
 - Predicates count only elements that are on screen. An element is on screen when its frame is larger than 1 point in both dimensions and its center lies inside the window, or when it belongs to an open menu. This is the same rule the observer uses.
 - A closed menu's items are in the tree without frames, so `exists "Save"` would otherwise always hold. A scroll container keeps reporting items that were scrolled out of the window, so a frame-only rule would also count those.
@@ -284,6 +292,7 @@ The result is compact, because it enters the planner's conversation.
 - The result lists each executed step with its identifier, the action taken, the element name, and the postcondition outcome.
 - An escalated result includes the escalation from [Section 10](#10-escalation-contract) and a fresh observation, so the planner can replan without calling `computer_observe` again.
 - The result states the number of executor decisions made during the call.
+- The result ends with a list headed "Verified by code after the step". It names each step whose postcondition code evaluated, and a second list names the steps that were only seen to change something. The planner is told to report only the first list as checked. Through Pi, a final answer had claimed more than the harness verified ([research Section 11](../research/computer-use-s0-s1.md#11-first-checks-through-pi-2026-09-23)).
 
 ## 6. Observation
 
@@ -318,6 +327,8 @@ The result is compact, because it enters the planner's conversation.
 - The executor's element table has one line per element. Each line holds a label letter and the element's name, without role or kind ([research Section 4.5](../research/computer-use-s0-s1.md#45-name-only-labels-compared-with-verbose-descriptors-n--8-26-candidates)).
 - An element without an accessible name uses its value or its help text. An element with none of these is discarded with the reason `unnamed`.
 - Elements are listed under their group name, in the same format that was measured in [research Section 4.8](../research/computer-use-s0-s1.md#48-a-routing-question-with-one-speculative-question-per-group-n--12).
+- The planner's table in [Section 5.1](#51-computer_observe) ends with the text that the window shows outside its controls, under a line that says to check it with `text { contains }`. The text is the descendant text of the window and of on-screen containers, with at most 8 entries of at most 200 characters. Calculator's display is such text, and the planner could not read a result without it.
+- A shown text is listed even when it equals a control name, because Calculator's display can read "0" while a button is also named "0".
 
 ### 6.3 Grouping
 
@@ -383,7 +394,7 @@ The harness sends one `POST /v1/systemone` request per step with `samples` set t
 | `press` | It clicks the element's frame center once. | None. |
 | `double_press` | It double-clicks the element's frame center. | None. |
 | `context_press` | It right-clicks the element's frame center. | None. |
-| `enter_text` | It clicks the element's frame center, then presses one key per character. Characters outside the backend's key vocabulary are refused before any input. | The step's `text` field. |
+| `enter_text` | It clicks the element's frame center, then presses one key per character. Characters outside the backend's key vocabulary are refused before any input. With `position`, it first sends Cmd+Down for `end`, Cmd+Up for `start`, or Cmd+Up and then Shift+Cmd+Down for `replace`. Cmd+A is not used, because it did not select all text in either delivery mode ([research Section 12.1](../research/computer-use-s0-s1.md#12-fix-checks-through-pi-2026-09-23)). | The step's `text` field and its `position` field. |
 | `key_combo` | It sends the key combination to the frontmost window. | The step's `keys` field. |
 | `scroll_up` and `scroll_down` | They scroll by one page at the center of the chosen group's visible frame. A page moves about 80 percent of that frame's height. Containers are never element candidates, so a scroll targets a group rather than an element. This is how a target below the visible part of a list becomes reachable. | None. |
 
@@ -415,7 +426,8 @@ The policy runs in code after each response. It applies the following rules in o
 stateDiagram-v2
     [*] --> Observe
     Observe --> Precheck
-    Precheck --> Advance: postcondition already holds
+    Precheck --> Advance: postcondition holds and step is idempotent
+    Precheck --> Escalate: postcondition holds and step is not idempotent
     Precheck --> Decide: postcondition does not hold
     Decide --> Observe: reobserve (limit 2)
     Decide --> Escalate: policy returns an escalation
@@ -423,19 +435,20 @@ stateDiagram-v2
     Act --> Verify
     Verify --> Advance: postcondition holds
     Verify --> Decide: postcondition fails and attempts remain
-    Verify --> Escalate: attempts exhausted or no change twice
+    Verify --> Escalate: attempts exhausted or no change
     Advance --> Observe: more steps
     Advance --> [*]: plan complete
     Escalate --> [*]
 ```
 
 - **Observe:** The harness reads the tree. The after-tree of one step is reused as the before-tree of the next step, so one observation serves both.
-- **Precheck:** The harness evaluates the postcondition before deciding. A step that is already satisfied is skipped without an executor request. This makes the "do nothing when the step is already done" convention explicit in code, following the lesson from Cua's forms specialist ([research Section 6](../research/computer-use-s0-s1.md#6-prior-art-consulted)).
-- The precheck makes a postcondition that is already true before its step skip that step. In a standalone script check, a stale Calculator display satisfied every postcondition of a plan, and the plan completed without acting ([research Section 10.4](../research/computer-use-s0-s1.md#10-standalone-script-checks-in-a-macos-virtual-machine-2026-09-23)). The planner prompt must therefore ask for postconditions that describe the change the step causes, such as a value that is not yet shown.
+- **Precheck:** The harness evaluates the postcondition before deciding. When it already holds, the result depends on the step's `idempotent` field.
+  - An idempotent step is skipped without an executor request, and the record says why. This keeps the "do nothing when the step is already done" convention of Cua's forms specialist ([research Section 6](../research/computer-use-s0-s1.md#6-prior-art-consulted)) for steps that are safe to skip.
+  - Any other step escalates `already_satisfied`. A postcondition that holds before the step cannot show that the step worked. In a standalone script check, a stale Calculator display satisfied every postcondition, and the plan completed without acting ([research Section 10.4](../research/computer-use-s0-s1.md#10-standalone-script-checks-in-a-macos-virtual-machine-2026-09-23)). Through Pi, the planner wrote "text contains 7" for the Add step, which was skipped, and the sum was wrong ([research Section 11](../research/computer-use-s0-s1.md#11-first-checks-through-pi-2026-09-23)).
 - **Decide:** The harness sends one executor request and applies the policy.
 - **Act:** The actuator performs one action.
 - **Verify:** The harness waits for the configured settle interval, observes again, and evaluates the postcondition. It also compares the tree with the before-tree.
-- **No change:** Two consecutive actions that change nothing in the tree end the step with `no_progress`, following `typesafe-computer-use`.
+- **No change:** One action that changes nothing in the tree ends the step with `no_progress`. The action is not repeated, because the tree cannot show every effect, and a repeat could act twice. Through Pi, a Cmd+Down key moved the insertion point but changed nothing in the tree, and the earlier limit of two sent it twice ([research Section 11](../research/computer-use-s0-s1.md#11-first-checks-through-pi-2026-09-23)).
 - **Budgets:** The harness stops with `budget_exhausted` when the plan exceeds the configured action limit. The default limit is 100 actions per `computer_run_plan` call, taken from prior art. A separate limit bounds escalations per child run, with a default of 5. Neither default is measured.
 - **Cancellation:** The harness checks the tool's abort signal before each executor request and before each action. An action already sent to the relay is not interrupted, and its outcome is recorded.
 
@@ -476,8 +489,9 @@ An escalation ends the `computer_run_plan` call and returns control to the plann
 | `state_too_large` | The tree was truncated, or the table exceeds the element or token budget. | Narrow the target, for example by closing panels or choosing a smaller window. |
 | `uncertain` | Confidence is below the gate, or the element and operation are incompatible. The answers are returned as a prior. | Confirm the prior or rewrite the step more specifically. |
 | `target_not_found` | The executor abstained. | Check the returned observation and revise the step. |
+| `already_satisfied` | The postcondition held before the step, and the step is not marked `idempotent`. No action was taken. | Write a postcondition that is false before the step, or mark the step `idempotent` when repeating it does no harm. |
 | `postcondition_failed` | The postcondition still fails after all attempts. | Revise the step or the postcondition. |
-| `no_progress` | Actions change nothing twice in a row, or the window keeps changing. | Inspect the returned screenshot and revise the approach. |
+| `no_progress` | An action changed nothing in the tree, or the window keeps changing. | Inspect the returned screenshot and revise the approach. |
 | `approval_required` | A destructive action was chosen for a step not listed in `allow_destructive`. | Add the step to `allow_destructive` only when the delegated task authorizes it. |
 | `budget_exhausted` | The action limit was reached. | Report partial progress to the parent. |
 | `executor_unavailable` | The executor service failed or timed out. | Report the failure. The planner must not perform the steps itself in this release. |
@@ -496,6 +510,7 @@ The backend interface has four operations.
 - `act(action)` performs one real-input action and returns the relay's outcome kind.
 - `screenshot()` returns the latest after-screenshot for the planner.
 - `close(outcome)` finishes or releases the lease.
+- Each action may carry a delivery mode, `background` or `foreground`. The local driver backend also offers two optional read-and-raise operations: `foreground(window, point)` reports whether the app is active and which windows are drawn over the point, and `bringToFront(window)` activates the app.
 
 ### 11.2 Relay backend
 
@@ -516,6 +531,10 @@ The backend interface has four operations.
 - It uses the same real-input policy as the relay backend.
 - It finds the window through `list_windows`, checks the active application through `list_apps`, and reads the tree through `get_window_state`. It never launches, activates or clicks anything during observation.
 - The `list_apps` call also scans installed applications and took about one second in Phase 1. A cheaper source of the active application is needed before per-step observation in Phase 5.
+- With `foregroundDelivery` on, clicks and shortcuts with Command, Control or Option use the driver's `foreground` delivery. The driver brings the window forward for the action and then restores the previous app. Scrolls, plain keys and arrow, Home, End and Page keys with any modifier, such as Cmd+Up and Cmd+Down, stay in `background` delivery, because text-navigation keys worked there.
+- The reason is that a background click into a TextEdit document moved the insertion point in 0 of 3 trials in one lease and 3 of 3 in another, while foreground delivery moved it in 6 of 6 ([research Section 12.1](../research/computer-use-s0-s1.md#12-fix-checks-through-pi-2026-09-23)). A background click depends on hidden app state, and the covering window is not the cause.
+- `list_windows` reports a `z_index`, and a lower value is nearer the front. The backend picks the frontmost matching window, and it ignores the driver's own full-screen overlay window, named `cua-driver`, when it looks for covering windows.
+- `bring_to_front` activates the app but did not raise its window above Safari, so it is not used for actions.
 
 ### 11.4 Accessibility activation mode
 
@@ -531,6 +550,9 @@ The backend interface has four operations.
 - Each `computer_run_plan` call writes a summary with the step count, the executor decision count, the escalation reason, and the latency totals.
 - Records are written under the Secretary data directory, next to the agent records. Test runs write under the repository's ignored `test-results/` directory.
 - Records may contain window contents and typed text. The configuration must allow text values to be redacted before they are written.
+- With `stepPictures` on, the harness records a picture of the target window before and after each action. The pictures are saved in the run's `pictures/` directory with a SHA-256 hash. The step outcome names them, and the executor request records do not.
+- The run then writes `review.md`, which lists each step with its intent, postcondition, result and two pictures. The relay's desktop screenshots showed Safari in front of the target, so they could not show the result. A picture is recorded evidence, not human approval.
+- Pictures can show typed text and window contents, so they stay in ignored directories and are reviewed before they are shared.
 
 ### 12.2 Metric definitions
 
@@ -555,7 +577,7 @@ Step wall time includes the relay's screenshot captures, so it must not be compa
 | Is the grouping rule in [Section 6.3](#63-grouping) sound on real trees? | Validate it on recorded trees from at least three applications before implementing the executor path. | No. |
 | How often is the correct element missing from the table? | Measured in Phase 2: 6 of 19 labelled intents, for four causes. The target was scrolled out of view, reachable only through a closed menu, disabled, or an unnamed title-bar button ([research Section 9.2](../research/computer-use-s0-s1.md#92-retrieval-on-recorded-trees)). The first three are correct exclusions, which the plan must handle with scroll, menu or shortcut steps. | No. |
 | How does a step reach a target below the visible part of a list? | The executor never chose to scroll in 18 unlisted-target cases, even with the hidden count in the request. When the plan's step asked for a scroll, the executor routed to the list and chose `scroll_down` in 2 of 2 decisions of a standalone script run ([research Section 10.4](../research/computer-use-s0-s1.md#10-standalone-script-checks-in-a-macos-virtual-machine-2026-09-23)). Scrolling should come from the plan. A harness-side search of hidden names remains an option. | No. |
-| Does a click reach a covered window? | Clicks in Calculator and scrolls in Finder reached covered windows. A click in a covered TextEdit document did not move the insertion point, and the typed text went to the start of the document ([research Section 10.2](../research/computer-use-s0-s1.md#10-standalone-script-checks-in-a-macos-virtual-machine-2026-09-23)). Until this is explained, a plan should place the insertion point with keys, such as `cmd+down` for the end of a document. | No. |
+| Does a click reach a covered window? | Closed. A background click depends on whether the app was recently active, not on the covering window. Foreground delivery moved the insertion point in 6 of 6 trials, and it is now the default for clicks ([Section 11.3](#113-local-driver-backend-for-development), [research Section 12.1](../research/computer-use-s0-s1.md#12-fix-checks-through-pi-2026-09-23)). An `enter_text` step places the insertion point with its `position` field. | No. |
 | How does a step close or zoom a window? | The title-bar buttons have no name in the tree. The planner should use key combinations such as `cmd+w` until the driver exposes their names. | No. |
 | Should actions use direct accessibility activation? | Keep real input by default, as owner decision D3 requires. | Yes, because D3 is an owner decision. |
 | What does a real screenshot cost the planner? | Measured in Phase 1: the cost is proportional to pixel area, and a 1312×844 window screenshot costs 1,068 input tokens on Qwen 3.8 27B ([research Section 8](../research/computer-use-s0-s1.md#8-phase-1-observations-2026-09-23)). Choose the default image scale when the planner prompt is written in Phase 6. | No. |
@@ -575,8 +597,9 @@ Step wall time includes the relay's screenshot captures, so it must not be compa
 - The deterministic unit tests and the harness tests with the fake backend run in `npm run verify`.
 - The recorded-tree evaluation ran in Phase 2 and Phase 4 ([research Section 9](../research/computer-use-s0-s1.md#9-phase-2-to-4-observations-2026-09-23)).
 - Standalone scripts ran the harness modules once each in a relay virtual machine, with Pi stubbed, hand-written plans and the live executor ([research Section 10](../research/computer-use-s0-s1.md#10-standalone-script-checks-in-a-macos-virtual-machine-2026-09-23)).
-- These script runs are not live checks. A live check counts only when Pi loads the extension and runs the task, and no such check has been executed.
-- Live acceptance with the real planner and the relay backend has not been executed. The remaining claims of this document are design, not verified behavior.
+- These script runs are not live checks. A live check counts only when Pi loads the extension and runs the task.
+- Pi ran three Calculator tasks and two TextEdit tasks in a relay virtual machine, each once, with the local driver backend inside the guest ([research Sections 11](../research/computer-use-s0-s1.md#11-first-checks-through-pi-2026-09-23) and [12](../research/computer-use-s0-s1.md#12-fix-checks-through-pi-2026-09-23)). The step pictures from those runs have not been reviewed by a person.
+- Live acceptance with the relay backend has not been executed, because that backend waits for the `pi-vm-relay` export. The remaining claims of this document are design, not verified behavior.
 
 ## 15. References
 

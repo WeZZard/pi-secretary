@@ -8,7 +8,9 @@ import type { Observation } from "./observer.ts";
  * request never uses depends_on or alone (research §4.3), and samples is pinned to 1.
  */
 
-export interface StepSpec { id: string; intent: string; operation?: Operation; text?: string; keys?: string }
+/** `position` places the insertion point before text entry with fixed keys (fix plan F-3). */
+export type TextPosition = "end" | "start" | "replace";
+export interface StepSpec { id: string; intent: string; operation?: Operation; text?: string; keys?: string; position?: TextPosition }
 
 export interface QuestionMap {
   region?: string;

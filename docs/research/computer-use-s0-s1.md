@@ -382,3 +382,56 @@ These checks ran Pi itself. Pi 0.85.1 ran non-interactively inside a disposable 
 **Test tooling:** An `osascript` query to System Events in the guest stalled until the relay timed out, and the relay recorded that run as uncertain. The document text was then read from the harness's own observation records instead.
 
 **Verification limits:** Each task ran once. The covered-window typing problem of Section 10.2 did not recur, because the planner moved the insertion point with Cmd+Down before typing, so its cause is still unknown. The fixes are planned in `.plans/2026-09-23-computer-use-live-fixes.md`, which is not versioned.
+
+## 12. Fix checks through Pi (2026-09-23)
+
+These checks tested the fixes planned after [Section 11](#11-first-checks-through-pi-2026-09-23). Two leases were used. The first lease ran the click experiment only. The second lease ran the click experiment again and then the Pi tasks with every fix in place. The Pi setup matched Section 11: Pi 0.85.1, the Qwen 3.8 27B planner, the two computer-use tools, and the live executor. Step pictures and foreground delivery were enabled in the guest's `secretary.json`.
+
+### 12.1 Why a click into a covered window did not move the insertion point
+
+The script `scripts/computer-use/click-placement.ts` clicked the center of TextEdit's text area while Safari was in front, then typed "z". Before each click, the script put the insertion point after a "y" at the start of the text. A "z" at the end of the text means that the click moved the insertion point. A "z" after the "y" means that it did not.
+
+| Click method | Lease 1: moved | Lease 2: moved |
+| --- | --- | --- |
+| `background`: one click posted to the process | 0 of 3 | 3 of 3 |
+| `background-twice`: two such clicks | 0 of 3 | 3 of 3 |
+| `foreground`: the driver brings the window forward for the click, then restores the previous app | 3 of 3 | 3 of 3 |
+| `bring_to_front` first, then one background click | 3 of 3 | 3 of 3 |
+
+- The one difference between the leases was the reset. In lease 2, every trial began with Cmd+A sent with foreground delivery, which briefly activated TextEdit. In lease 1, the keys were sent with background delivery only.
+- A background click therefore depends on hidden state of the app, most likely whether the app was recently active. The covering window is not the cause, because Safari covered TextEdit in all 24 trials.
+- Foreground delivery moved the insertion point in 6 of 6 trials, and it returned the foreground to the previous app. The harness now uses it for clicks and for shortcuts with Command, Control or Option.
+- After `bring_to_front`, TextEdit was the active app, but its window stayed behind Safari. Activating an app does not raise its window.
+- Cmd+A did not select all text with either delivery mode, so the setup check of the script failed in every trial of both leases. The classification above uses where the "z" landed, which the failed check does not affect. Text replacement now selects with Cmd+Up and then Shift+Cmd+Down.
+- In lease 1, the covering window was reported as Finder. This was a defect: the code read the driver's `z_index` in the wrong direction. A lower `z_index` is nearer the front. The defect was fixed before lease 2, which reported Safari.
+
+### 12.2 Pi tasks with the fixes in place
+
+| Run | Task | Tool calls | Result |
+| --- | --- | --- | --- |
+| 1 | Compute 7 plus 3 in Calculator, from a cleared display. | 2 observations and 2 plans | Correct. The plan validator rejected a first plan that checked "text contains 7" after pressing 7, because "7" is also the name of a button. The second plan completed, and its last step was verified by "text contains 10". |
+| 2 | The same task, with the display still showing "7+3 10" from run 1. | 1 observation and 0 plans | The answer, 10, was correct, but Pi did not compute it. See below. |
+| 3 | Add a new last line "Hello from Pi" to the TextEdit document, with Safari in front. | 1 observation and 1 plan | Correct. One `enter_text` step with `position: "end"` and the postcondition "text ends with Hello from Pi" was verified on the first attempt. The document's recorded value ends with a new line "Hello from Pi". |
+
+**What the fixes changed:**
+
+- No step was skipped. In Section 11, two steps were skipped because their postconditions already held.
+- The display text of Calculator appeared under the element table, so the planner could read the result.
+- The rejected label check made the planner write a postcondition that could be false before the step.
+- Each result ended with the list "Verified by code after the step", and Pi's final answer in run 3 claimed only what that list said.
+- Each run wrote `review.md` with a before picture and an after picture of the target window for every step, and a SHA-256 hash for each picture. In run 1, each step's before picture has the same hash as the previous step's after picture, as expected.
+- The TextEdit text landed at the end although Safari covered the window. The planner used the new `position` field instead of a separate Cmd+Down step.
+
+**A problem that code did not catch (run 2):**
+
+- The planner observed the window, saw "7+3 10" already on the display, and answered 10 without running a plan.
+- Its final answer said "I verified the window directly (buttons 7, +, 3 and Equals are all present, and the display text reads 7+3 10)". The presence of buttons does not show that they were pressed in this task.
+- The harness cannot catch this, because no plan ran. Whether a planner may answer from a stale screen is a planner instruction question for Phase 6.
+
+**Evidence:** The relay manifests are under `relay-evidence/relay-computer-use-fixes-dadc305d/` and `relay-evidence/relay-computer-use-f5-0e14f091/`, which are not versioned. Lease 2 finished with delivery verified. The relay failed to return one after-screenshot image to the conversation, but the image file and its hash were recorded.
+
+**Verification limits:**
+
+- Each Pi task ran once, and the click experiment ran 3 times per method in each lease. The results show that the paths work, not how often they work.
+- The step pictures are recorded evidence. A person has not reviewed them yet.
+- Only Calculator and TextEdit were tested through Pi. A Finder scrolling task was not rerun.

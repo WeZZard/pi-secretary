@@ -6,12 +6,17 @@ import { ActionHistory, type ActionRecord } from "./history.ts";
 import { observe, renderPlannerTable, type Observation, type ObservationFailure } from "./observer.ts";
 import { decide, type Decision, type EscalationReason, type Prior } from "./policy.ts";
 import { buildDecisionRequest, type StepSpec } from "./request-builder.ts";
-import type { Telemetry } from "./telemetry.ts";
+import type { Picture, Telemetry } from "./telemetry.ts";
 import { evaluatePostcondition, isWeakPostcondition, validatePostcondition, visibleSignature, type Postcondition } from "./verifier.ts";
 
 /** The step harness (design docs/arch/computer-use.md §9 and §10). */
 
-export interface PlanStep extends StepSpec { postcondition: Postcondition; maxAttempts?: number }
+/**
+ * `idempotent` marks a step that changes nothing when it is already done, such as setting a
+ * checkbox on. Only such a step may be skipped when its postcondition holds before it runs
+ * (fix plan F-1): a stale Calculator display made every step of a plan look done (observed 2026-09-23).
+ */
+export interface PlanStep extends StepSpec { postcondition: Postcondition; maxAttempts?: number; idempotent?: boolean }
 export interface Plan { target: WindowTarget; goal: string; steps: PlanStep[]; allowDestructive: string[] }
 
 export interface StepOutcome {
@@ -20,6 +25,8 @@ export interface StepOutcome {
   action?: string;
   element?: string;
   detail?: string;
+  /** Fix plan F-4: window pictures before and after each attempt, when step pictures are on. */
+  pictures?: { attempt: number; before?: Picture; after?: Picture }[];
 }
 
 export interface Escalation { stepId: string; reason: EscalationReason; detail: string; prior?: Prior; observation?: string }
@@ -45,11 +52,18 @@ export interface HarnessDependencies {
 }
 
 const REOBSERVE_LIMIT = 2;
-const NO_CHANGE_LIMIT = 2;
+/**
+ * An action that changes nothing visible is not repeated (fix plan F-7). Through Pi, a click into a
+ * text area and Cmd+Down were each sent twice because the tree did not change, and a repeated press
+ * of a button such as Send could act twice (observed 2026-09-23).
+ */
+const NO_CHANGE_LIMIT = 1;
+/** Keys that only move the insertion point or the selection; the accessibility tree does not show their effect. */
+const NAVIGATION_KEYS = new Set(["up", "down", "left", "right", "home", "end", "pageup", "pagedown"]);
 const DEFAULT_ATTEMPTS = 2;
 
 /** Returns the first problem with a plan, before any action (design §5.2). */
-export function validatePlan(plan: Plan, maxSteps: number): string | undefined {
+export function validatePlan(plan: Plan, maxSteps: number, basedOn?: Observation): string | undefined {
   if (plan.steps.length === 0) return "the plan has no steps";
   if (plan.steps.length > maxSteps) return `the plan has ${plan.steps.length} steps; the limit is ${maxSteps}`;
   const ids = new Set<string>();
@@ -61,6 +75,18 @@ export function validatePlan(plan: Plan, maxSteps: number): string | undefined {
     if (step.operation === "enter_text" && step.text === undefined) return `step ${step.id}: enter_text needs text`;
     if (step.operation === "key_combo" && step.keys === undefined) return `step ${step.id}: key_combo needs keys`;
     if (step.maxAttempts !== undefined && (!Number.isInteger(step.maxAttempts) || step.maxAttempts < 1 || step.maxAttempts > 5)) return `step ${step.id}: maxAttempts must be 1 to 5`;
+    if (step.idempotent !== undefined && typeof step.idempotent !== "boolean") return `step ${step.id}: idempotent must be true or false`;
+    if (step.operation === "enter_text" && !checksText(step.postcondition)) {
+      return `step ${step.id}: an enter_text step must check the typed text with {text:{endsWith}}, {text:{contains}} or {value:{name,equals}}`;
+    }
+    if (step.operation === "key_combo" && step.keys !== undefined && isWeakPostcondition(step.postcondition)
+      && NAVIGATION_KEYS.has(step.keys.toLowerCase().split("+").pop()!.trim())) {
+      return `step ${step.id}: ${step.keys} only moves the insertion point, which the accessibility tree does not show, so {changed:true} cannot verify it; set position on the enter_text step instead`;
+    }
+    if (basedOn) {
+      const label = labelUsedAsText(step.postcondition, basedOn);
+      if (label) return `step ${step.id}: text ${JSON.stringify(label)} is the name of a control, and text checks search only what the window shows; use {exists:{name:${JSON.stringify(label)}}} to check a control`;
+    }
   }
   for (const id of plan.allowDestructive) if (!ids.has(id)) return `allowDestructive names unknown step ${JSON.stringify(id)}`;
   return undefined;
@@ -92,7 +118,7 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
     for (let attempt = 1; ; attempt++) {
       checkCancelled();
       let read: WindowRead;
-      try { read = await backend.readWindow(plan.target, { screenshot: false, signal }); }
+      try { read = await backend.readWindow(plan.target, { screenshot: config.stepPictures, signal }); }
       catch (error) {
         if (error instanceof BackendError && error.code === "aborted") throw new Stop(undefined, true);
         return escalate(stepId, "backend_failed", error instanceof Error ? error.message : String(error));
@@ -110,10 +136,16 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
     current = await look(plan.steps[0]!.id, "initial");
     for (const [index, step] of plan.steps.entries()) {
       const outcome = outcomes[index]!;
-      // Precheck: a step whose postcondition already holds needs no decision (design §9).
-      if (!isWeakPostcondition(step.postcondition) && evaluatePostcondition(step.postcondition, current.read).holds) {
+      // Precheck (design §9, fix plan F-1): a postcondition that already holds cannot show that the
+      // step did anything. Only an idempotent step is skipped; any other step stops the plan.
+      const precheck = isWeakPostcondition(step.postcondition) ? undefined : evaluatePostcondition(step.postcondition, current.read);
+      if (precheck?.holds) {
+        if (!step.idempotent) {
+          escalate(step.id, "already_satisfied", `the postcondition already held before the step (${precheck.detail}), so it cannot show that the step worked. `
+            + "Write a postcondition that is false now, or mark the step idempotent if doing it again changes nothing.");
+        }
         outcome.result = "skipped";
-        outcome.detail = "the postcondition already held";
+        outcome.detail = `idempotent, and the postcondition already held (${precheck.detail})`;
         history.push({ intent: step.intent, action: "none", outcome: "skipped" });
         continue;
       }
@@ -151,6 +183,8 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
           throw error;
         }
         const before = current;
+        const pictures = { attempt: attempts + 1 } as NonNullable<StepOutcome["pictures"]>[number];
+        if (before.read.screenshot) pictures.before = await telemetry.recordPicture(runId, `${step.id}-${attempts + 1}-before`, before.read.screenshot);
         for (const action of backendActions) {
           checkCancelled();
           try { await backend.act(before.read.window, action, signal); }
@@ -167,6 +201,8 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
         if (decision.element) outcome.element = decision.element.name;
         await sleep(config.settleMs, signal);
         current = await look(step.id, "verify");
+        if (current.read.screenshot) pictures.after = await telemetry.recordPicture(runId, `${step.id}-${attempts}-after`, current.read.screenshot);
+        if (pictures.before || pictures.after) (outcome.pictures ??= []).push(pictures);
         const evaluation = evaluatePostcondition(step.postcondition, current.read, before.read);
         const record: ActionRecord = { intent: step.intent, action: decision.operation, ...(decision.element ? { element: decision.element.name } : {}),
           outcome: evaluation.holds ? (isWeakPostcondition(step.postcondition) ? "weakly_verified" : "verified") : "failed" };
@@ -179,24 +215,73 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
         unchanged = visibleSignature(before.read) === visibleSignature(current.read) ? unchanged + 1 : 0;
         outcome.result = "failed";
         outcome.detail = evaluation.detail;
-        if (unchanged >= NO_CHANGE_LIMIT) escalate(step.id, "no_progress", `${described} changed nothing on screen twice`, decision.prior);
+        if (unchanged >= NO_CHANGE_LIMIT) {
+          escalate(step.id, "no_progress", `${described} changed nothing on screen; it was not repeated, because a repeat could act twice`, decision.prior);
+        }
         if (attempts >= (step.maxAttempts ?? DEFAULT_ATTEMPTS)) escalate(step.id, "postcondition_failed", evaluation.detail, decision.prior);
       }
     }
     await telemetry.recordPlan({ runId, outcome: "completed", steps: outcomes, decisions, actions, redact: config.redactTypedText, plan });
+    await review("completed");
     return { outcome: "completed", steps: outcomes, decisions, actions };
   } catch (error) {
     if (!(error instanceof Stop)) throw error;
     if (error.cancelled) {
       await telemetry.recordPlan({ runId, outcome: "cancelled", steps: outcomes, decisions, actions, redact: config.redactTypedText, plan });
+      await review("cancelled");
       return { outcome: "cancelled", steps: outcomes, decisions, actions };
     }
     const escalation = { ...error.escalation!, ...(plannerView() ? { observation: plannerView() } : {}) };
     await telemetry.recordPlan({ runId, outcome: "escalated", steps: outcomes, decisions, actions, escalation, redact: config.redactTypedText, plan });
+    await review(`escalated at ${escalation.stepId}: ${escalation.reason}`);
     return { outcome: "escalated", steps: outcomes, escalation, decisions, actions };
   }
 
+  /** Fix plan F-4: the review page is written only when pictures were taken. */
+  async function review(outcome: string): Promise<void> {
+    if (!config.stepPictures) return;
+    const lines = [`# Review of ${runId}`, "", `Goal: ${plan.goal}`, "", `Outcome: ${outcome}`, ""];
+    for (const [index, step] of plan.steps.entries()) {
+      const result = outcomes[index]!;
+      lines.push(`## ${step.id}`, "", `- Intent: ${step.intent}`, `- Postcondition: \`${JSON.stringify(step.postcondition)}\``,
+        `- Result: ${result.result}${result.detail ? ` (${result.detail})` : ""}`);
+      for (const picture of result.pictures ?? []) {
+        for (const phase of ["before", "after"] as const) {
+          const file = picture[phase];
+          if (file) lines.push(`- Attempt ${picture.attempt}, ${phase}: ![${step.id} ${phase}](${file.file}) sha256 \`${file.sha256}\``);
+        }
+      }
+      lines.push("");
+    }
+    await telemetry.recordReview(runId, lines);
+  }
+
   function escalateAfter(stepId: string, reason: EscalationReason, detail: string): never { return escalate(stepId, reason, detail); }
+}
+
+/** True when a postcondition checks text content somewhere, as an enter_text step must (fix plan F-3). */
+function checksText(condition: Postcondition): boolean {
+  if ("all" in condition) return condition.all.some(checksText);
+  if ("any" in condition) return condition.any.every(checksText);
+  return "text" in condition || "value" in condition;
+}
+
+/** The first `text { contains }` string that equals a control's name in the observation (fix plan F-8). */
+export function labelUsedAsText(condition: Postcondition, observation: Observation): string | undefined {
+  if ("all" in condition || "any" in condition) {
+    for (const part of "all" in condition ? condition.all : condition.any) {
+      const found = labelUsedAsText(part, observation);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  if (!("text" in condition)) return undefined;
+  const target = "endsWith" in condition.text ? condition.text.endsWith : condition.text.contains;
+  const wanted = target.replace(/\s+/g, " ").trim().toLowerCase();
+  const isControl = observation.groups.some(group => group.elements.some(element =>
+    element.name.toLowerCase() === wanted && !(element.value !== undefined && element.value.toLowerCase().includes(wanted))));
+  const shown = (observation.texts ?? []).some(text => text.toLowerCase().includes(wanted));
+  return isControl && !shown ? target : undefined;
 }
 
 function summarize(decision: Decision): Record<string, unknown> {

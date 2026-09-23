@@ -7,7 +7,8 @@ import { BackendError, type RawElement, type WindowRead } from "../../extensions
 import { FakeBackend } from "../../extensions/secretary/computer-use/backend/fake-backend.ts";
 import { defaultComputerUseConfiguration } from "../../extensions/secretary/computer-use/configuration.ts";
 import { ExecutorError, type DecisionRequestBody, type DecisionResponse } from "../../extensions/secretary/computer-use/executor-client.ts";
-import { runPlan, validatePlan, type Plan } from "../../extensions/secretary/computer-use/harness.ts";
+import { labelUsedAsText, runPlan, validatePlan, type Plan } from "../../extensions/secretary/computer-use/harness.ts";
+import { observe } from "../../extensions/secretary/computer-use/observer.ts";
 import { Telemetry } from "../../extensions/secretary/computer-use/telemetry.ts";
 
 type Read = Omit<WindowRead, "readMs">;
@@ -56,10 +57,19 @@ test("a plan completes: one request per step, a real click at the element center
   assert.ok(!("depends_on" in exec.bodies[0]!.questions.operation!));
 });
 
-test("a step whose postcondition already holds is skipped without an executor request", async (t) => {
-  const { deps } = setup(t, [submitted]);
+test("a postcondition that already holds stops the plan with already_satisfied before any request or action", async (t) => {
+  // Observed through Pi on 2026-09-23: "text contains 7" held before the Add step, so Add was skipped.
+  const { backend, deps } = setup(t, [submitted]);
   const exec = executor(() => { throw new Error("must not be called"); });
   const result = await runPlan(deps(exec), plan([{ id: "submit", intent: "Submit", postcondition: { exists: { name: "Done" } } }]));
+  assert.deepEqual([result.outcome, result.escalation!.reason, result.decisions, backend.actions.length], ["escalated", "already_satisfied", 0, 0]);
+  assert.match(result.escalation!.detail, /cannot show that the step worked/);
+});
+
+test("an idempotent step whose postcondition already holds is skipped without an executor request", async (t) => {
+  const { deps } = setup(t, [submitted]);
+  const exec = executor(() => { throw new Error("must not be called"); });
+  const result = await runPlan(deps(exec), plan([{ id: "submit", intent: "Submit", idempotent: true, postcondition: { exists: { name: "Done" } } }]));
   assert.deepEqual([result.outcome, result.steps[0]!.result, result.decisions], ["completed", "skipped", 0]);
 });
 
@@ -71,12 +81,13 @@ test("a failed postcondition is retried and then escalated as postcondition_fail
   assert.match(result.escalation!.observation!, /A Button "Submit"/, "An escalation carries a fresh observation for replanning");
 });
 
-test("two actions that change nothing on screen escalate no_progress", async (t) => {
-  const { deps } = setup(t, [form]);
+test("an action that changes nothing on screen is not repeated and escalates no_progress", async (t) => {
+  // Observed through Pi on 2026-09-23: invisible clicks and keys were each sent twice.
+  const { backend, deps } = setup(t, [form]);
   const result = await runPlan(deps(executor(() => ({ element: "Submit", operation: "press" }))),
     plan([{ id: "s", intent: "Submit", maxAttempts: 5, postcondition: { exists: { name: "Done" } } }]));
-  assert.deepEqual([result.escalation!.reason, result.actions], ["no_progress", 2]);
-  assert.match(result.escalation!.detail, /changed nothing on screen twice/);
+  assert.deepEqual([result.escalation!.reason, result.actions, backend.actions.length], ["no_progress", 1, 1]);
+  assert.match(result.escalation!.detail, /changed nothing on screen; it was not repeated/);
 });
 
 test("policy escalations stop the plan with their reason and prior", async (t) => {
@@ -147,4 +158,52 @@ test("plans are validated before any observation or action", () => {
   assert.match(validatePlan(plan([{ ...step, operation: "enter_text" }]), 50)!, /needs text/);
   assert.match(validatePlan(plan([step], ["b"]), 50)!, /unknown step "b"/);
   assert.match(validatePlan(plan([step, { ...step, id: "b" }]), 1)!, /limit is 1/);
+});
+
+test("a text check for a control's name is rejected against the observation the plan was based on", () => {
+  // Observed through Pi on 2026-09-23: "text contains All Clear" checked a button name and failed after a working press.
+  const calculator = window([{ name: "All Clear" }, { name: "7" }]);
+  calculator.descendantText = { 0: "\u200e0" };
+  const observation = observe({ ...calculator, readMs: 0 }, { id: "obs-1", maxElements: 240, maxNameLength: 48 });
+  assert.equal(observation.status, "ready");
+  if (observation.status !== "ready") return;
+  assert.equal(labelUsedAsText({ text: { contains: "All Clear" } }, observation), "All Clear");
+  assert.equal(labelUsedAsText({ any: [{ changed: true }, { text: { contains: "7" } }] }, observation), "7");
+  assert.equal(labelUsedAsText({ text: { contains: "0" } }, observation), undefined, "The display shows 0, which is content");
+  const problem = validatePlan(plan([{ id: "clear", intent: "Clear", postcondition: { text: { contains: "All Clear" } } }]), 50, observation);
+  assert.match(problem ?? "", /is the name of a control.*exists/);
+  assert.equal(validatePlan(plan([{ id: "clear", intent: "Clear", postcondition: { exists: { name: "All Clear" } } }]), 50, observation), undefined);
+});
+
+test("with step pictures on, each action gets a hashed picture before and after, and a review page lists them", async (t) => {
+  const picture = (text: string) => ({ data: Buffer.from(text).toString("base64"), mimeType: "image/png" });
+  const { root, deps } = setup(t, [{ ...form, screenshot: picture("before") }, { ...submitted, screenshot: picture("after") }], { stepPictures: true });
+  const result = await runPlan(deps(executor(() => ({ element: "Submit", operation: "press" }))),
+    plan([{ id: "submit", intent: "Submit the form", postcondition: { exists: { name: "Done" } } }]));
+  const pictures = result.steps[0]!.pictures!;
+  assert.equal(pictures.length, 1);
+  assert.equal(pictures[0]!.before!.file, "pictures/submit-1-before.png");
+  assert.equal(readFileSync(join(root, "runs", "run-1", pictures[0]!.after!.file), "utf8"), "after");
+  const { createHash } = await import("node:crypto");
+  assert.equal(pictures[0]!.after!.sha256, createHash("sha256").update("after").digest("hex"));
+  const review = readFileSync(join(root, "runs", "run-1", "review.md"), "utf8");
+  assert.match(review, /## submit\n\n- Intent: Submit the form\n- Postcondition: `\{"exists":\{"name":"Done"\}\}`\n- Result: verified/);
+  assert.match(review, /Attempt 1, after: !\[submit after\]\(pictures\/submit-1-after\.png\) sha256 `[0-9a-f]{64}`/);
+});
+
+test("with step pictures off, no picture or review page is written", async (t) => {
+  const { root, deps } = setup(t, [form, submitted]);
+  const result = await runPlan(deps(executor(() => ({ element: "Submit", operation: "press" }))),
+    plan([{ id: "submit", intent: "Submit the form", postcondition: { exists: { name: "Done" } } }]));
+  assert.equal(result.steps[0]!.pictures, undefined);
+  assert.ok(!readdirSync(join(root, "runs", "run-1")).includes("review.md"));
+});
+
+test("text entry must check the text, and a key that only moves the insertion point cannot be verified by a change", () => {
+  const typed = { id: "t", intent: "Type", operation: "enter_text" as const, text: "Hello" };
+  assert.match(validatePlan(plan([{ ...typed, postcondition: { changed: true } }]), 50) ?? "", /must check the typed text/);
+  assert.equal(validatePlan(plan([{ ...typed, postcondition: { text: { endsWith: "Hello" } } }]), 50), undefined);
+  assert.match(validatePlan(plan([{ id: "k", intent: "End", operation: "key_combo", keys: "cmd+Down", postcondition: { changed: true } }]), 50) ?? "",
+    /only moves the insertion point.*set position on the enter_text step/);
+  assert.equal(validatePlan(plan([{ id: "k", intent: "New", operation: "key_combo", keys: "cmd+n", postcondition: { changed: true } }]), 50), undefined);
 });

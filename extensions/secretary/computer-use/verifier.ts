@@ -13,7 +13,7 @@ export type Postcondition =
   | { absent: { name: string; role?: string } }
   | { value: { name: string; equals: string } }
   | { window: { titleContains: string } }
-  | { text: { contains: string } }
+  | { text: { contains: string } | { endsWith: string } }
   | { changed: true }
   | { all: Postcondition[] }
   | { any: Postcondition[] };
@@ -96,8 +96,10 @@ export function validatePostcondition(value: unknown, depth = 0): string | undef
       return fields(body, ["titleContains"]) && text(b.titleContains) ? undefined : "window needs titleContains";
     }
     case "text": {
-      const b = body as { contains?: unknown };
-      return fields(body, ["contains"]) && text(b.contains) ? undefined : "text needs contains";
+      const b = body as { contains?: unknown; endsWith?: unknown };
+      const one = (b.contains === undefined) !== (b.endsWith === undefined);
+      return one && (fields(body, ["contains"]) || fields(body, ["endsWith"])) && text(b.contains ?? b.endsWith)
+        ? undefined : "text needs exactly one of contains or endsWith";
     }
     case "changed": return body === true ? undefined : "changed must be true";
     case "all": case "any": {
@@ -134,12 +136,16 @@ export function evaluatePostcondition(condition: Postcondition, after: WindowRea
     return { holds, detail: `window title is ${JSON.stringify(after.window.title)}` };
   }
   if ("text" in condition) {
-    const wanted = normalize(condition.text.contains);
+    const ends = "endsWith" in condition.text;
+    const target = "endsWith" in condition.text ? condition.text.endsWith : condition.text.contains;
+    const wanted = normalize(target);
     // Labels name controls, so they are excluded: the Calculator button labelled "7" satisfied
     // `contains "7"` before anything was typed (observed 2026-09-23). Values and descendant text are content.
+    // `endsWith` proves where typed text landed, which `contains` cannot (fix plan F-3).
     const holds = visibleElements(after).some(element => [element.value, after.descendantText?.[element.element_index]]
-      .some(text => typeof text === "string" && normalize(text).includes(wanted)));
-    return { holds, detail: `on-screen text ${holds ? "contains" : "does not contain"} ${JSON.stringify(condition.text.contains)}` };
+      .some(text => typeof text === "string" && (ends ? normalize(text).endsWith(wanted) : normalize(text).includes(wanted))));
+    const verb = ends ? (holds ? "ends with" : "does not end with") : (holds ? "contains" : "does not contain");
+    return { holds, detail: `on-screen text ${verb} ${JSON.stringify(target)}` };
   }
   if ("changed" in condition) {
     if (!before) return { holds: false, detail: "no earlier observation to compare with" };

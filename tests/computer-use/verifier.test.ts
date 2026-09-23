@@ -64,7 +64,8 @@ test("descendant text counts as visible change and as a name, without bidirectio
   after.elements.push({ element_index: 9100, role: "AXButton", label: "7", depth: 1, parent_index: window,
     frame: { ...after.elements.find(element => element.element_index === window)!.frame!, w: 40, h: 40 } });
   assert.equal(evaluatePostcondition({ text: { contains: "7" } }, after).holds, false, "A button labelled 7 is not content");
-  assert.equal(validatePostcondition({ text: { contains: "" } }), "text needs contains");
+  assert.equal(validatePostcondition({ text: { contains: "" } }), "text needs exactly one of contains or endsWith");
+  assert.equal(validatePostcondition({ text: { contains: "a", endsWith: "b" } }), "text needs exactly one of contains or endsWith");
   assert.equal(validatePostcondition({ text: { contains: "10" } }), undefined);
 });
 
@@ -78,4 +79,15 @@ test("an element scrolled outside the window is not on screen, but an open menu'
   const menu = { element_index: 9001, role: "AXMenu", depth: 1, parent_index: window.element_index, frame: { x: 0, y: -400, w: 200, h: 300 } };
   after.elements.push(menu, { element_index: 9002, role: "AXMenuItem", label: "Far Item", depth: 2, parent_index: 9001, frame: { x: 0, y: -380, w: 200, h: 20 } });
   assert.equal(evaluatePostcondition({ exists: { name: "Far Item" } }, after).holds, true);
+});
+
+test("text endsWith proves where typed text landed, which contains cannot", () => {
+  // Recorded 2026-09-23: typing into a covered TextEdit document put the text at the start.
+  const after = read();
+  const area = after.elements.find(element => element.role === "AXTextArea")!;
+  area.value = "Hello from PiDisposable document";
+  assert.equal(evaluatePostcondition({ text: { contains: "Hello from Pi" } }, after).holds, true);
+  assert.equal(evaluatePostcondition({ text: { endsWith: "Hello from Pi" } }, after).holds, false);
+  area.value = "Disposable document\n\nHello from Pi";
+  assert.equal(evaluatePostcondition({ text: { endsWith: "Hello from Pi" } }, after).holds, true);
 });

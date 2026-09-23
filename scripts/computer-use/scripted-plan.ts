@@ -29,7 +29,7 @@ for (const step of plan.steps) {
 const config = defaultComputerUseConfiguration();
 const out = resolve("test-results/computer-use", `scripted-${new Date().toISOString().replace(/[:.]/g, "-")}`);
 mkdirSync(out, { recursive: true });
-const backend = new LocalDriverBackend({ run: cuaDriverRunner(process.env.CUA_DRIVER ?? config.localDriverPath), maxTreeNodes: config.maxTreeNodes });
+const backend = new LocalDriverBackend({ run: cuaDriverRunner(process.env.CUA_DRIVER ?? config.localDriverPath), maxTreeNodes: config.maxTreeNodes, foregroundDelivery: config.foregroundDelivery });
 const telemetry = new Telemetry(out);
 const target = { app: plan.app, ...(plan.windowTitle ? { windowTitle: plan.windowTitle } : {}) };
 const wait = (ms: number) => new Promise(done => setTimeout(done, ms));

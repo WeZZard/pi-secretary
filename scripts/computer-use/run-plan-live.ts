@@ -19,10 +19,10 @@ const params = JSON.parse(readFileSync(planPath, "utf8"));
 const config = { ...defaultComputerUseConfiguration(), backend: "local" as const, allowLocalDesktop: true, executorUrl: url, executorTimeoutMs: 60_000 };
 const out = resolve("test-results/computer-use", `run-plan-${new Date().toISOString().replace(/[:.]/g, "-")}`);
 mkdirSync(out, { recursive: true });
-const backend = new LocalDriverBackend({ run: cuaDriverRunner(process.env.CUA_DRIVER ?? config.localDriverPath), maxTreeNodes: config.maxTreeNodes });
+const backend = new LocalDriverBackend({ run: cuaDriverRunner(process.env.CUA_DRIVER ?? config.localDriverPath), maxTreeNodes: config.maxTreeNodes, foregroundDelivery: config.foregroundDelivery });
 const result = await executeRunPlan({
   deps: { backend, executor: new ExecutorClient({ baseUrl: url, timeoutMs: config.executorTimeoutMs }), telemetry: new Telemetry(out), config },
-  knownObservation: () => false, escalations: { used: 0, limit: config.maxEscalationsPerRun, record: () => {} },
+  observation: () => undefined, escalations: { used: 0, limit: config.maxEscalationsPerRun, record: () => {} },
 }, params);
 const text = (result.content[0] as { text: string }).text;
 writeFileSync(join(out, "result.md"), `${text}\n\n${JSON.stringify(result.details)}\n`);

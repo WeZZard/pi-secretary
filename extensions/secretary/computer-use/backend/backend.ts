@@ -55,11 +55,21 @@ export interface ReadOptions { screenshot: boolean; signal?: AbortSignal }
 /** A point in screen coordinates, in points, with a top-left origin, as accessibility frames report them. */
 export interface Point { x: number; y: number }
 
-export type BackendAction =
+/**
+ * `background` posts the input to the process without raising its window. `foreground` briefly
+ * brings the window to the front, acts, and restores the previous front application (fix plan F-3).
+ */
+export type Delivery = "background" | "foreground";
+
+export type BackendAction = (
   | { kind: "click"; point: Point; button: "left" | "right"; count: 1 | 2 }
   | { kind: "key"; key: string; modifiers: string[] }
   /** `extent` is the height in points of the region being scrolled; a page is most of it. */
-  | { kind: "scroll"; point: Point; direction: "up" | "down"; by: "page"; extent: number };
+  | { kind: "scroll"; point: Point; direction: "up" | "down"; by: "page"; extent: number }
+) & { delivery?: Delivery };
+
+/** Fix plan F-3: whether the target application is active, and which windows are drawn over a point. */
+export interface ForegroundState { active: boolean; coveredBy: string[] }
 
 /** `unverifiable` is the driver's normal report for key input; code verifies the effect afterwards. */
 export interface ActionOutcome { kind: "completed" | "unverifiable"; detail?: string }
@@ -68,6 +78,10 @@ export interface ExecutionBackend {
   readonly kind: "local" | "relay" | "fake";
   readWindow(target: WindowTarget, options: ReadOptions): Promise<WindowRead>;
   act(window: WindowRef, action: BackendAction, signal?: AbortSignal): Promise<ActionOutcome>;
+  /** Fix plan F-3: reads the foreground state from the window server. Optional for backends that cannot. */
+  foreground?(window: WindowRef, point: Point | undefined, signal?: AbortSignal): Promise<ForegroundState>;
+  /** Fix plan F-3: makes the window's application active and raises the window. */
+  bringToFront?(window: WindowRef, signal?: AbortSignal): Promise<void>;
   close(): Promise<void>;
 }
 

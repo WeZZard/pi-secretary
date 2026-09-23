@@ -32,7 +32,7 @@ export interface ComputerUseInstallOptions {
 }
 
 export function createBackend(config: ComputerUseConfiguration): ExecutionBackend {
-  if (config.backend === "local") return new LocalDriverBackend({ run: cuaDriverRunner(config.localDriverPath), maxTreeNodes: config.maxTreeNodes });
+  if (config.backend === "local") return new LocalDriverBackend({ run: cuaDriverRunner(config.localDriverPath), maxTreeNodes: config.maxTreeNodes, foregroundDelivery: config.foregroundDelivery });
   // design §11.2: the relay backend waits for an enclosure-manager export from pi-vm-relay (plan Phase 7).
   throw new Error(`computerUse.backend ${config.backend} is not available in this build; use local for development`);
 }
@@ -99,7 +99,7 @@ export function installComputerUse(pi: ExtensionAPI, options: ComputerUseInstall
       async execute(_id, params, signal) {
         if (!backend || !config || !telemetry || !executor) throw new Error("Computer use plan execution is not configured for this session.");
         const limit = config.maxEscalationsPerRun;
-        return executeRunPlan({ deps: { backend, executor, telemetry, config }, knownObservation: id => observations.has(id),
+        return executeRunPlan({ deps: { backend, executor, telemetry, config }, observation: id => observations.get(id),
           escalations: { used: escalationsUsed, limit, record: () => { escalationsUsed++; } } }, params, signal);
       },
     }));

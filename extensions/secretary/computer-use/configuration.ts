@@ -16,6 +16,13 @@ export interface ComputerUseConfiguration {
   maxEscalationsPerRun: number;
   settleMs: number;
   redactTypedText: boolean;
+  /**
+   * Fix plan F-4: save a window picture before and after every action. Off by default, because a
+   * picture can show typed text that the records otherwise redact.
+   */
+  stepPictures: boolean;
+  /** Fix plan F-3: clicks and modifier shortcuts make the application active for the action. */
+  foregroundDelivery: boolean;
   allowLocalDesktop: boolean;
   localDriverPath: string;
 }
@@ -31,6 +38,8 @@ export const defaultComputerUseConfiguration = (): ComputerUseConfiguration => (
   maxEscalationsPerRun: 5,
   settleMs: 300,
   redactTypedText: true,
+  stepPictures: false,
+  foregroundDelivery: true,
   allowLocalDesktop: false,
   localDriverPath: "cua-driver",
 });
@@ -51,6 +60,8 @@ const VALIDATORS: Record<Field, { check: (value: unknown) => boolean; expected: 
   maxEscalationsPerRun: { check: integer(0), expected: "a non-negative integer" },
   settleMs: { check: integer(0, 60_000), expected: "an integer from 0 to 60000" },
   redactTypedText: { check: value => typeof value === "boolean", expected: "a boolean" },
+  stepPictures: { check: value => typeof value === "boolean", expected: "a boolean" },
+  foregroundDelivery: { check: value => typeof value === "boolean", expected: "a boolean" },
   allowLocalDesktop: { check: value => typeof value === "boolean", expected: "a boolean" },
   localDriverPath: { check: value => typeof value === "string" && value.trim().length > 0, expected: "a non-empty string" },
 };

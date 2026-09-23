@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { descendantTextByIndex } from "./cua-markdown.ts";
-import { BackendError, type ActionOutcome, type BackendAction, type ExecutionBackend, type RawElement, type ReadOptions, type WindowRead, type WindowRef, type WindowTarget } from "./backend.ts";
+import { BackendError, type ActionOutcome, type BackendAction, type Delivery, type ExecutionBackend, type ForegroundState, type Point, type RawElement, type ReadOptions, type WindowRead, type WindowRef, type WindowTarget } from "./backend.ts";
 
 /**
  * Development backend over the host's own cua-driver (design §11.3).
@@ -28,7 +28,7 @@ export function cuaDriverRunner(driverPath: string): DriverRunner {
   });
 }
 
-interface ListedWindow { window_id: number; pid: number; app_name: string; title: string; is_on_screen: boolean; z_index?: number;
+interface ListedWindow { window_id: number; pid: number; app_name: string; title: string; is_on_screen: boolean; z_index?: number; layer?: number;
   bounds?: { x: number; y: number; width: number; height: number } }
 
 /** Width of a PNG from its IHDR chunk. */
@@ -42,7 +42,32 @@ export interface LocalBackendOptions {
   maxTreeNodes: number;
   timeoutMs?: number;
   now?: () => number;
+  /**
+   * Fix plan F-2 and F-3: send clicks and modifier shortcuts with the driver's foreground delivery,
+   * which makes the application active for the action and then restores the previous one. In the
+   * virtual machine, a background click into an inactive TextEdit never moved the insertion point
+   * in one run (0 of 6 trials) and did in another (6 of 6), so background clicks depend on hidden
+   * application state; foreground delivery and bring-to-front moved it in every trial (12 of 12,
+   * observed 2026-09-23). Typed characters, text navigation keys and scrolls stay background.
+   */
+  foregroundDelivery?: boolean;
 }
+
+const TEXT_NAVIGATION_KEYS = new Set(["up", "down", "left", "right", "home", "end", "pageup", "pagedown"]);
+
+/** Fix plan F-3: which actions need the application to be active. */
+export function deliveryFor(action: BackendAction, foregroundDelivery: boolean): Delivery | undefined {
+  if (action.delivery) return action.delivery;
+  if (!foregroundDelivery) return undefined;
+  if (action.kind === "click") return "foreground";
+  // Text-editing key bindings such as Cmd+Down worked in the background; menu shortcuts need the application active.
+  if (action.kind === "key" && !TEXT_NAVIGATION_KEYS.has(action.key)
+    && action.modifiers.some(modifier => modifier === "cmd" || modifier === "ctrl" || modifier === "option")) return "foreground";
+  return "background";
+}
+
+/** The driver's own agent-cursor overlay is a transparent full-screen window; it covers nothing. */
+const DRIVER_OVERLAY = /^cua[- ]?driver$/i;
 
 /**
  * One page-sized wheel notch moved Finder's icon view by 100 points (cua-driver 0.12.6, observed
@@ -78,7 +103,8 @@ export class LocalDriverBackend implements ExecutionBackend {
     if (ofApp.length === 0) throw new BackendError("app_not_running", `No window of ${target.app} is open. This tool does not launch applications.`);
     const title = target.windowTitle?.toLowerCase();
     const matching = ofApp.filter(window => title === undefined ? window.title !== "" : window.title.toLowerCase().includes(title));
-    const chosen = matching.filter(window => window.is_on_screen).sort((a, b) => (b.z_index ?? 0) - (a.z_index ?? 0))[0];
+    // A lower z_index is nearer the front: Safari at 13 was drawn over TextEdit at 36 (observed 2026-09-23).
+    const chosen = matching.filter(window => window.is_on_screen).sort((a, b) => (a.z_index ?? 0) - (b.z_index ?? 0))[0];
     if (!chosen && matching.length > 0) {
       // Observed 2026-09-23: a visible window briefly reported is_on_screen false.
       throw new BackendError("window_not_found", `The ${target.app} window ${JSON.stringify(matching[0]!.title)} exists but is not on screen; it may be minimized, hidden, or on another Space.`);
@@ -174,8 +200,32 @@ export class LocalDriverBackend implements ExecutionBackend {
     return { x: Math.round(x), y: Math.round(y) };
   }
 
+  /**
+   * Fix plan F-3. The active flag comes from `list_apps`. A window covers the point when it is an
+   * on-screen layer-0 window nearer the front, which means a lower `z_index`, whose bounds contain
+   * the point. The driver's own overlay window is ignored.
+   */
+  async foreground(window: WindowRef, point: Point | undefined, signal?: AbortSignal): Promise<ForegroundState> {
+    const apps = await this.#options.run("list_apps", {}, { timeoutMs: this.#timeout, signal }) as { apps?: { pid: number; active?: boolean }[] } | { pid: number; active?: boolean }[];
+    const active = (Array.isArray(apps) ? apps : apps.apps ?? []).some(app => app.pid === window.pid && app.active === true);
+    const listed = await this.#options.run("list_windows", {}, { timeoutMs: this.#timeout, signal }) as { windows?: ListedWindow[] };
+    const windows = listed.windows ?? [];
+    const target = windows.find(candidate => candidate.window_id === window.windowId);
+    if (!target || point === undefined) return { active, coveredBy: [] };
+    const coveredBy = windows.filter(other => other.window_id !== window.windowId && other.is_on_screen && (other.layer ?? 0) === 0
+      && !DRIVER_OVERLAY.test(other.app_name) && (other.z_index ?? 0) < (target.z_index ?? 0) && other.bounds
+      && point.x >= other.bounds.x && point.x <= other.bounds.x + other.bounds.width && point.y >= other.bounds.y && point.y <= other.bounds.y + other.bounds.height)
+      .map(other => other.app_name);
+    return { active, coveredBy: [...new Set(coveredBy)] };
+  }
+
+  async bringToFront(window: WindowRef, signal?: AbortSignal): Promise<void> {
+    await this.#options.run("bring_to_front", { pid: window.pid, window_id: window.windowId }, { timeoutMs: this.#timeout, signal });
+  }
+
   async act(window: WindowRef, action: BackendAction, signal?: AbortSignal): Promise<ActionOutcome> {
-    const base = { pid: window.pid, window_id: window.windowId };
+    const delivery = deliveryFor(action, this.#options.foregroundDelivery ?? false);
+    const base = { pid: window.pid, window_id: window.windowId, ...(delivery ? { delivery_mode: delivery } : {}) };
     let result: unknown;
     if (action.kind === "click") {
       const { x, y } = await this.#pixels(window, action.point, signal);

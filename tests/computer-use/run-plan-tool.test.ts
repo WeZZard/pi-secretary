@@ -8,11 +8,14 @@ import { FakeBackend } from "../../extensions/secretary/computer-use/backend/fak
 import { defaultComputerUseConfiguration } from "../../extensions/secretary/computer-use/configuration.ts";
 import type { DecisionResponse } from "../../extensions/secretary/computer-use/executor-client.ts";
 import { Telemetry } from "../../extensions/secretary/computer-use/telemetry.ts";
+import { observe, type Observation } from "../../extensions/secretary/computer-use/observer.ts";
 import { executeRunPlan, formatResult } from "../../extensions/secretary/computer-use/tools/run-plan.ts";
 
 const form: Omit<WindowRead, "readMs"> = { window: { pid: 1, windowId: 1, app: "Form", title: "Form" }, appActive: true, truncated: false, elements: [
   { element_index: 0, role: "AXWindow", label: "Form", depth: 0, frame: { x: 0, y: 0, w: 800, h: 600 } },
   { element_index: 1, role: "AXButton", label: "Submit", parent_index: 0, depth: 1, frame: { x: 100, y: 50, w: 80, h: 20 } }] };
+
+const formObservation = observe({ ...form, readMs: 0 }, { id: "obs-1", maxElements: 240, maxNameLength: 48 }) as Observation;
 
 function context(t: TestContext, used = 0) {
   const root = mkdtempSync(join(tmpdir(), "secretary-run-plan-"));
@@ -22,7 +25,7 @@ function context(t: TestContext, used = 0) {
   return {
     recorded: () => recorded,
     context: { deps: { backend: new FakeBackend({ Form: [form] }), executor, telemetry: new Telemetry(root), config: { ...defaultComputerUseConfiguration(), settleMs: 0 }, sleep: async () => {} },
-      knownObservation: (id: string) => id === "obs-1", escalations: { used, limit: 2, record: () => { recorded++; } } },
+      observation: (id: string) => id === "obs-1" ? formObservation : undefined, escalations: { used, limit: 2, record: () => { recorded++; } } },
   };
 }
 
@@ -54,4 +57,19 @@ test("a completed result lists each step compactly", () => {
     { id: "a", result: "verified", action: "press", element: "Submit", detail: "\"Done\" is on screen" },
     { id: "b", result: "skipped", detail: "the postcondition already held" }] }),
   "Outcome: completed. Executor decisions: 1. Actions: 1.\n- a: verified, press \"Submit\" (\"Done\" is on screen)\n- b: skipped (the postcondition already held)");
+});
+
+test("a plan that checks a control's name with a text check is rejected before any action", async (t) => {
+  const result = await executeRunPlan(context(t).context, { ...params, based_on: "obs-1",
+    steps: [{ id: "submit", intent: "Submit", postcondition: { text: { contains: "Submit" } } }] });
+  assert.match((result.content[0] as { text: string }).text, /^Plan rejected: step submit: text "Submit" is the name of a control/);
+});
+
+test("the result lists what code verified, separately from steps that only changed the screen", () => {
+  const plan = { target: { app: "Form" }, goal: "g", allowDestructive: [], steps: [
+    { id: "a", intent: "i", postcondition: { text: { contains: "10" } } }, { id: "b", intent: "i", postcondition: { changed: true as const } }] };
+  const text = formatResult({ outcome: "completed", decisions: 2, actions: 2, steps: [
+    { id: "a", result: "verified", action: "press" }, { id: "b", result: "weakly_verified", action: "press" }] }, plan);
+  assert.match(text, /Verified by code after the step \(report only these facts as checked\):\n- a: \{"text":\{"contains":"10"\}\} held/);
+  assert.match(text, /Not verified \(only a change on screen was seen\):\n- b$/);
 });

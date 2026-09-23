@@ -47,6 +47,11 @@ export interface Observation {
   window: WindowRef;
   snapshotId?: string;
   groups: ObservedGroup[];
+  /**
+   * Text the window shows that is not the name of any kept element, such as Calculator's display,
+   * which is static text under the window (fix plan F-6). The planner sees it; the executor does not.
+   */
+  texts?: string[];
   discards: Discard[];
   rawCount: number;
 }
@@ -59,6 +64,9 @@ export interface ObservationFailure {
   discards: Discard[];
   rawCount: number;
 }
+
+const MAX_SHOWN_TEXTS = 8;
+const MAX_SHOWN_TEXT_LENGTH = 200;
 
 export interface ObserverOptions { maxElements: number; maxNameLength: number; id: string }
 
@@ -128,6 +136,21 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
   const insideWindow = (frame: Frame) => !windowFrame || (frame.x + frame.w / 2 >= windowFrame.x && frame.x + frame.w / 2 <= windowFrame.x + windowFrame.w
     && frame.y + frame.h / 2 >= windowFrame.y && frame.y + frame.h / 2 <= windowFrame.y + windowFrame.h);
 
+  // Fix plan F-6: descendant text of containers is content the window shows, such as a display.
+  // Container text is never a control's name, so it is listed even when it equals one: Calculator's
+  // display read "0" while a button was named "0" (observed through Pi, 2026-09-23).
+  const shownTexts = (): { texts?: string[] } => {
+    const texts: string[] = [];
+    for (const element of read.elements) {
+      if (!CONTAINER_ROLES.has(element.role) || !element.frame || !visible(element)) continue;
+      if (element.role !== "AXWindow" && !insideWindow(element.frame)) continue;
+      const text = cleanName(read.descendantText?.[element.element_index], MAX_SHOWN_TEXT_LENGTH);
+      if (text && !texts.includes(text)) texts.push(text);
+      if (texts.length >= MAX_SHOWN_TEXTS) break;
+    }
+    return texts.length ? { texts } : {};
+  };
+
   const hiddenBy = new Map<number | "content", number>();
   const kept: { element: RawElement; name: string; landmark?: RawElement }[] = [];
   for (const element of read.elements) {
@@ -178,7 +201,7 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
   const ordered = [...candidates].sort((a, b) => readingOrder({ frame: a.element.frame! }, { frame: b.element.frame! }));
   if (ordered.length <= MAX_GROUP_ELEMENTS) {
     const name = "window";
-    return { status: "ready", id: options.id, window: read.window, snapshotId: read.snapshotId, discards, rawCount: read.elements.length,
+    return { status: "ready", id: options.id, window: read.window, snapshotId: read.snapshotId, discards, rawCount: read.elements.length, ...shownTexts(),
       groups: ordered.length === 0 ? [] : [{ name, elements: ordered.map((entry, position) => toElement(entry, name, position)), ...(windowFrame ? { frame: windowFrame } : {}),
         ...hiddenTotal() }] };
   }
@@ -229,7 +252,7 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
       groups.push({ name, elements: slice.map((entry, position) => toElement(entry, name, position)), ...(frame ? { frame } : {}), ...(hidden ? { hidden } : {}) });
     }
   }
-  return { status: "ready", id: options.id, window: read.window, snapshotId: read.snapshotId, groups, discards, rawCount: read.elements.length };
+  return { status: "ready", id: options.id, window: read.window, snapshotId: read.snapshotId, groups, discards, rawCount: read.elements.length, ...shownTexts() };
 }
 
 /** The executor's view: group headings and name-only lines (design §6.2, research §4.8 format). */
@@ -238,13 +261,15 @@ export function renderExecutorTable(observation: Observation): string {
     `${group.name.toUpperCase()}\n${group.elements.map(element => `  ${element.letter} ${element.name}`).join("\n")}`).join("\n");
 }
 
-/** The planner's view includes role and state (design §5.1). */
+/** The planner's view includes role, state, and the text the window shows (design §5.1, fix plan F-6). */
 export function renderPlannerTable(observation: Observation): string {
-  return observation.groups.map(group => `${group.name}:\n${group.elements.map(element => {
+  const table = observation.groups.map(group => `${group.name}:\n${group.elements.map(element => {
     const role = element.role.replace(/^AX/, "");
     const state = [element.value !== undefined ? `value=${JSON.stringify(element.value)}` : "", element.selected ? "selected" : ""].filter(Boolean).join(" ");
     return `  ${element.letter} ${role} ${JSON.stringify(element.name)}${state ? ` ${state}` : ""}`;
   }).join("\n")}`).join("\n");
+  if (!observation.texts?.length) return table;
+  return `${table}\ntext shown in the window (not controls; check it with {text:{contains}}):\n${observation.texts.map(text => `  ${JSON.stringify(text)}`).join("\n")}`;
 }
 
 export function discardSummary(discards: Discard[]): Record<DiscardReason, number> {

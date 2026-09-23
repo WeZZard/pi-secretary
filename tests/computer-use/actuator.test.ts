@@ -56,3 +56,13 @@ test("the backend converts screen points to window-local screenshot pixels with 
   await assert.rejects(backend.act(window, { kind: "click", point: { x: 5000, y: 113 }, button: "left", count: 1 }), /outside the TextEdit window/);
   assert.ok(calls.every(call => !("element_index" in call.args) && !("element_token" in call.args)), "Relay decision D3: no accessibility activation");
 });
+
+test("text entry places the insertion point with fixed keys after the click when a position is given", () => {
+  const frame = { x: 0, y: 0, w: 100, h: 40 };
+  const kinds = (position?: "end" | "start" | "replace") => actionsFor({ operation: "enter_text", frame, text: "ab", ...(position ? { position } : {}) })
+    .map(action => action.kind === "key" ? `${action.modifiers.join("+")}${action.modifiers.length ? "+" : ""}${action.key}` : action.kind);
+  assert.deepEqual(kinds("end"), ["click", "cmd+down", "a", "b"]);
+  assert.deepEqual(kinds("start"), ["click", "cmd+up", "a", "b"]);
+  assert.deepEqual(kinds("replace"), ["click", "cmd+up", "shift+cmd+down", "a", "b"]);
+  assert.deepEqual(kinds(), ["click", "a", "b"]);
+});

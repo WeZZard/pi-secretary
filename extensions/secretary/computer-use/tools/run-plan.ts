@@ -2,6 +2,7 @@ import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import type { Static } from "typebox";
 import type { Operation } from "../actuator.ts";
 import { runPlan, validatePlan, type HarnessDependencies, type Plan, type PlanResult } from "../harness.ts";
+import type { Observation } from "../observer.ts";
 import type { Postcondition } from "../verifier.ts";
 import type { runPlanSchema } from "./schemas.ts";
 
@@ -11,7 +12,8 @@ export interface RunPlanDetails { outcome: PlanResult["outcome"] | "rejected"; d
 
 export interface RunPlanContext {
   deps: HarnessDependencies;
-  knownObservation(id: string): boolean;
+  /** The remembered observation with this id, used to check postconditions against it (fix plan F-8). */
+  observation(id: string): Observation | undefined;
   /** Escalations already returned in this session, and the configured limit. */
   escalations: { used: number; limit: number; record(): void };
 }
@@ -26,11 +28,32 @@ export function toPlan(params: Static<typeof runPlanSchema>): Plan {
     allowDestructive: params.allow_destructive ?? [],
     steps: params.steps.map(step => ({ id: step.id, intent: step.intent, postcondition: step.postcondition as Postcondition,
       ...(step.operation ? { operation: step.operation as Operation } : {}), ...(step.text !== undefined ? { text: step.text } : {}),
-      ...(step.keys !== undefined ? { keys: step.keys } : {}), ...(step.max_attempts !== undefined ? { maxAttempts: step.max_attempts } : {}) })),
+      ...(step.keys !== undefined ? { keys: step.keys } : {}), ...(step.max_attempts !== undefined ? { maxAttempts: step.max_attempts } : {}),
+      ...(step.idempotent !== undefined ? { idempotent: step.idempotent } : {}),
+      ...(step.position !== undefined ? { position: step.position } : {}) })),
   };
 }
 
-export function formatResult(result: PlanResult): string {
+/**
+ * Fix plan F-9: the result lists exactly what code verified, so the planner can report only that.
+ * `plan` supplies each step's postcondition.
+ */
+export function verifiedFacts(result: PlanResult, plan: Plan): string[] {
+  const lines: string[] = [];
+  const verified = result.steps.filter(step => step.result === "verified");
+  const unverified = result.steps.filter(step => step.result === "weakly_verified");
+  if (verified.length) {
+    lines.push("", "Verified by code after the step (report only these facts as checked):");
+    for (const step of verified) lines.push(`- ${step.id}: ${JSON.stringify(plan.steps.find(candidate => candidate.id === step.id)?.postcondition)} held`);
+  }
+  if (unverified.length) {
+    lines.push("", "Not verified (only a change on screen was seen):");
+    for (const step of unverified) lines.push(`- ${step.id}`);
+  }
+  return lines;
+}
+
+export function formatResult(result: PlanResult, plan?: Plan): string {
   const lines = [`Outcome: ${result.outcome}. Executor decisions: ${result.decisions}. Actions: ${result.actions}.`];
   for (const step of result.steps) {
     lines.push(`- ${step.id}: ${step.result.replace("_", " ")}${step.action ? `, ${step.action}${step.element ? ` ${JSON.stringify(step.element)}` : ""}` : ""}${step.detail ? ` (${step.detail})` : ""}`);
@@ -43,6 +66,7 @@ export function formatResult(result: PlanResult): string {
     }
     if (observation) lines.push("", "Current window:", observation);
   }
+  if (plan) lines.push(...verifiedFacts(result, plan));
   return lines.join("\n");
 }
 
@@ -50,14 +74,15 @@ export async function executeRunPlan(context: RunPlanContext, params: Static<typ
   if (context.escalations.used >= context.escalations.limit) {
     return rejected(`this run already returned ${context.escalations.used} escalations, the configured limit. Report progress to the parent instead of planning again.`);
   }
-  if (params.based_on !== undefined && !context.knownObservation(params.based_on)) {
+  const basedOn = params.based_on === undefined ? undefined : context.observation(params.based_on);
+  if (params.based_on !== undefined && !basedOn) {
     return rejected(`observation ${JSON.stringify(params.based_on)} is unknown or expired; call computer_observe and plan against the new observation.`);
   }
   const plan = toPlan(params);
-  const problem = validatePlan(plan, 50);
+  const problem = validatePlan(plan, 50, basedOn);
   if (problem) return rejected(problem);
   const result = await runPlan(context.deps, plan, signal);
   if (result.outcome === "escalated") context.escalations.record();
-  return { content: [{ type: "text", text: formatResult(result) }],
+  return { content: [{ type: "text", text: formatResult(result, plan) }],
     details: { outcome: result.outcome, decisions: result.decisions, actions: result.actions, ...(result.escalation ? { escalation: result.escalation.reason } : {}) } };
 }

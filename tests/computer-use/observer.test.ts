@@ -91,3 +91,23 @@ test("named elements below the visible part of a container are counted as hidden
   assert.deepEqual(grouped.groups.find(group => group.name === "list")!.frame, { x: 200, y: 80, w: 1000, h: 520 },
     "The 1500-point list container is clipped to the window, so a scroll lands inside it");
 });
+
+test("text the window shows under a container is listed for the planner, not offered to the executor", () => {
+  // Recorded 2026-09-23: Calculator's display is descendant text of the window, and no element carries it.
+  const value = textEditRead();
+  const window = value.elements.find(element => element.role === "AXWindow")!;
+  value.descendantText = { ...(value.descendantText ?? {}), [window.element_index]: "\u200e7\u200e+\u200e3 \u200e10" };
+  const result = ready(observe(read(value), options));
+  assert.deepEqual(result.texts, ["7+3 10"]);
+  assert.match(renderPlannerTable(result), /text shown in the window \(not controls; check it with \{text:\{contains\}\}\):\n {2}"7\+3 10"$/);
+  assert.doesNotMatch(renderExecutorTable(result), /7\+3 10/);
+});
+
+test("container text equal to a control's name is still listed", () => {
+  const value = textEditRead();
+  const window = value.elements.find(element => element.role === "AXWindow")!;
+  value.elements.push({ element_index: 9200, role: "AXButton", label: "0", parent_index: window.element_index, depth: 1,
+    frame: { x: window.frame!.x + 10, y: window.frame!.y + 40, w: 40, h: 40 } });
+  value.descendantText = { ...(value.descendantText ?? {}), [window.element_index]: "\u200e0" };
+  assert.deepEqual(ready(observe(read(value), options)).texts, ["0"]);
+});
