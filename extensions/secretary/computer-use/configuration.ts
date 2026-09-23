@@ -1,0 +1,93 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
+
+/** The `computerUse` object of secretary.json (design docs/arch/computer-use.md §4.5). */
+export interface ComputerUseConfiguration {
+  backend: "none" | "local" | "relay";
+  executorUrl?: string;
+  executorTimeoutMs: number;
+  confidenceGate: number;
+  answerReserveTokens?: number;
+  maxElements: number;
+  maxTreeNodes: number;
+  maxNameLength: number;
+  maxActionsPerPlan: number;
+  maxEscalationsPerRun: number;
+  settleMs: number;
+  redactTypedText: boolean;
+  allowLocalDesktop: boolean;
+  localDriverPath: string;
+}
+
+export const defaultComputerUseConfiguration = (): ComputerUseConfiguration => ({
+  backend: "none",
+  executorTimeoutMs: 10_000,
+  confidenceGate: 0.4,
+  maxElements: 240,
+  maxTreeNodes: 2000,
+  maxNameLength: 48,
+  maxActionsPerPlan: 100,
+  maxEscalationsPerRun: 5,
+  settleMs: 300,
+  redactTypedText: true,
+  allowLocalDesktop: false,
+  localDriverPath: "cua-driver",
+});
+
+type Field = keyof ComputerUseConfiguration;
+const integer = (min: number, max = Number.MAX_SAFE_INTEGER) => (value: unknown): value is number =>
+  typeof value === "number" && Number.isInteger(value) && value >= min && value <= max;
+const VALIDATORS: Record<Field, { check: (value: unknown) => boolean; expected: string }> = {
+  backend: { check: value => value === "none" || value === "local" || value === "relay", expected: "none, local, or relay" },
+  executorUrl: { check: value => typeof value === "string" && /^https?:\/\/[^\s]+$/.test(value), expected: "an http or https URL" },
+  executorTimeoutMs: { check: integer(1), expected: "a positive integer" },
+  confidenceGate: { check: value => typeof value === "number" && value >= 0 && value <= 1, expected: "a number from 0 to 1" },
+  answerReserveTokens: { check: integer(0, 4096), expected: "an integer from 0 to 4096" },
+  maxElements: { check: integer(1), expected: "a positive integer" },
+  maxTreeNodes: { check: integer(1), expected: "a positive integer" },
+  maxNameLength: { check: integer(8, 200), expected: "an integer from 8 to 200" },
+  maxActionsPerPlan: { check: integer(1), expected: "a positive integer" },
+  maxEscalationsPerRun: { check: integer(0), expected: "a non-negative integer" },
+  settleMs: { check: integer(0, 60_000), expected: "an integer from 0 to 60000" },
+  redactTypedText: { check: value => typeof value === "boolean", expected: "a boolean" },
+  allowLocalDesktop: { check: value => typeof value === "boolean", expected: "a boolean" },
+  localDriverPath: { check: value => typeof value === "string" && value.trim().length > 0, expected: "a non-empty string" },
+};
+
+function applyComputerUse(section: unknown, path: string, result: ComputerUseConfiguration): void {
+  if (!section || typeof section !== "object" || Array.isArray(section)) throw new Error(`${path}: computerUse must be an object`);
+  for (const [key, value] of Object.entries(section)) {
+    const validator = VALIDATORS[key as Field];
+    if (!validator) throw new Error(`${path}: unsupported computerUse field ${key}`);
+    if (!validator.check(value)) throw new Error(`${path}: computerUse.${key} must be ${validator.expected}`);
+    (result as unknown as Record<string, unknown>)[key] = value;
+  }
+}
+
+/**
+ * Global configuration first, then trusted project configuration field by field.
+ * The subagent module never reads this object (design §4.5).
+ */
+export function loadComputerUseConfiguration(cwd: string, agentDir: string, trusted: boolean): ComputerUseConfiguration {
+  const result = defaultComputerUseConfiguration();
+  const paths = [join(agentDir, "secretary.json")];
+  if (trusted) paths.push(join(cwd, CONFIG_DIR_NAME, "secretary.json"));
+  for (const path of paths) {
+    let text: string;
+    try { text = readFileSync(path, "utf8"); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
+    const root = JSON.parse(text) as unknown;
+    if (!root || typeof root !== "object" || Array.isArray(root)) throw new Error(`${path} must contain an object`);
+    if (!Object.hasOwn(root, "computerUse")) continue;
+    applyComputerUse((root as Record<string, unknown>).computerUse, path, result);
+  }
+  if (result.backend === "local" && !result.allowLocalDesktop) {
+    throw new Error("computerUse.backend local operates this machine's desktop; set computerUse.allowLocalDesktop to true to enable it for development");
+  }
+  return result;
+}
+
+/** Observation needs only a backend; plan execution also needs the executor (design §4.3). */
+export const observationAvailable = (config: ComputerUseConfiguration): boolean => config.backend !== "none";
+export const planExecutionAvailable = (config: ComputerUseConfiguration): boolean => observationAvailable(config) && config.executorUrl !== undefined;

@@ -1,0 +1,28 @@
+import { BackendError, type ExecutionBackend, type ReadOptions, type WindowRead, type WindowTarget } from "./backend.ts";
+
+/**
+ * Deterministic test desktop (design §4.2). Each application key yields its scripted reads
+ * in order, and the last read repeats. An Error entry is thrown instead of returned.
+ */
+export class FakeBackend implements ExecutionBackend {
+  readonly kind = "fake" as const;
+  readonly reads: WindowTarget[] = [];
+  closed = false;
+  readonly #script: Map<string, (Omit<WindowRead, "readMs"> | Error)[]>;
+  constructor(script: Record<string, (Omit<WindowRead, "readMs"> | Error)[]>) {
+    this.#script = new Map(Object.entries(script).map(([app, reads]) => [app.toLowerCase(), [...reads]]));
+  }
+
+  async readWindow(target: WindowTarget, options: ReadOptions): Promise<WindowRead> {
+    if (options.signal?.aborted) throw new BackendError("aborted", "read was cancelled");
+    this.reads.push(target);
+    const queue = this.#script.get(target.app.toLowerCase());
+    if (!queue || queue.length === 0) throw new BackendError("app_not_running", `No window of ${target.app} is open. This tool does not launch applications.`);
+    const next = queue.length > 1 ? queue.shift()! : queue[0]!;
+    if (next instanceof Error) throw next;
+    const { screenshot, ...rest } = structuredClone(next);
+    return { ...rest, ...(options.screenshot && screenshot ? { screenshot } : {}), readMs: 0 };
+  }
+
+  async close(): Promise<void> { this.closed = true; }
+}

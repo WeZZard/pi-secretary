@@ -12,6 +12,7 @@ import { formatGoalSnapshot } from "./goal/steering.ts";
 import { installAgentSupport } from "./agents/installation.ts";
 import { RequestContextComposer } from "./context/index.ts";
 import { composeGoalAgents } from "./composition/goal-agents.ts";
+import { installComputerUse } from "./computer-use/installation.ts";
 
 export default function secretaryExtension(pi: ExtensionAPI): void {
   // Child sessions install too (SA-12): the delegation tools are gated by nesting depth at
@@ -19,6 +20,8 @@ export default function secretaryExtension(pi: ExtensionAPI): void {
   const dir = process.env.PI_SECRETARY_DB_DIR ?? path.join(process.env.HOME ?? "", ".pi", "secretary");
   mkdirSync(dir, { recursive: true });
   installSecretary(pi, new GoalEngine({ dbPath: path.join(dir, "pi-secretary-goals.sqlite"), enabled: true }), { agentsRoot: dir });
+  // Independent capability (docs/arch/computer-use.md §4.2); it registers nothing unless configured.
+  installComputerUse(pi, { root: dir });
 }
 
 /** Injectable storage permits tests to exercise the actual installer without touching user goals. */
