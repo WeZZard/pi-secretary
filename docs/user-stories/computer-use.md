@@ -2,7 +2,7 @@
 
 **Document type:** Software requirements specification.
 
-**Status:** Draft of 2026-09-23, awaiting the owner's approval. Nothing in this document is an approved requirement yet. Implementation plan Phase 6 starts only after approval. The stories restate the required outcomes of [technical design Section 2.1](../arch/computer-use.md#21-required-outcomes-pending-approval) and add outcomes learned from the live checks in [research Sections 11 and 12](../research/computer-use-s0-s1.md#11-first-checks-through-pi-2026-09-23).
+**Status:** Approved by the owner on 2026-09-24. CU-01 to CU-07 are approved as written. The stories restate the required outcomes of [technical design Section 2.1](../arch/computer-use.md#21-required-outcomes) and add outcomes learned from the live checks in [research Sections 11 and 12](../research/computer-use-s0-s1.md#11-first-checks-through-pi-2026-09-23).
 
 **Related documents:** [Technical design](../arch/computer-use.md), [research](../research/computer-use-s0-s1.md), and the [subagent requirements](subagents.md), whose delegation stories this subsystem reuses.
 
@@ -84,10 +84,10 @@ As a user, I want the agent to work in a disposable virtual machine unless I cho
 - Degraded operation in which the planning model performs steps when the decision service is unavailable.
 - Direct accessibility activation, unless the owner revises decision D3.
 
-## 4. Open Decisions for the Owner
+## 4. Decisions
 
-| Decision | Recommendation |
+| Decision | Outcome |
 | --- | --- |
-| Approve CU-01 to CU-07 as written. | Approve them, or name the stories to change. |
-| Should CU-05 require the agent to act again when the result is already on screen, or only to say that it did not act? | Require the report to say so. Acting again can repeat a side effect in other applications. |
-| Does the parent's view of a running computer-use agent need its own interaction design? | Yes. The fleet view should show the current step and the last check, which the subagent interaction design does not cover. |
+| Approve CU-01 to CU-07. | Approved as written on 2026-09-24. |
+| Should CU-05 require the agent to act again when the result is already on screen, or only to say that it did not act? | Settled by CU-05 as approved: the report says that the result was already on screen, and the agent does not claim it. |
+| Does the parent's view of a running computer-use agent need its own interaction design? | Open. The recommendation is yes: the fleet view should show the current step and the last check, which the subagent interaction design does not cover. |

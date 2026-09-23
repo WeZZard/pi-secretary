@@ -2,7 +2,7 @@
 
 **Document type:** Software design specification.
 
-**Status:** Draft for review, revised 2026-09-23 after rebasing onto `e382c85`. Nothing in this document is implemented. The revision corrects the relay integration in Sections 2.3 and 11.2, the agent definition in Section 4.3, and the tree input in Section 6.1. A second revision on the same day records the Phase 1 findings in Sections 4.3, 4.5, 6.1 and 11.1. Phase 1 of the plan implements `computer_observe` with the local driver backend; the remaining sections are not implemented. No requirement or interaction design for computer use has been approved yet. [Section 2.1](#21-required-outcomes-pending-approval) states the outcomes this design assumes, and those outcomes must move into the requirements document before implementation starts.
+**Status:** Draft for review, revised 2026-09-24. Plan phases 1 to 5 are implemented with the local driver backend, and Pi ran them in relay virtual machines ([research Sections 11 to 14](../research/computer-use-s0-s1.md#11-first-checks-through-pi-2026-09-23)). The requirements, CU-01 to CU-07, were approved on 2026-09-24 ([Section 2.1](#21-required-outcomes)). Sections 2.3 and 11.2 were revised on 2026-09-24 for the move from `pi-vm-relay` to `mcp-vm-relay`. The agent definition of Section 4.3 and the relay backend of Section 11.2 are not implemented. No interaction design for computer use has been approved.
 
 **Evidence:** [Planner and executor investigation](../research/computer-use-s0-s1.md), measured on 2026-09-22.
 
@@ -35,9 +35,9 @@ The design goal is to keep per-step decisions out of the planner's conversation.
 
 ## 2. Design inputs
 
-### 2.1 Required outcomes pending approval
+### 2.1 Required outcomes
 
-These outcomes are assumptions of this design. They are not approved requirements.
+These outcomes are approved requirements. The owner approved them on 2026-09-24 as stories CU-01 to CU-07 in the [requirements document](../user-stories/computer-use.md), which also adds outcomes learned from the live checks.
 
 - A parent agent can delegate a desktop task in natural language and receive a compact outcome report.
 - The report states whether the task completed, which steps ran, and why work stopped when it stopped early.
@@ -58,14 +58,17 @@ These constraints come from the [research record](../research/computer-use-s0-s1
 
 ### 2.3 Constraints from the relay
 
-These constraints come from the `pi-vm-relay` and `relay-driver` repositories as of 2026-09-23.
+These constraints come from the `mcp-vm-relay` and `relay-driver` repositories as of 2026-09-24. The owner retired `pi-vm-relay` in Pi on 2026-09-24. Pi now reaches the relay through `pi-mcp-adapter`, which runs the `mcp-vm-relay` server and exposes its `relay` tool to the model.
 
-- The relay runs guest commands through `run` actions. A `cua` run forwards one `cua-driver` tool call to the guest and returns its standard output, capped at 64 KiB.
+- The relay runs guest commands through `run` actions. A `cua` run forwards one `cua-driver` tool call to the guest and returns its bounded standard output, and the result reports `outputTruncated`. `pi-vm-relay` capped the output at 64 KiB. The cap in `mcp-vm-relay` is not confirmed; it is likely enforced by `relay-driver`. The recorded Finder window states in the Pi batches were about 120 KB, so a 64 KiB cap would truncate every Finder read, and Phase 7 must check this first.
 - Each run captures a before screenshot and an after screenshot in PNG format, and each capture has a 60-second timeout.
 - The relay refuses direct accessibility activation and value setting unless the run declares `inputMode: "accessibility"`.
 - Owner decision D3 in `relay-driver/docs/decisions.md` says that ordinary interactions use real pointer and keyboard input. Accessibility may discover controls, resolve coordinates and observe state. Direct accessibility activation is reserved for tests of accessibility behavior and must be identified in the evidence.
-- `pi-vm-relay` registers one model-facing `relay` tool and exports no library API.
-- The `relay-driver` host SDK, `@relay-driver/host-sdk`, runs commands, scripts and evidence packaging on a session that is already connected. It does not acquire a virtual machine, stage `cua-driver`, or hold the owner lock. Those steps live in `pi-vm-relay/src/manager.ts` and `pi-vm-relay/src/vm-service.ts`.
+- `mcp-vm-relay` is a Model Context Protocol server over standard input and output. Its package has a binary and no library export. It offers one `relay` tool with the actions `acquire`, `stage`, `run`, `extract`, `finish` and `release`, among others.
+- One server session owns at most one virtual machine. The environment variable `MCP_VM_RELAY_SESSION` names the session, and a restarted server with the same name reconciles its ownership without replaying work.
+- When the server's standard input closes, lease renewal pauses and the machine is kept for an explicit `finish` or `release`. The lease's time limit is the backstop.
+- Every run except a diagnostic `exec` captures a before and an after screenshot of the whole display, and each run must declare `snapshots.afterIntervalMs`. The display screenshots in the Pi batches were 4.8 to 11 MB each.
+- `pi-mcp-adapter` lets other extensions register servers, read status snapshots and reuse OAuth tokens. It offers no way for another extension to call a server's tool.
 - A `cua` run is an `exec` of `cua-driver call <tool> --json <args>` on the guest.
 - A lease covers one virtual machine. Failed or uncertain operations are never replayed automatically, and the relay keeps the machine after a failure for repair.
 - No per-operation latency of the relay has been measured.
@@ -164,7 +167,7 @@ extensions/secretary/computer-use/
   executor-client.ts     HTTP client for /v1/systemone
   backend/
     backend.ts           execution backend interface
-    relay-backend.ts     adapter for the pi-vm-relay enclosure manager
+    relay-backend.ts     client of an mcp-vm-relay server session
     local-backend.ts     development adapter for the host cua-driver
     cua-markdown.ts      descendant text from the driver's Markdown rendering
     fake-backend.ts      deterministic test desktop
@@ -530,10 +533,12 @@ The backend interface has four operations.
 
 ### 11.2 Relay backend
 
-- The relay backend does not call the model-facing `relay` tool, because that tool is reachable only through a model.
-- The host SDK alone is not enough, because acquisition, staging and the owner lock live in `pi-vm-relay`'s manager ([Section 2.3](#23-constraints-from-the-relay)). The recommended integration is a library entry point exported by `pi-vm-relay` that exposes its existing enclosure manager: acquire, stage, run, finish and release. This reuses the lease and evidence rules instead of copying them. It is a change to another repository and needs the owner's decision ([Section 13](#13-open-questions)).
-- The backend acquires one lease on the first tool call of a child run and keeps it for the rest of that run.
-- The backend releases the lease when the child run ends. It uses `finish` instead when the delegated task declares files to extract.
+- The relay backend does not call the model-facing `relay` tool, because `pi-mcp-adapter` gives other extensions no way to call it, and because that tool's server session belongs to the parent's conversation, which may own its own virtual machine.
+- The backend is its own Model Context Protocol client. It starts one `mcp-vm-relay` server per child run over standard input and output, with a fresh `MCP_VM_RELAY_SESSION` and `MCP_VM_RELAY_PROJECT` set to the working directory. It calls the server's `relay` tool with the same actions a model would use. The lease, owner lock and evidence rules therefore stay in `mcp-vm-relay`, and no second lease owner is written.
+- The server command is configuration, with the command that `pi-mcp-adapter` uses for the `vm-relay` server as the default: `npx -y @wezzard/mcp-vm-relay@<version>`.
+- The backend acquires one lease on the first tool call of a child run and keeps it for the rest of that run. It stages `cua-driver` and the runtime with `stage`, and it reads and acts with `run` of kind `cua`.
+- The backend releases the lease when the child run ends. It uses `finish` instead when the delegated task declares files to extract. It closes the server afterwards; if the child run ends without either, the server's closed input pauses renewal and the lease's time limit ends the machine.
+- Each read is a `cua` run of `get_window_state`, so each read also captures two display screenshots. The cost of that is unmeasured, and Phase 7 must measure it before settle intervals and budgets are set.
 - Every read uses `inputMode: "ordinary"`. Every action uses real pointer or keyboard input at coordinates computed from the element's frame, as required by owner decision D3.
 - The backend labels each relay step with the plan step identifier and intent, so that the relay's evidence package lines up with the step telemetry.
 - An `uncertain` or `refused` outcome from the relay becomes `backend_failed`. The backend never retries such an action.
@@ -600,7 +605,8 @@ Step wall time includes the relay's screenshot captures, so it must not be compa
 | What does a real screenshot cost the planner? | Measured in Phase 1: the cost is proportional to pixel area, and a 1312×844 window screenshot costs 1,068 input tokens on Qwen 3.8 27B ([research Section 8](../research/computer-use-s0-s1.md#8-phase-1-observations-2026-09-23)). Choose the default image scale when the planner prompt is written in Phase 6. | No. |
 | Should the executor also receive screenshots? | Do not send them in the first release. The accessibility tree is the executor's only input until screenshot cost is measured. | No. |
 | Should the fallback list keep models without image input? | Remove them, or accept planning without screenshots when they are selected. | Yes, because the list is user configuration. |
-| How does the computer-use module reach the relay's enclosure manager? | Export the existing manager from `pi-vm-relay` as a library entry point. Copying acquisition and staging into Secretary would create a second lease owner. | Yes, because it changes `pi-vm-relay`. |
+| How does the relay backend reach the relay? | Closed on 2026-09-24. The backend is its own client of an `mcp-vm-relay` server session per child run ([Section 11.2](#112-relay-backend)). The retired `pi-vm-relay` export is no longer needed. | No. |
+| Should the relay backend use the official `@modelcontextprotocol/sdk` client? | Use it. It would be the package's first runtime dependency. A hand-written client for `initialize` and `tools/call` over standard input and output is the alternative, and it would copy protocol details that the SDK already maintains. | Yes, because it adds the first runtime dependency. |
 | What does one relay run cost in latency? | Measure the relay round trip for a read and for an action before setting settle intervals and budgets. | No. |
 | May the planner perform steps itself when the executor is unavailable? | Not in the first release. The escalation reports the failure instead. | Yes, if a degraded mode is wanted. |
 
@@ -616,12 +622,13 @@ Step wall time includes the relay's screenshot captures, so it must not be compa
 - Standalone scripts ran the harness modules once each in a relay virtual machine, with Pi stubbed, hand-written plans and the live executor ([research Section 10](../research/computer-use-s0-s1.md#10-standalone-script-checks-in-a-macos-virtual-machine-2026-09-23)).
 - These script runs are not live checks. A live check counts only when Pi loads the extension and runs the task.
 - Pi ran three Calculator tasks and two TextEdit tasks in a relay virtual machine, each once, with the local driver backend inside the guest ([research Sections 11](../research/computer-use-s0-s1.md#11-first-checks-through-pi-2026-09-23) and [12](../research/computer-use-s0-s1.md#12-fix-checks-through-pi-2026-09-23)). The step pictures from those runs have not been reviewed by a person.
-- Live acceptance with the relay backend has not been executed, because that backend waits for the `pi-vm-relay` export. The remaining claims of this document are design, not verified behavior.
+- Live acceptance with the relay backend has not been executed, because that backend is not built. The remaining claims of this document are design, not verified behavior.
 
 ## 15. References
 
 - [Planner and executor investigation](../research/computer-use-s0-s1.md) records the measurements and prior art.
 - [Subagent architecture](subagents.md) defines definitions, model fallback lists, headless children and subsystem independence.
 - `relay-driver/docs/decisions.md`, decision D3, defines the real-input policy.
-- `pi-vm-relay/src/schema.ts` and `pi-vm-relay/src/manager.ts` define the relay actions, run kinds and input-mode checks.
+- `mcp-vm-relay/src/schema.ts`, `mcp-vm-relay/src/manager.ts` and `mcp-vm-relay/README.md` define the relay actions, run kinds, input-mode checks and session ownership.
+- `pi-mcp-adapter/README.md`, version 2.36.0, defines runtime registration, status snapshots and direct tools for other extensions.
 - `mmastrac/djev-spark` at revision `1444f3e`, `server/structured_server.py`, defines the executor service's alternative limit.
