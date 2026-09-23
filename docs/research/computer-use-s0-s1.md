@@ -578,10 +578,53 @@ Each run of the batch script measured each call 10 times. The table gives the lo
 - A detached process started by a relay command is stopped when the command ends, so the batch cannot run in the background.
 - A relay command that runs longer than about 5 minutes can return "request failed", which the relay records as an uncertain outcome. Running one task per command kept each command short.
 
-**Evidence:** The relay manifests are under `relay-evidence/relay-computer-use-batch-db90647b/`, `relay-evidence/relay-computer-use-batch-2-6373b845/` and `relay-evidence/relay-computer-use-batch-3-968add37/`, which are not versioned. Each run has `events.jsonl`, the harness records, the step pictures and `review.md`. The batch-3 lease finished with delivery verified and execution uncertain, because of the first Calculator run.
+### 14.6 Fourth batch on the fixes
+
+Two leases ran the fixes of Section 14.3 through Pi. Lease `relay-computer-use-batch-4-49dbacc5` ran commit `32b9c64`, which contains the act-once rule, the window rules, the control-name hint and the `lsappinfo` source of the active application. Lease `relay-computer-use-batch-5-80c0c1cf` ran commit `92d26e5`, which also lets a scroll step repeat. The formulas are those of this section.
+
+| Lease | Task | Task done | Answer states the result | Plan outcomes | Pi wall time (s) |
+| --- | --- | --- | --- | --- | --- |
+| 4 | Calculator | yes | yes | rejected, rejected, completed | 213 |
+| 4 | TextEdit | yes | yes | escalated 5 times | 411 |
+| 4 | Finder | yes | yes | escalated, escalated, completed | 37 |
+| 5 | Finder | yes | yes | completed | 98 |
+| 5 | Finder | yes | yes | escalated, completed | 46 |
+| 5 | Finder | yes | yes | escalated, escalated, completed | 29 |
+| 5 | Calculator | yes | yes | rejected, completed | 166 |
+
+**The fixes seen through Pi:**
+
+- **Act-once:** No non-scroll action was repeated after it changed the screen. Each such step stopped with "it was not repeated".
+- **Window rules:** Twice, once in each lease, a plan named no window while 2 or 4 Finder windows were open. Each plan escalated `window_unclear` with the window titles and took no action, and the next plan named "Fixture Folder" and completed.
+- **Scroll repeat:** In lease 4, a scroll step that missed its check was not repeated, and Pi needed a new plan. After the change in lease 5, a scroll step repeated within its plan. In the first lease-5 run, the task took one plan.
+- **Control-name hint:** In two lease-5 runs, the scroll step still checked the file name with a text check. The scroll repeated until the list stopped moving, the step escalated `no_progress` because the view had reached its end, and the failure named the control. The next plan selected the file in both runs. The hint arrives only after the failure, so it does not prevent the first mistake.
+- The extra Finder windows were titled "content" and "Recents". They most likely are windows that Finder restores when the batch script relaunches it. This was not checked.
+
+**TextEdit and the save:** In the lease-4 TextEdit run, Pi added a save to the task again and spent five plans on it: Cmd+S twice, a click and a double click to activate the window, and the File menu. Each plan escalated, and the run took 411 seconds. The relay recorded the command as uncertain, and the evidence was extracted read-only. This time, Pi's final answer said that the save could not be confirmed.
+
+**Menu shortcut delivery:** The script `scripts/computer-use/menu-shortcut.ts` typed one letter into TextEdit, covered it with Safari, sent Cmd+S one way, and read the title-bar menu button.
+
+| Cmd+S sent with | "Edited" cleared |
+| --- | --- |
+| `press_key` with foreground delivery, as the backend sends it | 0 of 3 |
+| `hotkey` with background delivery | 0 of 3 |
+| `hotkey` with foreground delivery, which the driver documents as the path for menu key equivalents | 0 of 3 |
+| `open -a TextEdit`, then `hotkey` to the frontmost application | 0 of 3 |
+
+- A control run asked TextEdit to save through AppleScript. The `osascript` call timed out after 20 seconds in 3 of 3 trials, and no permission dialog was on screen afterwards.
+- The control therefore did not show that the "Edited" label clears after a real save. The result is that none of the four deliveries changed the label, not that the shortcuts are proven undeliverable.
+
+**Active application:** With each application brought to the front by `open -a`, the batch script compared the `lsappinfo` process with the one active process of `list_apps`.
+
+- They agreed in 24 of 28 readings, over 5 passes of 4 applications and one separate pass of 8.
+- All 4 disagreements came from the first pass in a new virtual machine. In each, `list_apps` still named the application that had been active before, and `lsappinfo` named the application just brought forward. Later passes in the same machine agreed in every reading.
+- No third source settled which answer was correct for those 4 readings. The window order from `list_windows` stayed on TextEdit through a whole pass, so it is no witness.
+- The backend uses `lsappinfo` and falls back to `list_apps` when `lsappinfo` fails. Delivery is chosen by the kind of action, not by the active flag. The flag decides whether the observer keeps menu bar items, so a wrong answer would hide or show the menu bar in one observation.
+
+**Evidence:** The relay manifests are under `relay-evidence/relay-computer-use-batch-db90647b/`, `relay-evidence/relay-computer-use-batch-2-6373b845/`, `relay-evidence/relay-computer-use-batch-3-968add37/`, `relay-evidence/relay-computer-use-batch-4-49dbacc5/` and `relay-evidence/relay-computer-use-batch-5-80c0c1cf/`, which are not versioned. The batch-4 lease finished with execution uncertain, because of its TextEdit run, and the batch-5 lease finished with execution passed. Each run has `events.jsonl`, the harness records, the step pictures and `review.md`. The batch-3 lease finished with delivery verified and execution uncertain, because of the first Calculator run.
 
 **Verification limits:**
 
-- The fixes made after the third batch are covered by harness, backend and verifier tests. They have not yet run through Pi.
+- The fixes made after the third batch ran through Pi in 7 runs, which show that each path works, not how often.
 - Five runs per task show that the paths work repeatedly on three tasks. They do not give a rate for other applications.
 - A person has not reviewed the step pictures.
