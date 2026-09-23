@@ -43,8 +43,8 @@ export type WorkspacePlan =
 export interface ModelResolutionRecord {
   /** The value that produced the chain: `inherit`, an exact provider/modelId, or a fallback-list name. */
   value: string;
-  /** Where `value` came from: the invocation, the definition, or the default when neither set a model. */
-  source: "invocation" | "definition" | "default";
+  /** Where `value` came from: the invocation, the configured assignment, the definition, or the default. */
+  source: "invocation" | "configuration" | "definition" | "default";
   /** The full ordered candidate chain the selection came from. */
   chain: string[];
   /** Index of the selected candidate in `chain`; advances when the runner falls back at runtime. */

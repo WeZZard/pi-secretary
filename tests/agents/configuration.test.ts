@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { CONFIG_DIR_NAME, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { loadAgentConfiguration, saveModelFallbackLists } from "../../extensions/secretary/agents/configuration.ts";
+import { loadAgentConfiguration, saveModelFallbackLists, updateSubagentModels } from "../../extensions/secretary/agents/configuration.ts";
 import { ModelAvailability } from "../../extensions/secretary/agents/availability.ts";
 import { discoverAgents, resolveAgentModel } from "../../extensions/secretary/agents/registry.ts";
 
@@ -19,7 +19,7 @@ function fixture(t: TestContext) {
 
 test("configuration defaults, trusted overlay, and nonmutation", (t) => {
   const { cwd, agentDir, put } = fixture(t);
-  assert.deepEqual(loadAgentConfiguration(cwd, agentDir, false), { modelFallbackLists: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, maxNestingDepth: 3, ui: { fleetViewPlacement: "belowEditor", fleetKeybindings: {} } });
+  assert.deepEqual(loadAgentConfiguration(cwd, agentDir, false), { modelFallbackLists: {}, subagentModels: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, maxNestingDepth: 3, ui: { fleetViewPlacement: "belowEditor", fleetKeybindings: {} } });
   const global = join(agentDir, "secretary.json"), project = join(cwd, CONFIG_DIR_NAME, "secretary.json");
   const content = JSON.stringify({ unrelated: true, agents: { modelFallbackLists: { fast: ["p/one", "p/two"], cheap: [] }, maxConcurrent: 2 } });
   put(global, content);
@@ -38,7 +38,7 @@ test("configuration defaults, trusted overlay, and nonmutation", (t) => {
 
 test("configuration rejects unsupported fields and invalid values", (t) => {
   const { cwd, agentDir, put } = fixture(t);
-  for (const agents of [null, [], { extra: 1 }, { maxConcurrent: 0 }, { maxQueued: -1 }, { shutdownTimeoutMs: 1.2 }, { maxNestingDepth: 0 }, { maxNestingDepth: 1.5 }, { maxNestingDepth: "3" }, { modelAliases: { sonnet: "p/id" } }, { modelFallbackLists: null }, { modelFallbackLists: [] }, { modelFallbackLists: { "bad name": ["p/id"] } }, { modelFallbackLists: { inherit: ["p/id"] } }, { modelFallbackLists: { fast: "p/id" } }, { modelFallbackLists: { fast: ["no-slash"] } }, { modelFallbackLists: { fast: ["p/id", "p/id"] } }, { modelFallbackLists: { fast: [42] } },
+  for (const agents of [null, [], { extra: 1 }, { maxConcurrent: 0 }, { maxQueued: -1 }, { shutdownTimeoutMs: 1.2 }, { maxNestingDepth: 0 }, { maxNestingDepth: 1.5 }, { maxNestingDepth: "3" }, { modelAliases: { sonnet: "p/id" } }, { modelFallbackLists: null }, { modelFallbackLists: [] }, { modelFallbackLists: { "bad name": ["p/id"] } }, { modelFallbackLists: { inherit: ["p/id"] } }, { modelFallbackLists: { fast: "p/id" } }, { modelFallbackLists: { fast: ["no-slash"] } }, { modelFallbackLists: { fast: ["p/id", "p/id"] } }, { modelFallbackLists: { fast: [42] } }, { subagentModels: null }, { subagentModels: [] }, { subagentModels: { "bad name": "inherit" } }, { subagentModels: { inherit: "inherit" } }, { subagentModels: { Explore: 42 } }, { subagentModels: { Explore: "" } },
     { ui: null }, { ui: { unknown: true } }, { ui: { inlineToolDisplay: "fancy" } }, { ui: { fleetViewPlacement: "sidebar" } },
     { ui: { fleetKeybindings: [] } }, { ui: { fleetKeybindings: { frobnicate: ["f"] } } }, { ui: { fleetKeybindings: { stop: [] } } }, { ui: { fleetKeybindings: { stop: [42] } } }]) {
     put(join(agentDir, "secretary.json"), JSON.stringify({ agents }));
@@ -75,7 +75,13 @@ test("discovery precedence, capabilities, and stable independent snapshots", (t)
   const packaged = discoverAgents(cwd, agentDir, false);
   assert.deepEqual([...packaged.keys()], ["general-purpose", "Explore", "Plan"]);
   assert.equal(packaged.get("Explore")!.resumable, false);
-  assert.deepEqual(packaged.get("Plan")!.tools, ["read", "grep", "find", "ls"]);
+  // Read-only is a denylist (architecture §5.2): the packaged pair keeps the host's search
+  // mechanism and denies the mutating tools. An allowlist naming tools pi does not provide
+  // would intersect to `read` alone, leaving them unable to discover a single file.
+  for (const name of ["Explore", "Plan"]) {
+    assert.equal(packaged.get(name)!.tools, undefined, `${name} declares no allowlist`);
+    assert.deepEqual(packaged.get(name)!.disallowedTools, ["edit", "write"], `${name} denies the mutating tools`);
+  }
   const user = "---\nname: Explore\ndescription: User\ntools: [read, grep]\ndisallowedTools: bash, write\nmodel: inherit\nmaxTurns: 2\nbackground: true\nisolation: worktree\n---\nUser prompt";
   put(join(agentDir, "agents", "explore.md"), user);
   put(join(cwd, CONFIG_DIR_NAME, "agents", "override.md"), "---\nname: Explore\ndescription: Project\n---\nProject prompt");
@@ -206,4 +212,22 @@ test("saveModelFallbackLists validates before writing, preserves other keys, and
   put(path, JSON.stringify({ agents: { modelAliases: { sonnet: "p/one" }, modelFallbackLists: {} } }));
   assert.throws(() => saveModelFallbackLists(agentDir, { fast: ["p/one"] }), /modelFallbackLists/, "A file with a removed key is reported rather than rewritten");
   assert.match(readFileSync(path, "utf8"), /modelAliases/, "The unreadable configuration is not rewritten");
+});
+
+test("updateSubagentModels validates before writing, applies to the fresh file, and reloads", (t) => {
+  const { agentDir, put } = fixture(t);
+  const path = join(agentDir, "secretary.json");
+  updateSubagentModels(agentDir, models => ({ ...models, Explore: "fast" }));
+  assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), { agents: { subagentModels: { Explore: "fast" } } }, "A missing file is created");
+  assert.deepEqual(loadAgentConfiguration(agentDir, agentDir, false).subagentModels, { Explore: "fast" }, "A saved assignment takes effect on the next read");
+  // Another session adds an assignment between this menu's load and its write: the operation
+  // applies to the fresh state, so the sibling assignment survives.
+  put(path, JSON.stringify({ unrelated: true, agents: { maxConcurrent: 2, subagentModels: { Explore: "fast" } } }));
+  updateSubagentModels(agentDir, models => { models.Plan = "inherit"; return models; });
+  assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), { unrelated: true, agents: { maxConcurrent: 2, subagentModels: { Explore: "fast", Plan: "inherit" } } }, "Unrelated root keys and sibling assignments are preserved");
+  const before = readFileSync(path, "utf8");
+  assert.throws(() => updateSubagentModels(agentDir, models => ({ ...models, "bad name": "fast" })), /subagentModels/, "An invalid definition name is rejected before writing");
+  assert.throws(() => updateSubagentModels(agentDir, models => ({ ...models, inherit: "fast" })), /inherit/, "The reserved name inherit is rejected as a definition name");
+  assert.throws(() => updateSubagentModels(agentDir, models => ({ ...models, Explore: "no-slash model" })), /subagentModels/, "A value that is neither a list name, an exact identifier, nor inherit is rejected");
+  assert.equal(readFileSync(path, "utf8"), before, "A rejected change leaves the previous configuration in effect");
 });

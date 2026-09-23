@@ -11,7 +11,7 @@ import { AgentRepository } from "../../extensions/secretary/agents/storage/agent
 import { registerLiveChildService } from "../../extensions/secretary/agents/live-services.ts";
 import type { AgentRun, RunningChild } from "../../extensions/secretary/agents/records.ts";
 
-const config: AgentConfiguration = { modelFallbackLists: {}, ui: defaultAgentUi(), maxConcurrent: 4, maxQueued: 8, shutdownTimeoutMs: 1000, maxNestingDepth: 3 };
+const config: AgentConfiguration = { modelFallbackLists: {}, subagentModels: {}, ui: defaultAgentUi(), maxConcurrent: 4, maxQueued: 8, shutdownTimeoutMs: 1000, maxNestingDepth: 3 };
 const tick = () => new Promise<void>(r => setImmediate(r));
 
 type Runner = NonNullable<ConstructorParameters<typeof AgentService>[0]["runner"]>;

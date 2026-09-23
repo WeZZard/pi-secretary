@@ -4,7 +4,7 @@ import { Parser, AstBuilder, GherkinClassicTokenMatcher } from "@cucumber/gherki
 
 let sequence = 0;
 const parser = new Parser(new AstBuilder(() => String(++sequence)), new GherkinClassicTokenMatcher());
-const root = "doc/acceptance";
+const root = "docs/acceptance";
 const ids = new Set<string>();
 let files = 0;
 for (const name of readdirSync(root).filter(name => name.endsWith(".feature")).sort()) {

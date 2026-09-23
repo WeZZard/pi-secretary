@@ -8,13 +8,22 @@ export interface AgentUiConfiguration {
   fleetViewPlacement: "belowEditor" | "aboveEditor";
   fleetKeybindings: InspectorKeybindingsConfig;
 }
-export interface AgentConfiguration {
-  modelFallbackLists: Record<string, string[]>;
+/** The concurrency, timeout, and nesting limits, edited together in the configuration menu (UX §2.5). */
+export const AGENT_LIMIT_FIELDS = ["maxConcurrent", "maxQueued", "shutdownTimeoutMs", "maxNestingDepth"] as const;
+export type AgentLimitField = (typeof AGENT_LIMIT_FIELDS)[number];
+export interface AgentLimits {
   maxConcurrent: number;
   maxQueued: number;
   shutdownTimeoutMs: number;
   /** Levels of nested delegation below the main session (SA-12; architecture §7). */
   maxNestingDepth: number;
+}
+/** The smallest value each limit accepts: an idle queue or an instant timeout is meaningful, zero workers is not. */
+export const agentLimitMinimum = (field: AgentLimitField): number => field === "maxConcurrent" || field === "maxNestingDepth" ? 1 : 0;
+export interface AgentConfiguration extends AgentLimits {
+  modelFallbackLists: Record<string, string[]>;
+  /** Per-definition model assignments keyed by agent name (architecture §5.3). */
+  subagentModels: Record<string, string>;
   ui: AgentUiConfiguration;
 }
 export const defaultAgentUi = (): AgentUiConfiguration => ({ fleetViewPlacement: "belowEditor", fleetKeybindings: {} });
@@ -47,10 +56,20 @@ function applyAgentsConfiguration(agents: Record<string, unknown>, path: string,
           if (new Set(list).size !== list.length) throw new Error(`${path}: agents.modelFallbackLists.${name} contains duplicate models`);
           result.modelFallbackLists[name] = [...list];
         }
+      } else if (key === "subagentModels") {
+        for (const [name, assigned] of Object.entries(object(value, `${path}: agents.subagentModels`))) {
+          if (!FALLBACK_LIST_NAME.test(name) || name === "inherit") {
+            throw new Error(`${path}: invalid agents.subagentModels name ${name}; use the agent-name pattern and avoid the reserved name inherit`);
+          }
+          if (typeof assigned !== "string" || !(assigned === "inherit" || isExactModelIdentifier(assigned) || FALLBACK_LIST_NAME.test(assigned))) {
+            throw new Error(`${path}: agents.subagentModels.${name} must be inherit, an exact provider/modelId, or a model fallback list name`);
+          }
+          result.subagentModels[name] = assigned;
+        }
       } else if (key === "modelAliases") {
         throw new Error(`${path}: agents.modelAliases was removed; use agents.modelFallbackLists (an object mapping list names to ordered provider/modelId arrays)`);
       } else if (key === "maxConcurrent" || key === "maxQueued" || key === "shutdownTimeoutMs" || key === "maxNestingDepth") {
-        const minimum = key === "maxConcurrent" || key === "maxNestingDepth" ? 1 : 0;
+        const minimum = agentLimitMinimum(key);
         if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum) {
           throw new Error(`${path}: agents.${key} must be an integer >= ${minimum}`);
         }
@@ -76,7 +95,7 @@ function applyAgentsConfiguration(agents: Record<string, unknown>, path: string,
   }
 }
 
-export const defaultAgentConfiguration = (): AgentConfiguration => ({ modelFallbackLists: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, maxNestingDepth: 3, ui: defaultAgentUi() });
+export const defaultAgentConfiguration = (): AgentConfiguration => ({ modelFallbackLists: {}, subagentModels: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, maxNestingDepth: 3, ui: defaultAgentUi() });
 
 export function loadAgentConfiguration(cwd: string, agentDir: string, trusted: boolean): AgentConfiguration {
   const result = defaultAgentConfiguration();
@@ -103,25 +122,70 @@ export function loadAgentConfiguration(cwd: string, agentDir: string, trusted: b
  * is written; a failed validation or write leaves the previous configuration in effect.
  * Project-level overrides are never touched.
  */
-export function updateModelFallbackLists(agentDir: string, update: (lists: Record<string, string[]>) => Record<string, string[]>): Record<string, string[]> {
+function rewriteAgentsConfiguration(agentDir: string, apply: (agents: Record<string, unknown>, path: string) => Record<string, unknown>): Record<string, unknown> {
   const path = join(agentDir, "secretary.json");
   let root: Record<string, unknown> = {};
   try { root = object(JSON.parse(readFileSync(path, "utf8")), path); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   const agents = Object.hasOwn(root, "agents") ? object(root.agents, `${path}: agents`) : {};
-  const current: Record<string, string[]> = {};
-  if (Object.hasOwn(agents, "modelFallbackLists")) {
-    applyAgentsConfiguration({ modelFallbackLists: agents.modelFallbackLists }, path,
-      { modelFallbackLists: current, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, maxNestingDepth: 3, ui: defaultAgentUi() });
-  }
-  const candidate: Record<string, unknown> = { ...agents, modelFallbackLists: update(current) };
-  applyAgentsConfiguration(candidate, path, { modelFallbackLists: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, maxNestingDepth: 3, ui: defaultAgentUi() });
+  const candidate = apply(agents, path);
+  applyAgentsConfiguration(candidate, path, defaultAgentConfiguration());
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify({ ...root, agents: candidate }, null, 2) + "\n");
+  return candidate;
+}
+
+/** Read one `agents.<key>` object into a fresh accumulator, so a caller receives the persisted value. */
+function readAgentKey<T>(agents: Record<string, unknown>, path: string, key: "modelFallbackLists" | "subagentModels", seed: AgentConfiguration): T {
+  if (Object.hasOwn(agents, key)) applyAgentsConfiguration({ [key]: agents[key] }, path, seed);
+  return seed[key] as T;
+}
+
+export function updateModelFallbackLists(agentDir: string, update: (lists: Record<string, string[]>) => Record<string, string[]>): Record<string, string[]> {
+  const candidate = rewriteAgentsConfiguration(agentDir, (agents, path) => ({
+    ...agents, modelFallbackLists: update({ ...readAgentKey(agents, path, "modelFallbackLists", defaultAgentConfiguration()) }),
+  }));
   return candidate.modelFallbackLists as Record<string, string[]>;
+}
+
+/**
+ * Apply an operation to the persisted per-definition model assignments (architecture §5.3).
+ * It shares the persistence boundary of `updateModelFallbackLists`: the assignments are
+ * re-read from disk immediately before the operation runs, the full resulting `agents`
+ * object is validated before anything is written, and project-level overrides are never
+ * touched.
+ */
+export function updateSubagentModels(agentDir: string, update: (models: Record<string, string>) => Record<string, string>): Record<string, string> {
+  const candidate = rewriteAgentsConfiguration(agentDir, (agents, path) => ({
+    ...agents, subagentModels: update({ ...readAgentKey(agents, path, "subagentModels", defaultAgentConfiguration()) }),
+  }));
+  return candidate.subagentModels as Record<string, string>;
 }
 
 /** Replace the persisted lists wholesale. Callers with per-operation intent should prefer updateModelFallbackLists. */
 export function saveModelFallbackLists(agentDir: string, lists: Record<string, string[]>): void {
   updateModelFallbackLists(agentDir, () => lists);
+}
+
+/**
+ * Apply an operation to the persisted concurrency, timeout, and nesting limits (UX §2.5). It shares
+ * the persistence boundary of `updateModelFallbackLists`: the file is re-read immediately before the
+ * operation runs, the full resulting `agents` object is validated before anything is written, and
+ * project-level overrides are never touched.
+ */
+export function updateAgentLimits(agentDir: string, update: (limits: AgentLimits) => AgentLimits): AgentLimits {
+  const candidate = rewriteAgentsConfiguration(agentDir, (agents, path) => {
+    // Validate the fresh state first, so the operation sees the values actually on disk rather than
+    // the caller's older copy, and so an unreadable file fails before anything is replaced.
+    const current = defaultAgentConfiguration();
+    applyAgentsConfiguration(agents, path, current);
+    return { ...agents, ...update({
+      maxConcurrent: current.maxConcurrent, maxQueued: current.maxQueued,
+      shutdownTimeoutMs: current.shutdownTimeoutMs, maxNestingDepth: current.maxNestingDepth,
+    }) };
+  });
+  return {
+    maxConcurrent: candidate.maxConcurrent as number, maxQueued: candidate.maxQueued as number,
+    shutdownTimeoutMs: candidate.shutdownTimeoutMs as number, maxNestingDepth: candidate.maxNestingDepth as number,
+  };
 }

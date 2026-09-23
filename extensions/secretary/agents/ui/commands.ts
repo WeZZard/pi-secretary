@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { isKeyRelease, matchesKey } from "@earendil-works/pi-tui";
+import { discoverAgents } from "../registry.ts";
 import { SecretaryConfigMenu, headlessSecretaryConfig } from "./config-menu.ts";
 import { SecretaryEditor, installFleetEditor } from "./editor.ts";
 import { FleetView, startFleetPolling } from "./fleet-view.ts";
@@ -179,6 +180,15 @@ export function registerAgentUI(pi: ExtensionAPI, port: AgentUIPort, resolveOpti
       await commandCtx.ui.custom<void>((tui, theme, _kb, done) => new SecretaryConfigMenu({
         agentDir,
         models: () => commandCtx.modelRegistry.getAll().map(model => `${model.provider}/${model.id}`),
+        // Discovery throws on an invalid definition file. The assignment page degrades to an
+        // empty list rather than throwing out of the menu's render path, so a broken definition
+        // can be inspected and corrected by hand while the fallback-list pages stay usable.
+        definitions: () => {
+          try {
+            return [...discoverAgents(commandCtx.cwd, agentDir, commandCtx.isProjectTrusted()).values()]
+              .map(entry => ({ name: entry.name, ...(entry.model !== undefined ? { declared: entry.model } : {}) }));
+          } catch { return []; }
+        },
         onDismiss: () => done(),
         theme,
       }));

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { CONFIG_DIR_NAME, parseFrontmatter, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { FALLBACK_LIST_NAME, isExactModelIdentifier, type AgentConfiguration } from "./configuration.ts";
@@ -10,6 +11,16 @@ import type { AgentDefinition } from "./records.ts";
 const fields = new Set(["name", "description", "tools", "disallowedTools", "model", "maxTurns", "background", "isolation"]);
 const safeName = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const hash = (content: string) => createHash("sha256").update(content).digest("hex");
+
+/** Definition files shipped with the plugin: the source of the packaged definitions (architecture §5.2). */
+const packagedDir = fileURLToPath(new URL("./definitions/", import.meta.url));
+/**
+ * The packaged set and its order are part of the catalog contract: `general-purpose` is the default
+ * agent type, and each name here must have a file in `definitions/`.
+ */
+const PACKAGED_NAMES = ["general-purpose", "Explore", "Plan"];
+/** Only `general-purpose` can be resumed; `Explore` and `Plan` are one-shot (architecture §5.2). */
+const PACKAGED_RESUMABLE = new Set(["general-purpose"]);
 
 function tools(value: unknown, field: string): string[] {
   const list = typeof value === "string" ? value.split(",").map((item) => item.trim()) : value;
@@ -51,13 +62,19 @@ function definition(content: string, source: string): AgentDefinition {
 
 export function discoverAgents(cwd: string, agentDir: string, trusted: boolean): Map<string, AgentDefinition> {
   const result = new Map<string, AgentDefinition>();
-  for (const [name, description, prompt] of [
-    ["general-purpose", "General-purpose delegated work", "Complete the delegated task using authorized tools. Report results and unresolved limitations."],
-    ["Explore", "Read-only codebase exploration", "Explore the codebase using read-only tools. Report findings with file references; do not modify files."],
-    ["Plan", "Read-only implementation planning", "Inspect the codebase and produce an implementation plan. Do not modify files."],
-  ]) {
-    const snapshot = { name, description, prompt, source: `packaged:${name}`, resumable: name === "general-purpose", ...(name === "general-purpose" ? {} : { tools: ["read", "grep", "find", "ls"] }) };
-    result.set(name, { ...snapshot, hash: hash(JSON.stringify(snapshot)) });
+  // Packaged definitions are definition files, parsed by the same parser as a user definition, so
+  // they ship with the plugin (`package.json` ships `extensions/`) and cannot drift from the
+  // documented frontmatter contract. Read-only is a denylist, matching the Claude Code built-in
+  // subagent contract (architecture §5.2): the child keeps `bash`, because in pi `bash` is how a
+  // session discovers files and searches content, and an allowlist would fail closed — one name
+  // the host does not provide would silently strip capability with no diagnostic.
+  for (const name of PACKAGED_NAMES) {
+    const source = join(packagedDir, `${name}.md`);
+    const agent = definition(readFileSync(source, "utf8"), source);
+    if (agent.name !== name) throw new Error(`${source}: packaged definition must be named ${name}`);
+    // The packaged label and the one-shot rule are properties of shipping, not of the file, so they
+    // are applied here; prompt, description, and tool policy all come from the file.
+    result.set(agent.name, { ...agent, source: `packaged:${name}`, resumable: PACKAGED_RESUMABLE.has(name) });
   }
   const paths = [join(agentDir, "agents")];
   if (trusted) paths.push(join(cwd, CONFIG_DIR_NAME, "agents"));
@@ -89,8 +106,8 @@ export interface ModelResolution {
   skipped: { id: string; reason: string }[];
   /** The value that produced the chain: `inherit`, an exact provider/modelId, or a fallback-list name. */
   value: string;
-  /** Where `value` came from: the invocation, the definition, or the default when neither sets a model. */
-  source: "invocation" | "definition" | "default";
+  /** Where `value` came from: the invocation, the configured assignment, the definition, or the default. */
+  source: "invocation" | "configuration" | "definition" | "default";
 }
 
 /**
@@ -109,8 +126,13 @@ export async function resolveAgentModel(
   ctx: Pick<ExtensionContext, "model" | "modelRegistry" | "scopedModels">,
   availability?: ModelAvailability,
 ): Promise<ModelResolution> {
-  const source: ModelResolution["source"] = requested !== undefined ? "invocation" : definition.model !== undefined ? "definition" : "default";
-  const value = requested ?? definition.model;
+  // Resolution order (architecture §5.3): an explicit invocation, then the configured
+  // assignment, then the definition's own model, then inheritance. The configured assignment
+  // outranks the definition so that the configuration menu is not inert on the definitions
+  // that declare a model of their own.
+  const assigned = config.subagentModels?.[definition.name];
+  const source: ModelResolution["source"] = requested !== undefined ? "invocation" : assigned !== undefined ? "configuration" : definition.model !== undefined ? "definition" : "default";
+  const value = requested ?? assigned ?? definition.model;
   let chain: string[];
   if (!value || value === "inherit") {
     if (!ctx.model) throw new Error("No parent model is available to inherit");

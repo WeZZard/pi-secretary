@@ -20,7 +20,7 @@ function harness(mode = "tui", concurrent = 1, branchDisposition?: (run: AgentRu
   let starts = 0;
   const service = new AgentService({ parentId: "parent", root, repository, branchDisposition,
     ctx: { cwd: root, mode } as ExtensionContext,
-    config: { modelFallbackLists: {}, ui: defaultAgentUi(), maxConcurrent: concurrent, maxQueued: 2, shutdownTimeoutMs: 1000, maxNestingDepth: 3 },
+    config: { modelFallbackLists: {}, subagentModels: {}, ui: defaultAgentUi(), maxConcurrent: concurrent, maxQueued: 2, shutdownTimeoutMs: 1000, maxNestingDepth: 3 },
     ...extra,
     runner: async options => {
       starts++;

@@ -22,7 +22,7 @@ function fixture(t: TestContext) {
   const agentDir = join(dir, "agent");
   mkdirSync(agentDir, { recursive: true });
   writeFileSync(join(agentDir, "secretary.json"), JSON.stringify({ agents: { modelFallbackLists: { primary: ["p/one", "p/two"], empty: [] } } }));
-  return new SecretaryConfigMenu({ agentDir, models: () => ["p/one", "p/two", "q/three"], onDismiss: () => {} });
+  return new SecretaryConfigMenu({ agentDir, models: () => ["p/one", "p/two", "q/three"], definitions: () => [{ name: "Explore", declared: "fast" }, { name: "Plan" }, { name: "general-purpose" }], onDismiss: () => {} });
 }
 
 function normalize(lines: string[]): string {
@@ -37,14 +37,33 @@ test("layout baseline: top level", (t) => {
 test("layout baseline: Subagents section items", (t) => {
   const menu = fixture(t);
   menu.handleInput("\x1b[C");
-  assert.equal(normalize(menu.render(60)), "────────────────────────────────────────────────────────────\n\nSecretary › Subagents\n\n→ Model Fallback Lists\n\n  ↑/↓ select · Enter/→ open · ← back · Esc dismiss\n────────────────────────────────────────────────────────────");
+  assert.equal(normalize(menu.render(60)), "────────────────────────────────────────────────────────────\n\nSecretary › Subagents\n\n→ Model Fallback Lists\n  Subagent Models\n  Runtime Limits\n\n  ↑/↓ select · Enter/→ open · ← back · Esc dismiss\n────────────────────────────────────────────────────────────");
+});
+
+test("layout baseline: runtime limits", (t) => {
+  const menu = fixture(t);
+  menu.handleInput("\x1b[C");
+  menu.handleInput("\x1b[B");
+  menu.handleInput("\x1b[B");
+  menu.handleInput("\x1b[C");
+  assert.equal(normalize(menu.render(60)), "────────────────────────────────────────────────────────────\n\nSecretary › Subagents › Runtime Limits\nEdits the user-global configuration only.\n\n→ Max Concurrent  4\n  Max Queued  16\n  Shutdown Timeout  5000 ms\n  Max Nesting Depth  3\n\n  ↑/↓ select · Enter edit · ← back · Esc dismiss\n────────────────────────────────────────────────────────────");
+});
+
+test("layout baseline: runtime limit value prompt", (t) => {
+  const menu = fixture(t);
+  menu.handleInput("\x1b[C");
+  menu.handleInput("\x1b[B");
+  menu.handleInput("\x1b[B");
+  menu.handleInput("\x1b[C");
+  menu.handleInput("\x1b[C");
+  assert.equal(normalize(menu.render(60)), "────────────────────────────────────────────────────────────\n\nMax Concurrent\nAgents allowed to run at the same time.\nWhole number of at least 1.\n\n> 4                                                         \n\n  Enter confirm · Esc cancel\n────────────────────────────────────────────────────────────");
 });
 
 test("layout baseline: list manager", (t) => {
   const menu = fixture(t);
   menu.handleInput("\x1b[C");
   menu.handleInput("\x1b[C");
-  assert.equal(normalize(menu.render(60)), "────────────────────────────────────────────────────────────\n\nSecretary › Subagents › Model Fallback Lists\nEdits the user-global configuration only.\n\n→ primary  2 models\n  empty  0 models\n  ＋ Add List\n\n  a add list · r rename list · d remove list\n  ↑/↓ select · Enter/→ open · ← back · Esc dismiss\n────────────────────────────────────────────────────────────");
+  assert.equal(normalize(menu.render(60)), "────────────────────────────────────────────────────────────\n\nSecretary › Subagents › Model Fallback Lists\nEdits the user-global configuration only.\n\n→ primary  2 models\n  empty  0 models\n  ＋ Add List\n\n  a add list · r rename list · d remove list\n  Shift+K/J move up/down\n  ↑/↓ select · Enter/→ open · ← back · Esc dismiss\n────────────────────────────────────────────────────────────");
 });
 
 test("layout baseline: populated list", (t) => {
@@ -103,4 +122,12 @@ test("layout baseline: remove list confirmation", (t) => {
 test("layout baseline: narrow width diagnostic", (t) => {
   const menu = fixture(t);
   assert.equal(menu.render(30).join("\n"), "Secretary configuration requires a wider terminal.");
+});
+
+test("layout baseline: subagent model assignments", (t) => {
+  const menu = fixture(t);
+  menu.handleInput("\x1b[C");
+  menu.handleInput("\x1b[B");
+  menu.handleInput("\x1b[C");
+  assert.equal(normalize(menu.render(60)), "────────────────────────────────────────────────────────────\n\nSecretary › Subagents › Subagent Models\nAssignments override a definition's own model.\n\n→ Explore  fast  declared\n  Plan  inherit  inherited\n  general-purpose  inherit  inherited\n\n  ↑/↓ select · Enter/→ open · ← back · Esc dismiss\n────────────────────────────────────────────────────────────");
 });

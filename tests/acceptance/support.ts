@@ -22,7 +22,7 @@ export function runFeatures(names: string[], bindings: ScenarioBindings, hashes:
   const parser = new Parser(new AstBuilder(() => String(++id)), new GherkinClassicTokenMatcher());
   const used = new Set<string>();
   for (const name of names) {
-    const path = `doc/acceptance/${name}.feature`;
+    const path = `docs/acceptance/${name}.feature`;
     const source = readFileSync(path, "utf8");
     test(`${name}: acceptance specification matches reviewed bindings`, () => {
       assert.equal(createHash("sha256").update(source).digest("hex"), hashes[name], "Specification changed: review scenario assertions before updating its binding hash.");

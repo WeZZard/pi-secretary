@@ -6,7 +6,7 @@ function modelProvenance(agent: AgentRecord): string {
   const resolution = agent.modelResolution;
   if (!resolution) return "";
   if (resolution.value === "inherit") return " (inherited from the parent model)";
-  const origin = resolution.source === "invocation" ? "invocation" : "definition";
+  const origin = resolution.source === "definition" ? "definition" : resolution.source;
   if (isExactModelIdentifier(resolution.value)) return ` (${origin} model)`;
   return ` (${origin} list '${resolution.value}', candidate ${resolution.selected + 1}/${resolution.chain.length})`;
 }

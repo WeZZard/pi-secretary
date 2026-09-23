@@ -7,7 +7,7 @@ import { SecretaryConfigMenu, headlessSecretaryConfig } from "../../extensions/s
 
 const UP = "\x1b[A", DOWN = "\x1b[B", RIGHT = "\x1b[C", LEFT = "\x1b[D", ENTER = "\r", ESC = "\x1b", BACKSPACE = "\x7f";
 
-function fixture(t: TestContext, options: { lists?: Record<string, string[]>; models?: string[]; seedFile?: string } = {}) {
+function fixture(t: TestContext, options: { lists?: Record<string, string[]>; models?: string[]; seedFile?: string; definitions?: { name: string; declared?: string }[] } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "secretary-menu-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const agentDir = join(dir, "agent");
@@ -18,6 +18,7 @@ function fixture(t: TestContext, options: { lists?: Record<string, string[]>; mo
   const menu = new SecretaryConfigMenu({
     agentDir,
     models: () => options.models ?? ["p/one", "p/two", "q/three"],
+    definitions: () => options.definitions ?? [{ name: "Explore", declared: "fast" }, { name: "Plan" }, { name: "general-purpose" }],
     onDismiss: () => { dismissals++; },
   });
   return {
@@ -252,6 +253,49 @@ test("Shift+K and Shift+J reorder models and persist the resolution order", (t) 
   assert.deepEqual(f.file().agents.modelFallbackLists.primary, ["p/one", "p/two", "q/three"]);
 });
 
+/** Walk from the top level to the model fallback list manager (ux §2.5). */
+function openManager(f: ReturnType<typeof fixture>) {
+  f.menu.handleInput(RIGHT);          // Subagents
+  f.menu.handleInput(RIGHT);          // Model Fallback Lists
+}
+
+test("Shift+J and Shift+K reorder the fallback lists and persist the manager order", (t) => {
+  const f = fixture(t, { lists: { alpha: ["p/one"], beta: ["p/two"], gamma: ["q/three"] } });
+  openManager(f);
+  f.menu.handleInput("J");            // alpha moves down past beta
+  assert.deepEqual(Object.keys(f.file().agents.modelFallbackLists), ["beta", "alpha", "gamma"], "The persisted key order is the manager order");
+  assert.deepEqual(f.file().agents.modelFallbackLists.alpha, ["p/one"], "Reordering a list leaves its models alone");
+  const view = f.view();
+  assert.match(view, /Moved alpha down\./);
+  assert.ok(view.indexOf("beta") < view.indexOf("→ alpha"), "The selection follows the moved list");
+  assert.match(headlessSecretaryConfig(f.agentDir), /beta: p\/two\n  alpha: p\/one/, "The headless summary reads the same persisted order");
+  f.menu.handleInput("K");            // and back
+  assert.deepEqual(Object.keys(f.file().agents.modelFallbackLists), ["alpha", "beta", "gamma"]);
+});
+
+test("an end-of-list list reorder is a no-op that reports no warning", (t) => {
+  const f = fixture(t, { lists: { alpha: ["p/one"], beta: ["p/two"] } });
+  openManager(f);
+  f.menu.handleInput("K");            // alpha is already first
+  assert.deepEqual(Object.keys(f.file().agents.modelFallbackLists), ["alpha", "beta"]);
+  assert.doesNotMatch(f.view(), /Not saved/, "A boundary press is a no-op, not an error");
+  f.menu.handleInput(DOWN);
+  f.menu.handleInput(DOWN);           // the `＋ Add List` row names no list to move
+  f.menu.handleInput("J");
+  assert.deepEqual(Object.keys(f.file().agents.modelFallbackLists), ["alpha", "beta"]);
+  assert.doesNotMatch(f.view(), /Not saved/);
+});
+
+test("an end-of-list model reorder is a no-op that reports no warning", (t) => {
+  const f = fixture(t, { lists: { primary: ["p/one", "p/two"] } });
+  f.menu.handleInput(RIGHT);
+  f.menu.handleInput(RIGHT);
+  f.menu.handleInput(RIGHT);
+  f.menu.handleInput("K");            // first model
+  assert.deepEqual(f.file().agents.modelFallbackLists.primary, ["p/one", "p/two"]);
+  assert.doesNotMatch(f.view(), /Not saved/);
+});
+
 test("an invalid stored configuration is reported and offers no editing", (t) => {
   const f = fixture(t, { seedFile: '{"agents":{"modelFallbackLists":{"bad name":[]}}}' });
   const before = f.view();
@@ -292,8 +336,89 @@ test("headless modes receive the configuration path and a list summary as text",
   assert.match(text, /primary: p\/one, p\/two/);
   assert.match(text, /empty: \(no models\)/);
   assert.match(text, /does not accept edits|interactive session/, "Headless output does not accept edits");
+  assert.match(text, /Max concurrent: 4/);
+  assert.match(text, /Shutdown timeout: 5000 ms/);
   const none = fixture(t);
   assert.match(headlessSecretaryConfig(none.agentDir), /No model fallback lists configured/);
   const broken = fixture(t, { seedFile: '{"agents":{"modelFallbackLists":{"bad name":[]}}}' });
   assert.match(headlessSecretaryConfig(broken.agentDir), /invalid/i);
+});
+
+/** Walk from the top level to the Subagent Models assignments page (architecture §5.3, ux §3.11). */
+function openAssignments(f: ReturnType<typeof fixture>) {
+  f.menu.handleInput(RIGHT);          // Subagents
+  f.menu.handleInput(DOWN);           // Subagent Models
+  f.menu.handleInput(RIGHT);          // the assignments page
+}
+
+test("a model assignment is written for the chosen definition and reported on the page", (t) => {
+  const f = fixture(t, { lists: { fast: ["p/one", "p/two"], slow: ["q/three"] } });
+  openAssignments(f);
+  assert.match(f.view(), /Explore  fast  declared/, "Before an assignment the definition's own model is disclosed, not reported as inheritance");
+  f.menu.handleInput(RIGHT);          // Explore's assignment page
+  assert.match(f.view(), /Resolution order: invocation/, "The page states the resolution order it implements");
+  f.menu.handleInput(DOWN);           // inherit -> fast
+  f.menu.handleInput(ENTER);
+  assert.deepEqual(f.file().agents.subagentModels, { Explore: "fast" }, "The assignment is persisted under the definition's name");
+  assert.match(f.view(), /Explore assigned to fast\./, "The outcome is stated on the page");
+  assert.match(f.view(), /Explore  fast  assigned/);
+});
+
+test("choosing inherit removes the assignment instead of storing the word", (t) => {
+  const f = fixture(t, { seedFile: JSON.stringify({ agents: { modelFallbackLists: { fast: ["p/one"] }, subagentModels: { Explore: "fast" } } }) });
+  openAssignments(f);
+  assert.match(f.view(), /Explore  fast  assigned/);
+  f.menu.handleInput(RIGHT);          // Explore's assignment page, cursor on inherit
+  f.menu.handleInput(ENTER);
+  assert.deepEqual(f.file().agents.subagentModels, {}, "Clearing removes the key, so a later definition edit governs again");
+  assert.match(f.view(), /Explore now inherits the parent model\./, "The outcome is stated on the page");
+  assert.match(f.view(), /Explore  fast  declared/, "The definition's own model is disclosed once the assignment is gone");
+});
+
+/** Walk from the top level to the Runtime Limits page (ux §2.5). */
+function openLimits(f: ReturnType<typeof fixture>) {
+  f.menu.handleInput(RIGHT);          // Subagents
+  f.menu.handleInput(DOWN);           // Subagent Models
+  f.menu.handleInput(DOWN);           // Runtime Limits
+  f.menu.handleInput(RIGHT);          // the limits page
+}
+
+test("the runtime limits page shows the effective values and the user-global boundary", (t) => {
+  const f = fixture(t);
+  openLimits(f);
+  assert.match(f.view(), /Runtime Limits/);
+  assert.match(f.view(), /Edits the user-global configuration only\./);
+  assert.match(f.view(), /Max Concurrent {2}4/);
+  assert.match(f.view(), /Max Queued {2}16/);
+  assert.match(f.view(), /Shutdown Timeout {2}5000 ms/);
+  assert.match(f.view(), /Max Nesting Depth {2}3/);
+});
+
+test("editing a limit persists it, reports the change, and preserves the other limits", (t) => {
+  const f = fixture(t);
+  openLimits(f);
+  f.menu.handleInput(DOWN);           // Max Queued, prefilled "16"
+  f.menu.handleInput(RIGHT);          // the value prompt
+  f.menu.handleInput(BACKSPACE);
+  f.menu.handleInput(BACKSPACE);
+  f.type("32");
+  f.menu.handleInput(ENTER);
+  assert.equal(f.file().agents.maxQueued, 32, "The edited limit is persisted");
+  assert.equal(f.file().agents.maxConcurrent, 4, "Untouched limits keep their effective value");
+  assert.match(f.view(), /Max Queued set to 32\./, "The outcome is stated on the page");
+  assert.match(f.view(), /Max Queued {2}32/);
+});
+
+test("a below-minimum limit is rejected with the draft retained and nothing written", (t) => {
+  const f = fixture(t, { lists: { fast: ["p/one"] } });
+  openLimits(f);
+  f.menu.handleInput(RIGHT);          // Max Concurrent (minimum 1), prefilled "4"
+  f.menu.handleInput(BACKSPACE);
+  f.type("0");
+  f.menu.handleInput(ENTER);
+  assert.match(f.view(), /Enter a whole number of at least 1\./);
+  assert.equal(f.file().agents.maxConcurrent, undefined, "A rejected edit writes nothing");
+  f.type("9");                        // the draft survives, so it can be corrected in place
+  f.menu.handleInput(ENTER);
+  assert.equal(f.file().agents.maxConcurrent, 9, "The retained draft is confirmed once valid");
 });

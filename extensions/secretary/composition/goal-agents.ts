@@ -185,7 +185,8 @@ export function composeGoalAgents(pi: ExtensionAPI, engine: GoalEngine, sync: Go
   pi.on("tool_call", event => {
     const scope = calls.get(event.toolCallId);
     if (!scope || event.toolName === "get_goal") return;
-    if (scope.reportingOnly && !["update_goal", "read", "grep", "find", "ls"].includes(event.toolName)) {
+    // Real pi tool names only (architecture §5.1); `bash` replaces the non-existent grep/find/ls.
+    if (scope.reportingOnly && !["update_goal", "read", "bash"].includes(event.toolName)) {
       return { block: true, reason: "Budget wrap-up authorizes reporting and read-only evidence, not new substantive goal work.", terminate: true };
     }
     if (["notification", "unknown"].includes(scope.association.authority) && ["create_goal", "update_goal"].includes(event.toolName)) {

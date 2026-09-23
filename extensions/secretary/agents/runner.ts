@@ -8,6 +8,7 @@ import {
 import { availabilityResetAt, isAvailabilityError } from "./availability.ts";
 import type { AgentRecord, AgentRun, RunnerHooks, RunningChild } from "./records.ts";
 import { childDelegationAuthorized, runInChildSession } from "./child-context.ts";
+import { inspectBashCommand, isReadOnly } from "./read-only-guard.ts";
 
 /** Delegation tools (SA-12): issued to a child session only when it may delegate further. */
 export const DELEGATION_TOOL_NAMES = ["Agent", "SendMessage", "TaskStop", "TaskOutput"];
@@ -202,6 +203,16 @@ export async function createChildRunner(options: {
         if (!guardAdmits(event.toolCall.name)) {
           attempt.partial = `Child tool is not authorized: ${event.toolCall.name}`;
           return { block: true, terminate: true, reason: attempt.partial };
+        }
+        // A read-only definition keeps `bash` as its search mechanism (architecture §5.2), so the
+        // prompt-level contract is backed by inspecting the command before it runs. The guard fails
+        // closed on the write forms it recognizes; it is not a sandbox, and no surface may say it is.
+        if (isReadOnly(agent.definition) && event.toolCall.name === "bash") {
+          const refusal = inspectBashCommand(String((event.toolCall.arguments as { command?: unknown } | undefined)?.command ?? ""));
+          if (refusal !== undefined) {
+            attempt.partial = `Read-only agent: refusing bash because ${refusal}`;
+            return { block: true, terminate: true, reason: attempt.partial };
+          }
         }
         const decision = await previousTool?.(event, toolSignal);
         try { attempt.authorize(); }

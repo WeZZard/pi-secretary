@@ -67,7 +67,7 @@ for (const state of ["none", "unborn", "committed"] as const) {
     let childCwd = "";
     const service = new AgentService({ parentId: "parent", root: f.storage, repository,
       ctx: { cwd: f.project, mode: "tui" } as ExtensionContext,
-      config: { modelFallbackLists: {}, ui: defaultAgentUi(), maxConcurrent: 1, maxQueued: 1, shutdownTimeoutMs: 1000, maxNestingDepth: 3 },
+      config: { modelFallbackLists: {}, subagentModels: {}, ui: defaultAgentUi(), maxConcurrent: 1, maxQueued: 1, shutdownTimeoutMs: 1000, maxNestingDepth: 3 },
       runner: async ({ agent }) => { childCwd = agent.cwd; return { result: Promise.resolve({ status: "succeeded", output: "done" }), steer: async () => {}, abort: async () => {}, dispose: async () => {} }; },
     });
     try {

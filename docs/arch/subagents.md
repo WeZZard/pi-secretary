@@ -275,8 +275,16 @@ Discovery order, from highest to lowest precedence, is:
 
 ### 5.2 Packaged definitions
 
-- `general-purpose` receives the parent's authorized tool names subject to nesting limits and the host-supplied capability policy. The runner rechecks permissions at execution boundaries. It does not infer whether an arbitrary third-party tool requires a UI; those tools must honor the headless contract in Section 8.3.
-- `Explore` and `Plan` initially use `read`, `grep`, `find`, and `ls`. They do not receive unrestricted shell access under a read-only label.
+**Status:** Aligned with the documented Claude Code built-in subagent contract.
+
+The narrowing strategy is inheritance and subtraction, not an allowlist. A subagent receives the parent's tools, a fixed short list is removed from every subagent, and the built-in set is reduced further for background subagents, which are the default. The `tools` and `disallowedTools` fields name tools by the exact strings the host recognizes, applying the rule in Section 5.1.
+
+- The three packaged definitions are shipped as definition files inside the plugin, at `extensions/secretary/agents/definitions/`. They are parsed by the same parser as a user-authored definition, so frontmatter semantics — `disallowedTools` included — are identical for shipped and user definitions, and there is no parallel in-code representation to keep in step. Discovery reads them in the packaged order `general-purpose`, `Explore`, `Plan`; each is recorded with the source `packaged:<name>` rather than a filesystem path, so no installation path leaks into a record or a rendered surface; and only `general-purpose` is resumable. A user-global or trusted-project definition of the same name replaces the packaged one, because the later discovery layer wins.
+
+- `general-purpose` receives the parent's authorized tool names subject to nesting limits and the host-supplied capability policy. It declares neither a `tools` allowlist nor a `disallowedTools` denylist, matching "every tool available to subagents". The runner rechecks permissions at execution boundaries. It does not infer whether an arbitrary third-party tool requires a UI; those tools must honor the headless contract in Section 8.3.
+- `Explore` and `Plan` declare `disallowedTools: edit, write` and no `tools` allowlist. They retain `bash`, because in pi `bash` is how a session discovers files and searches content, and a read-only agent without it cannot explore. `bash` is consequently a second route to the filesystem, and the packaged prompts state the read-only prohibition.
+- Because a denylist cannot remove `bash`, the read-only contract is enforced by command inspection as well as by the prompt. `read-only-guard.ts` recognizes the write forms a coding agent reaches for — filesystem redirection, the destructive coreutils, and the mutating subcommands of tools that have both read and write modes — and the composed `beforeToolCall` guard in `runner.ts` refuses a recognized form from a definition whose `disallowedTools` denies `edit` and `write`. The guard is a guard and not a sandbox: an interpreter, an unlisted tool, a computed command name, and an unknown wrapper each remain able to write. It fails closed on what it recognizes and does not certify the absence of writes, so no surface may describe a read-only subagent as sandboxed. Section 8.1 governs what the child may actually invoke.
+- A `tools` allowlist remains supported for custom definitions that need a hard capability bound, but it is the wrong instrument for read-only intent. An allowlist fails closed: one name the host does not provide removes capability silently, with no diagnostic and no effect on the launch's outcome record. A denylist fails open and is inert for names the host does not have.
 - Packaged `Explore` and `Plan` are one-shot and cannot be resumed, following the current documented Claude behavior. Their retained identifiers support inspection and output retrieval only.
 - A project override is a custom definition with its own recorded capabilities; it is not silently treated as the packaged read-only implementation.
 - System prompts retain applicable project instructions and child-specific role instructions. Conversation history is not copied.
@@ -293,8 +301,11 @@ Secretary configuration supplies an `agents.modelFallbackLists` object whose key
 - List names follow the agent-name pattern: an alphanumeric first character followed by letters, digits, `-`, or `_`, up to 64 characters. The name `inherit` is reserved and cannot name a list.
 - The plugin ships with no model fallback lists. A fresh installation has an absent or empty `modelFallbackLists` object, and every list is user-created.
 - Users can create and remove lists. Removing a list does not rewrite definitions that reference it.
+- Lists are reordered from the manager, and the manager's order is the persisted object's key order. A list's position is presentation order only: a definition or an assignment names its list explicitly, so position never participates in resolution. The manager, the assignment page, and the headless summary all read that one persisted order, so they cannot disagree about it. A move rebuilds the key order rather than swapping values, because the key order is the stored order.
 - Duplicate entries within one list fail configuration validation. An empty list is valid configuration; a launch that resolves to an empty list fails as described below.
 - The former `agents.modelAliases` object and its four fixed alias names are removed. A configuration file that still contains `modelAliases` fails validation with an error that names `modelFallbackLists` as the replacement.
+
+**Configuration-supplied subagent models.** Secretary configuration supplies an optional `agents.subagentModels` object whose keys are agent definition names and whose values are `inherit`, an exact `provider/modelId`, or a model fallback list name. It exists because a packaged definition has no file to edit, so a definition-file binding can never reach the built-in `general-purpose`, `Explore`, or `Plan`. Keys follow the agent-name pattern and need not correspond to a currently discoverable definition; an entry for a name that is never launched is inert. Values are validated by the same rules as a definition's `model` field. The object is edited through the configuration menu of [UX Section 2.5](../ux/subagents.md#25-secretary-configuration-menu) and is never rewritten by a packaged-definition update.
 
 A definition or invocation model value is interpreted as follows:
 
@@ -306,8 +317,11 @@ A definition or invocation model value is interpreted as follows:
 The model source is selected in the following order:
 
 1. An explicit `Agent.model` value.
-2. Otherwise, the definition's model value.
-3. Otherwise, `inherit`.
+2. Otherwise, the `agents.subagentModels` entry for the definition name.
+3. Otherwise, the definition's model value.
+4. Otherwise, `inherit`.
+
+A configuration entry therefore overrides a definition's own `model` field. The configuration menu is otherwise inert on exactly the definitions that declare a model, which would make the assignment surface appear not to work.
 
 Each candidate is checked in order against the model registry, the parent's scoped-model restrictions, and credential availability. The first candidate that passes every check is selected.
 
@@ -320,7 +334,7 @@ Each candidate is checked in order against the model registry, the parent's scop
 - The chain is evaluated only before the run's first successful provider response. Once execution begins, the selected model is fixed for the run, and mid-run provider errors keep the existing fail-fast behavior.
 - A per-parent-session availability cache records candidates observed to be cooling down or quota-limited, including the provider-reported reset time when one is available. Later launches in the same parent session skip those candidates until the reset time passes.
 - The launch result and the run record state the resolved model together with its resolution source: inheritance from the parent model, an exact definition or invocation model, or a named fallback list with the selected candidate's position in the list. When the first candidate was not used, they also state which candidates were skipped and why. A resolved model that equals the parent's current model must therefore be distinguishable from inheritance without inspecting configuration files.
-- The agent record persists this provenance as the interpreted value, its origin (invocation, definition, or default), the full candidate chain, the selected candidate's position, and the pre-launch skips. When the runner advances the chain at runtime, the recorded position advances with it; records written before provenance tracking lack the field and render no source.
+- The agent record persists this provenance as the interpreted value, its origin (invocation, configuration, definition, or default), the full candidate chain, the selected candidate's position, and the pre-launch skips. When the runner advances the chain at runtime, the recorded position advances with it; records written before provenance tracking lack the field and render no source.
 - Resumption retains the recorded model and does not re-evaluate the chain. A missing credential or unavailable model on resumption requires an explicit configuration correction, not a different model selected silently.
 - The child inherits the parent's thinking level unless a supported future definition field explicitly changes it. The initial public tool has no `thinking` parameter.
 - Provider registrations and credentials must be obtained through supported pi facilities. Access to an undocumented model-registry backing field is not an accepted permanent integration strategy.
@@ -534,6 +548,7 @@ The status vocabulary is internal. A new run is created for resumption; terminal
 - The implementation may request a bounded final summary before a hard stop, but it must not represent a missing summary as complete output.
 - Definition limits, queue bounds, and nesting depth have distinct purposes and are reported separately. External budget policies are not implemented by this subsystem.
 - Nested delegation is bounded by a maximum depth below the main session, configured by `agents.maxNestingDepth` with a default of three levels. A child session below the maximum depth receives the delegation tools; at the maximum depth the delegation tools are not registered, and a direct launch attempt beyond it fails with an actionable error.
+- The four limits — `agents.maxConcurrent`, `agents.maxQueued`, `agents.shutdownTimeoutMs`, and `agents.maxNestingDepth` — are edited through the Runtime Limits page of [UX Section 2.5](../ux/subagents.md#25-secretary-configuration-menu). Unlike `modelFallbackLists` and `subagentModels` they are scalars stored directly on the `agents` object, so the page validates a fully applied `agents` object to read its current values and writes the complete object through the same re-read-validate-write boundary as the list settings; a rejected edit writes nothing and leaves every other field untouched. Each field has its own floor: `maxConcurrent` and `maxNestingDepth` are at least one, while `maxQueued` and `shutdownTimeoutMs` accept zero, because an idle queue and an immediate timeout are meaningful values and a zero worker count is not.
 
 ### 7.4 Shutdown and cancellation
 

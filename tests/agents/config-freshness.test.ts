@@ -47,7 +47,7 @@ test("a menu action does not revert a newer edit made after the menu loaded", t 
   const file = () => JSON.parse(readFileSync(join(agentDir, "secretary.json"), "utf8"));
   const seed = { agents: { modelFallbackLists: { "computer-use": ["p/old-head", "p/two"], cheap: ["q/three"] } } };
   writeFileSync(join(agentDir, "secretary.json"), JSON.stringify(seed));
-  const menu = new SecretaryConfigMenu({ agentDir, models: () => ["p/old-head", "p/two", "p/new-head", "q/three"], onDismiss: () => {} });
+  const menu = new SecretaryConfigMenu({ agentDir, models: () => ["p/old-head", "p/two", "p/new-head", "q/three"], definitions: () => [{ name: "Explore" }], onDismiss: () => {} });
   // A newer edit lands after the menu loaded its in-memory copy: the list head is replaced.
   writeFileSync(join(agentDir, "secretary.json"),
     JSON.stringify({ agents: { modelFallbackLists: { "computer-use": ["p/new-head", "p/two"], cheap: ["q/three"] } } }));

@@ -19,7 +19,7 @@ function harness(abortFails = false) {
   const finishers: (() => void)[] = [];
   const service = new AgentService({ parentId: "parent", root, repository, diagnostic: error => { diagnostics.push(error); },
     ctx: { cwd: root, mode: "tui" } as ExtensionContext,
-    config: { modelFallbackLists: {}, ui: defaultAgentUi(), maxConcurrent: 1, maxQueued: 10, shutdownTimeoutMs: 1000, maxNestingDepth: 3 },
+    config: { modelFallbackLists: {}, subagentModels: {}, ui: defaultAgentUi(), maxConcurrent: 1, maxQueued: 10, shutdownTimeoutMs: 1000, maxNestingDepth: 3 },
     runner: async options => {
       started.push(options.run.runId);
       let finish!: () => void;

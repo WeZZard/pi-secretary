@@ -48,7 +48,9 @@ export function installSecretary(pi: ExtensionAPI, engine: GoalEngine, options: 
     if (event.toolName !== "get_goal" && work && (work.automatic || work.unresolvedAutomatic) && !sync.isCurrent(work)) {
       return { block: true, reason: "This automatic work was superseded. Use current goal state; do not execute actions from its old intent.", terminate: true };
     }
-    if (work?.automatic?.kind === "budget_wrap_up" && !["get_goal", "update_goal", "read", "grep", "find", "ls"].includes(event.toolName)) {
+    // Real pi tool names only (architecture §5.1). `bash` is the search mechanism in pi, so
+    // omitting it would leave wrap-up unable to gather the evidence it is meant to report on.
+    if (work?.automatic?.kind === "budget_wrap_up" && !["get_goal", "update_goal", "read", "bash"].includes(event.toolName)) {
       return { block: true, reason: "Budget wrap-up authorizes reporting and read-only evidence, not new substantive goal work.", terminate: true };
     }
   });

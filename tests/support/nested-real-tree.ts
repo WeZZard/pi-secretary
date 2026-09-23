@@ -19,7 +19,7 @@ import type { AgentUIPort } from "../../extensions/secretary/agents/ui/effects.t
  * (service, storage, tree aggregation, UI port) is the real implementation.
  */
 export const nestedConfig: AgentConfiguration = {
-  modelFallbackLists: {}, ui: defaultAgentUi(), maxConcurrent: 4, maxQueued: 8, shutdownTimeoutMs: 1000, maxNestingDepth: 3,
+  modelFallbackLists: {}, subagentModels: {}, ui: defaultAgentUi(), maxConcurrent: 4, maxQueued: 8, shutdownTimeoutMs: 1000, maxNestingDepth: 3,
 };
 
 /** Flush microtasks and pending setImmediate continuations deterministically. */

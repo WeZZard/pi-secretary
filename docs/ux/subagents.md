@@ -300,10 +300,13 @@ The following is a layout example. Angle-bracket values are placeholders, not me
 
 - `/secretary` opens the Secretary configuration menu as a full-screen page in pi's native selector style: horizontal rules above and below, a bold heading showing the breadcrumb path, muted subtitle lines, `→` selection markers, and a two-line footer whose operations line shows the functions that operate the lists in the configuration and whose navigation line shows the movement keys. The menu keeps the same minimum-width and theme behavior as the inspector. A view with no list operations leaves the operations line empty.
 - The top level lists the Secretary modules that have a configuration surface. In this release only Subagents is present. Modules without a configuration surface do not appear as disabled or placeholder entries, matching the exclusion policy in [Section 8](#8-ported-surface-exclusions).
-- The Subagents section lists the subagent configuration items as a navigation list. In this release the only item is Model Fallback Lists; later subagent options join this list instead of being inlined into the section page.
-- The model fallback list manager shows every configured list with its model count, followed by an `＋ Add List` row. Lists are created, renamed, and removed from this page.
+- The Subagents section lists the subagent configuration items as a navigation list. Three items are present: Model Fallback Lists, Subagent Models, and Runtime Limits. Later subagent options join this list instead of being inlined into the section page.
+- The Subagent Models page lists every discovered agent definition with its current model and the resolution source that produced it, followed by a status word stating whether the value is assigned, declared by the definition, or inherited. The page exists because a packaged definition has no file to edit, so an assignment is the only way to give `general-purpose`, `Explore`, or `Plan` a model of their own.
+- Opening a definition offers `inherit`, every configured fallback list, and an `＋ Exact Model` row that opens the model picker and assigns the chosen session model directly. The current assignment is marked with the selection marker. A definition's row states whether its model came from an assignment, from the definition's own `model` field, or from inheritance, so an assigned model is never confused with an inherited one.
+- The Runtime Limits page shows the four persisted limits that govern agent execution: maximum concurrent agents, maximum queued launches, the shutdown timeout in milliseconds, and the maximum nesting depth. Each row states the field's label and its persisted value, and the page states that it edits the user-global configuration only. Nesting depth counts levels below the main session, so the main session is not one of the counted levels. Editing a row opens a value prompt prefilled with the current value. The prompt accepts whole numbers only, and each field has a floor: concurrent agents and nesting depth must be at least one, while a zero queue and an immediate timeout are meaningful and accepted. A rejected value leaves the prompt open with the draft retained and states the constraint, so the value can be corrected in place. The four limits are stored directly on the `agents` object rather than under a sub-object, and the page writes them through the same re-read-validate-write boundary as the model settings, so a concurrent hand edit is never silently overwritten and a rejected edit writes nothing.
+- The model fallback list manager shows every configured list in the persisted order, with its model count, followed by an `＋ Add List` row. Lists are created, renamed, removed, and reordered from this page. A list's position is presentation order only: a definition or an assignment names its list explicitly, so position never affects which list resolves. Shift+K and Shift+J move the selected list up or down and the selection follows the moved list.
 - Entering a list shows its models in resolution order, from first tried to last tried. Model identifiers render as `modelId [provider]`, matching pi's native model selectors. An empty list shows a single selected `＋ Add Model` row and nothing else.
-- The list-name prompt, the rename prompt, and the model picker are full-screen pages with the same chrome. Their text fields use pi's standard single-line input with its block cursor. The rename prompt is prefilled with the current name. The picker's candidate list excludes models already in the list and is filtered as the user types.
+- The list-name prompt, the rename prompt, the runtime-limit value prompt, and the model picker are full-screen pages with the same chrome. Their text fields use pi's standard single-line input with its block cursor. The rename prompt and the runtime-limit value prompt are prefilled with the current value. The picker's candidate list excludes models already in the list and is filtered as the user types.
 - Right enters the selected item's level and Left returns to the parent level, following the drill-down convention for multi-level menus. Escape dismisses the entire menu from any level. When a text field is focused, such as a name prompt or the model-picker filter, Left and Right move the text caret instead of navigating menu levels.
 - The menu edits the user-global Secretary configuration. Project-level configuration remains a hand-edited file, and the menu states this boundary.
 - Changes are validated and persisted when the user confirms them. The previous configuration remains in effect if validation or persistence fails. Renaming preserves the list's models and its position in the manager; definitions that reference the old name fail at launch until they are updated.
@@ -332,6 +335,8 @@ The Subagents section's configuration items:
 Secretary › Subagents
 
 → Model Fallback Lists
+  Subagent Models
+  Runtime Limits
 
   ↑/↓ select · Enter/→ open · ← back · Esc dismiss
 ────────────────────────────────────────────────────────────
@@ -350,6 +355,7 @@ Edits the user-global configuration only.
   ＋ Add List
 
   a add list · r rename list · d remove list
+  Shift+K/J move up/down
   ↑/↓ select · Enter/→ open · ← back · Esc dismiss
 ────────────────────────────────────────────────────────────
 ```
@@ -430,6 +436,71 @@ Remove List
 Remove fallback list "<list name>"?
 Definitions that reference it will fail at launch
 until they are updated.
+
+  Enter confirm · Esc cancel
+────────────────────────────────────────────────────────────
+```
+
+The Subagent Models page:
+
+```text
+────────────────────────────────────────────────────────────
+
+Secretary › Subagents › Subagent Models
+Assignments override a definition's own model.
+
+→ Explore  fast  assigned
+  Plan  inherit  inherited
+  general-purpose  inherit  inherited
+
+  ↑/↓ select · Enter/→ open · ← back · Esc dismiss
+────────────────────────────────────────────────────────────
+```
+
+Assigning a model to one definition:
+
+```text
+────────────────────────────────────────────────────────────
+
+Secretary › Subagents › Subagent Models › Explore
+Resolution order: invocation · assignment · definition · inherit.
+
+→ inherit
+  fast  fallback list · 1 model
+  oracle  fallback list · 4 models
+  ＋ Exact Model
+
+  Enter assign · ← back · Esc dismiss
+────────────────────────────────────────────────────────────
+```
+
+The Runtime Limits page:
+
+```text
+────────────────────────────────────────────────────────────
+
+Secretary › Subagents › Runtime Limits
+Edits the user-global configuration only.
+
+→ Max Concurrent  4
+  Max Queued  16
+  Shutdown Timeout  5000 ms
+  Max Nesting Depth  3
+
+  ↑/↓ select · Enter edit · ← back · Esc dismiss
+────────────────────────────────────────────────────────────
+```
+
+Editing one limit:
+
+```text
+────────────────────────────────────────────────────────────
+
+Max Concurrent
+Agents allowed to run at the same time.
+Whole number of at least 1.
+
+> 4
 
   Enter confirm · Esc cancel
 ────────────────────────────────────────────────────────────
@@ -533,6 +604,15 @@ Secretary initially exposes one guidance operation. Nicobailon's `steer`, `follo
 - **Feedback:** Invalid configuration prevents new delegation with an actionable error. The application does not insert reminder text into the saved human message or display each refresh as a new chat message.
 - **Failure and recovery:** The user corrects the configuration and continues. Configuration editing alone does not trigger a model response, grant permission to resume a goal, or cancel existing agents.
 
+### 3.11 Assign a model to a subagent
+
+- **User intent:** The user wants one subagent type to run on a different model from the session, without authoring or editing a definition file, including for the three packaged definitions that have no file.
+- **Entry conditions:** The user has opened `/secretary` and the Subagents section is available. At least one model fallback list exists, or the session exposes at least one model, for an assignment other than `inherit` to be available.
+- **User action:** Open Subagent Models, select a definition, then select `inherit`, a configured fallback list, or `＋ Exact Model` and pick a session model.
+- **Observable outcome:** The definition's row shows the assigned value and the status word `assigned`. Subsequent launches of that definition resolve the assigned model, and the run record states the assignment as the model's origin.
+- **Feedback:** The list states the resolution order, so the user can see that an assignment outranks the definition's own `model` field. An `inherit` selection removes the effective override and the row reverts to `inherited` or to the definition's declared value.
+- **Failure and recovery:** Nothing is written until the selection is confirmed, and the previous configuration stays in effect if validation or persistence fails. An assignment that names a fallback list remains in place if that list is later removed; a launch then fails naming the missing list, and the user corrects it by assigning `inherit` or another list. There is no undo beyond reassigning.
+
 ## 4. Navigation and Accessibility
 
 | Context | Key | Behavior |
@@ -563,6 +643,7 @@ Secretary initially exposes one guidance operation. Nicobailon's `steer`, `follo
 | The `/secretary` menu is open. | `a` | The key starts the add flow for the current view: a new list in the manager, or a new model in a list. |
 | The `/secretary` menu is open. | `r` | The key opens the rename prompt for the selected fallback list, prefilled with its current name. |
 | The `/secretary` menu is open. | `d` | The key removes the selected item. List removal requires confirmation; model removal does not. |
+| The fallback list manager is open. | Shift+K/Shift+J | The key moves the selected fallback list up or down, changing the order the manager, the assignment page, and the headless summary present lists in. |
 | A fallback list detail is open. | Shift+K/Shift+J | The key moves the selected model up or down in the list, changing its resolution order. |
 | The model picker is open. | Printable characters | The characters filter the candidate models. |
 | The `/secretary` menu is open. | Escape | The key dismisses the entire menu from any level. A focused prompt, picker, or confirmation page cancels itself first. |

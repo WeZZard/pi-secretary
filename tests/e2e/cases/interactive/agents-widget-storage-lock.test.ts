@@ -137,7 +137,7 @@ test("agents widget render read succeeds while a concurrent connection holds a w
     const repository = new AgentRepository(db.connection);
     const service = new AgentService({ parentId: "p", root: dir, repository,
       ctx: { cwd: dir, mode: "tui" } as never,
-      config: { modelFallbackLists: {}, ui: defaultAgentUi(), maxConcurrent: 1, maxQueued: 2, shutdownTimeoutMs: 100, maxNestingDepth: 3 },
+      config: { modelFallbackLists: {}, subagentModels: {}, ui: defaultAgentUi(), maxConcurrent: 1, maxQueued: 2, shutdownTimeoutMs: 100, maxNestingDepth: 3 },
       runner: async options => {
         options.hooks.usage("u1", { inputTokens: 1500, cachedInputTokens: 500, cacheWriteInputTokens: 0,
           outputTokens: 250, reasoningOutputTokens: 0, totalTokens: 1750 });
