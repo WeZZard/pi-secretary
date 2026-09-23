@@ -96,6 +96,19 @@ test("an action that took effect but missed its postcondition is not repeated, u
   assert.match(result.escalation!.observation!, /A Button "Submit"/, "An escalation carries a fresh observation for replanning");
 });
 
+test("a scroll only moves the view, so it repeats up to 3 times by default and stops when the view stops moving", async (t) => {
+  const pages = () => [form, window([{ name: "Page 2" }]), window([{ name: "Page 3" }]), window([{ name: "Page 4" }]), window([{ name: "Page 5" }])];
+  const scroll = { id: "s", intent: "Scroll to Zoning", operation: "scroll_down" as const, postcondition: { exists: { name: "Zoning" } } };
+  const { deps } = setup(t, pages());
+  const result = await runPlan(deps(executor(() => ({ operation: "scroll_down" }))), plan([scroll]));
+  assert.deepEqual([result.escalation!.reason, result.actions], ["postcondition_failed", 3]);
+  const end = setup(t, [form, window([{ name: "Page 2" }])]);
+  const stopped = await runPlan(end.deps(executor(() => ({ operation: "scroll_down" }))), plan([scroll]));
+  assert.deepEqual([stopped.escalation!.reason, stopped.actions], ["no_progress", 2]);
+  assert.match(stopped.escalation!.detail, /the view has reached its end/);
+  assert.equal(validatePlan(plan([{ ...scroll, maxAttempts: 5 }]), 50), undefined);
+});
+
 test("an action that changes nothing on screen is not repeated and escalates no_progress", async (t) => {
   // Observed through Pi on 2026-09-23: invisible clicks and keys were each sent twice.
   const { backend, deps } = setup(t, [form]);
@@ -244,5 +257,5 @@ test("text entry must check the text, and a key that only moves the insertion po
     "A step with text is text entry whether or not it names the operation");
   assert.match(validatePlan(plan([{ id: "k", intent: "Erase", keys: "Hyper+x", postcondition: { changed: true } }]), 50) ?? "", /step k: "Hyper\+x" is not a key combination/);
   assert.match(validatePlan(plan([{ id: "b", intent: "Both", text: "a", keys: "cmd+a", postcondition: { text: { contains: "a" } } }]), 50) ?? "", /text or keys, not both/);
-  assert.match(validatePlan(plan([{ id: "r", intent: "Send", maxAttempts: 3, postcondition: { exists: { name: "Sent" } } }]), 50) ?? "", /max_attempts above 1 needs idempotent: true/);
+  assert.match(validatePlan(plan([{ id: "r", intent: "Send", maxAttempts: 3, postcondition: { exists: { name: "Sent" } } }]), 50) ?? "", /max_attempts above 1 needs idempotent: true or a scroll operation/);
 });

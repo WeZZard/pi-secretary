@@ -67,6 +67,13 @@ const NAVIGATION_KEYS = new Set(["up", "down", "left", "right", "home", "end", "
  */
 const DEFAULT_ATTEMPTS = 1;
 const DEFAULT_IDEMPOTENT_ATTEMPTS = 2;
+/**
+ * A scroll only moves the view, so a repeat cannot act twice. Through Pi, every scroll toward a file
+ * below the visible list needed a new plan once scrolls acted only once (observed 2026-09-23); the
+ * fixture's target took two pages.
+ */
+const DEFAULT_SCROLL_ATTEMPTS = 3;
+const isScroll = (operation: string | undefined) => operation === "scroll_up" || operation === "scroll_down";
 
 /** Returns the first problem with a plan, before any action (design §5.2). */
 export function validatePlan(plan: Plan, maxSteps: number, basedOn?: Observation): string | undefined {
@@ -86,8 +93,8 @@ export function validatePlan(plan: Plan, maxSteps: number, basedOn?: Observation
       catch (error) { return `step ${step.id}: ${(error as Error).message}`; }
     }
     if (step.maxAttempts !== undefined && (!Number.isInteger(step.maxAttempts) || step.maxAttempts < 1 || step.maxAttempts > 5)) return `step ${step.id}: maxAttempts must be 1 to 5`;
-    if ((step.maxAttempts ?? 1) > 1 && step.idempotent !== true) {
-      return `step ${step.id}: max_attempts above 1 needs idempotent: true, because repeating an action that took effect could act twice`;
+    if ((step.maxAttempts ?? 1) > 1 && step.idempotent !== true && !isScroll(step.operation)) {
+      return `step ${step.id}: max_attempts above 1 needs idempotent: true or a scroll operation, because repeating an action that took effect could act twice`;
     }
     if (step.idempotent !== undefined && typeof step.idempotent !== "boolean") return `step ${step.id}: idempotent must be true or false`;
     if (step.text !== undefined && !checksText(step.postcondition)) {
@@ -243,10 +250,12 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
         outcome.result = "failed";
         outcome.detail = evaluation.detail;
         if (unchanged >= NO_CHANGE_LIMIT) {
-          escalate(step.id, "no_progress", `${described} changed nothing on screen; it was not repeated, because a repeat could act twice`, decision.prior);
+          escalate(step.id, "no_progress", `${described} changed nothing on screen; it was not repeated${isScroll(decision.operation) ? ", because the view has reached its end" : ", because a repeat could act twice"}`, decision.prior);
         }
-        if (attempts >= (step.maxAttempts ?? (step.idempotent ? DEFAULT_IDEMPOTENT_ATTEMPTS : DEFAULT_ATTEMPTS))) {
-          escalate(step.id, "postcondition_failed", attempts === 1 && !step.idempotent
+        const repeatable = step.idempotent === true || isScroll(decision.operation);
+        const limit = repeatable ? step.maxAttempts ?? (isScroll(decision.operation) ? DEFAULT_SCROLL_ATTEMPTS : DEFAULT_IDEMPOTENT_ATTEMPTS) : DEFAULT_ATTEMPTS;
+        if (attempts >= limit) {
+          escalate(step.id, "postcondition_failed", !repeatable
             ? `${evaluation.detail}. The action changed the screen, so it was not repeated; a repeat could act twice.` : evaluation.detail, decision.prior);
         }
       }
