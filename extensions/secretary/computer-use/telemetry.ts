@@ -40,4 +40,24 @@ export class Telemetry {
     await writeFile(path, `${JSON.stringify(record, null, 1)}\n`, { mode: 0o600 });
     return path;
   }
+
+  /** One record per executor decision (design §12.1). The request carries no typed literal; step text stays in the plan record. */
+  async recordStep(record: { runId: string; stepId: string; attempt: number } & Record<string, unknown>): Promise<string> {
+    const directory = join(this.root, "runs", record.runId);
+    await mkdir(directory, { recursive: true });
+    const path = join(directory, `step-${record.stepId.replace(/[^A-Za-z0-9_-]/g, "_")}-${record.attempt}-${Date.now()}.json`);
+    await writeFile(path, `${JSON.stringify({ schema: "secretary.computer-use.step/1", recordedAt: new Date().toISOString(), ...record }, null, 1)}\n`, { mode: 0o600 });
+    return path;
+  }
+
+  /** One summary per plan call. Typed literals are replaced by their length when redaction is on. */
+  async recordPlan(record: { runId: string; redact: boolean; plan: { steps: { text?: string }[] } } & Record<string, unknown>): Promise<string> {
+    const directory = join(this.root, "runs", record.runId);
+    await mkdir(directory, { recursive: true });
+    const { redact, plan, ...rest } = record;
+    const steps = plan.steps.map(step => step.text !== undefined && redact ? { ...step, text: `<${[...step.text].length} characters>` } : step);
+    const path = join(directory, "plan.json");
+    await writeFile(path, `${JSON.stringify({ schema: "secretary.computer-use.plan/1", recordedAt: new Date().toISOString(), ...rest, plan: { ...plan, steps } }, null, 1)}\n`, { mode: 0o600 });
+    return path;
+  }
 }

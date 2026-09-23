@@ -181,6 +181,7 @@ extensions/secretary/computer-use/
 - The definition sets `background: true`, because a desktop task can take minutes.
 - The subagent runtime launches, observes, cancels and resumes the child without any change. Cancellation of the child aborts the tool call in progress, and the harness stops at the next safe point defined in [Section 9](#9-step-lifecycle).
 - `computer_observe` is registered only when `computerUse.backend` selects a backend. `computer_run_plan` additionally requires `executorUrl`. A missing configuration hides a tool rather than failing at call time, and an invalid configuration disables both tools with a diagnostic.
+- Tools are registered at the first session start of the extension instance. A later session whose configuration lacks the executor rejects `computer_run_plan` calls. A configuration that gains the executor takes effect after a reload.
 
 ### 4.4 Planner model capability
 
@@ -231,10 +232,11 @@ The planner calls this tool with a complete plan. The tool returns only when the
 
 | Field | Meaning |
 | --- | --- |
+| `app` and `window_title` | They name the target window, as for `computer_observe`. |
 | `goal` | It is the task-level goal in one sentence. The executor sees it in every request. |
-| `basedOn` | It is the observation identifier the plan was written against. |
-| `steps` | It is an ordered list of steps with at most the configured step limit. |
-| `allowDestructive` | It is a list of step identifiers that may perform destructive actions. It is empty by default. |
+| `based_on` | It is optional. It names the observation the plan was written against. An unknown or expired identifier rejects the plan, and the session keeps the last 16 observations. |
+| `steps` | It is an ordered list of at most 50 steps. |
+| `allow_destructive` | It is a list of step identifiers that may perform destructive actions. It is empty by default. |
 
 **Step fields:**
 
@@ -246,7 +248,9 @@ The planner calls this tool with a complete plan. The tool returns only when the
 | `text` | It is an optional literal string for text entry. It must be complete, because the executor cannot generate text. |
 | `keys` | It is an optional key combination for a keyboard shortcut, for example `cmd+shift+n`. |
 | `postcondition` | It is a predicate from [Section 5.3](#53-postconditions) that must hold after the step. |
-| `maxAttempts` | It is optional. It limits how often the harness may retry the step after a failed postcondition. The default is 2. |
+| `max_attempts` | It is optional, from 1 to 5. It limits how often the harness may act for the step before escalating `postcondition_failed`. The default is 2. |
+
+- The harness validates the whole plan before any observation. Repeated step identifiers, malformed postconditions, `enter_text` without `text`, `key_combo` without `keys`, and unknown `allow_destructive` identifiers reject the plan.
 
 ### 5.3 Postconditions
 
@@ -396,7 +400,7 @@ The policy runs in code after each response. It applies the following rules in o
 3. If `operation` is `abstain`, or the routed element question answers `none`, the policy returns `target_not_found`.
 4. If the table has several groups, the policy reads the element answer from the question of the group chosen by `region`. It never compares confidences across questions ([research Section 4.7](../research/computer-use-s0-s1.md#47-merging-independent-heads-by-confidence-n--8)).
 5. If the chosen element and operation are incompatible, the policy returns `uncertain`. For example, `enter_text` on an element that is not a text field is incompatible.
-6. If `risk` is `destructive` and the step is not listed in `allowDestructive`, the policy returns `approval_required`. The risk answer can only add caution. It never authorizes an action.
+6. If `risk` is `destructive` and the step is not listed in `allow_destructive`, the policy returns `approval_required`. The risk answer can only add caution. It never authorizes an action.
 7. If the confidence of the used `region`, element or `operation` answer is below the configured gate, the policy returns `uncertain` and includes the answers as a prior. The default gate is 0.4, which is taken from prior art and is not validated here.
 8. Otherwise, the policy selects the element and operation for execution.
 
@@ -462,13 +466,13 @@ An escalation ends the `computer_run_plan` call and returns control to the plann
 
 | Reason | Raised when | Expected planner response |
 | --- | --- | --- |
-| `needs_text` | A step needs text that the plan did not supply. | Supply the literal text in a revised step. |
+| `needs_text` | The step's text contains characters that the backend cannot type with real key presses. A step without `text` is never offered `enter_text`, so missing text cannot reach the executor. | Rewrite the text with typeable characters, or split the step. |
 | `state_too_large` | The tree was truncated, or the table exceeds the element or token budget. | Narrow the target, for example by closing panels or choosing a smaller window. |
 | `uncertain` | Confidence is below the gate, or the element and operation are incompatible. The answers are returned as a prior. | Confirm the prior or rewrite the step more specifically. |
 | `target_not_found` | The executor abstained. | Check the returned observation and revise the step. |
 | `postcondition_failed` | The postcondition still fails after all attempts. | Revise the step or the postcondition. |
 | `no_progress` | Actions change nothing twice in a row, or the window keeps changing. | Inspect the returned screenshot and revise the approach. |
-| `approval_required` | A destructive action was chosen for a step not listed in `allowDestructive`. | Add the step to `allowDestructive` only when the delegated task authorizes it. |
+| `approval_required` | A destructive action was chosen for a step not listed in `allow_destructive`. | Add the step to `allow_destructive` only when the delegated task authorizes it. |
 | `budget_exhausted` | The action limit was reached. | Report partial progress to the parent. |
 | `executor_unavailable` | The executor service failed or timed out. | Report the failure. The planner must not perform the steps itself in this release. |
 | `backend_failed` | The relay refused an action, reported an uncertain outcome, or lost the lease. | Report the failure. The harness never replays an uncertain action. |

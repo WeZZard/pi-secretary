@@ -68,3 +68,11 @@ test("invalid configuration and a tool-name collision disable computer use with 
   assert.equal(collision.tools.length, 0);
   assert.match(collision.notices[0]!, /another extension provides computer_observe/);
 });
+
+test("computer_run_plan is registered only when the executor is configured", async (t) => {
+  const h = host(t, { computerUse: { backend: "local", allowLocalDesktop: true, executorUrl: "http://jev.home.arpa" } });
+  installComputerUse(h.pi, { root: h.root, agentDir: () => h.agentDir, backendFactory: () => new FakeBackend({}),
+    executorFactory: () => ({ decide: async () => { throw new Error("unused"); } }) });
+  await h.emit("session_start");
+  assert.deepEqual(h.tools.map(tool => tool.name), ["computer_observe", "computer_run_plan"]);
+});

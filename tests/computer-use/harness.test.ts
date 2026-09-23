@@ -1,0 +1,150 @@
+import assert from "node:assert/strict";
+import { test, type TestContext } from "node:test";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { BackendError, type RawElement, type WindowRead } from "../../extensions/secretary/computer-use/backend/backend.ts";
+import { FakeBackend } from "../../extensions/secretary/computer-use/backend/fake-backend.ts";
+import { defaultComputerUseConfiguration } from "../../extensions/secretary/computer-use/configuration.ts";
+import { ExecutorError, type DecisionRequestBody, type DecisionResponse } from "../../extensions/secretary/computer-use/executor-client.ts";
+import { runPlan, validatePlan, type Plan } from "../../extensions/secretary/computer-use/harness.ts";
+import { Telemetry } from "../../extensions/secretary/computer-use/telemetry.ts";
+
+type Read = Omit<WindowRead, "readMs">;
+/** A small window: every listed control is a kept element in one group, lettered in reading order. */
+function window(controls: { role?: string; name: string; value?: string }[]): Read {
+  const elements: RawElement[] = [{ element_index: 0, role: "AXWindow", label: "Form", depth: 0, frame: { x: 0, y: 0, w: 800, h: 600 } }];
+  controls.forEach((control, i) => elements.push({ element_index: i + 1, role: control.role ?? "AXButton", label: control.name,
+    ...(control.value !== undefined ? { value: control.value } : {}), parent_index: 0, depth: 1, frame: { x: 100, y: 50 + i * 40, w: 80, h: 20 } }));
+  return { window: { pid: 1, windowId: 1, app: "Form", title: "Form" }, appActive: true, truncated: false, elements };
+}
+
+/** A scripted executor: answers name an element by its name, which the test maps to a letter. */
+function executor(script: (body: DecisionRequestBody, call: number) => { element?: string; operation: string; risk?: string; confidence?: number } | Error) {
+  const bodies: DecisionRequestBody[] = [];
+  return { bodies, decide: async (body: DecisionRequestBody): Promise<DecisionResponse> => {
+    bodies.push(body);
+    const answer = script(body, bodies.length);
+    if (answer instanceof Error) throw answer;
+    const confidence = answer.confidence ?? 0.9;
+    const table = String((body.state as { elements: string }).elements);
+    const letter = answer.element ? table.split("\n").find(line => line.slice(4) === answer.element)?.trim()[0] ?? "none" : "none";
+    return { roundTripMs: 1, answers: { element_1: { choice: letter, confidence }, operation: { choice: answer.operation, confidence }, risk: { choice: answer.risk ?? "safe", confidence } } };
+  } };
+}
+
+function setup(t: TestContext, reads: (Read | Error)[], overrides: Partial<ReturnType<typeof defaultComputerUseConfiguration>> = {}) {
+  const root = mkdtempSync(join(tmpdir(), "secretary-harness-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const backend = new FakeBackend({ Form: reads });
+  const config = { ...defaultComputerUseConfiguration(), settleMs: 0, ...overrides };
+  return { backend, root, deps: (exec: ReturnType<typeof executor>) => ({ backend, executor: exec, telemetry: new Telemetry(root), config, sleep: async () => {}, newId: () => "run-1" }) };
+}
+
+const plan = (steps: Plan["steps"], allowDestructive: string[] = []): Plan => ({ target: { app: "Form" }, goal: "Fill the form", steps, allowDestructive });
+const submitted = window([{ name: "Done" }]);
+const form = window([{ name: "Submit" }, { name: "Cancel" }]);
+
+test("a plan completes: one request per step, a real click at the element center, and a verified postcondition", async (t) => {
+  const { backend, deps } = setup(t, [form, submitted]);
+  const exec = executor(() => ({ element: "Submit", operation: "press" }));
+  const result = await runPlan(deps(exec), plan([{ id: "submit", intent: "Submit the form", postcondition: { exists: { name: "Done" } } }]));
+  assert.equal(result.outcome, "completed");
+  assert.deepEqual(result.steps, [{ id: "submit", result: "verified", action: "press", element: "Submit", detail: "\"Done\" is on screen" }]);
+  assert.deepEqual([result.decisions, result.actions], [1, 1]);
+  assert.deepEqual(backend.actions.map(entry => entry.action), [{ kind: "click", point: { x: 140, y: 60 }, button: "left", count: 1 }]);
+  assert.ok(!("depends_on" in exec.bodies[0]!.questions.operation!));
+});
+
+test("a step whose postcondition already holds is skipped without an executor request", async (t) => {
+  const { deps } = setup(t, [submitted]);
+  const exec = executor(() => { throw new Error("must not be called"); });
+  const result = await runPlan(deps(exec), plan([{ id: "submit", intent: "Submit", postcondition: { exists: { name: "Done" } } }]));
+  assert.deepEqual([result.outcome, result.steps[0]!.result, result.decisions], ["completed", "skipped", 0]);
+});
+
+test("a failed postcondition is retried and then escalated as postcondition_failed", async (t) => {
+  const { deps } = setup(t, [form, window([{ name: "Submit" }, { name: "Cancel" }, { name: "Error" }]), window([{ name: "Submit" }, { name: "Cancel" }, { name: "Error 2" }])]);
+  const result = await runPlan(deps(executor(() => ({ element: "Submit", operation: "press" }))), plan([{ id: "s", intent: "Submit", postcondition: { exists: { name: "Done" } } }]));
+  assert.equal(result.outcome, "escalated");
+  assert.deepEqual([result.escalation!.reason, result.actions], ["postcondition_failed", 2]);
+  assert.match(result.escalation!.observation!, /A Button "Submit"/, "An escalation carries a fresh observation for replanning");
+});
+
+test("two actions that change nothing on screen escalate no_progress", async (t) => {
+  const { deps } = setup(t, [form]);
+  const result = await runPlan(deps(executor(() => ({ element: "Submit", operation: "press" }))),
+    plan([{ id: "s", intent: "Submit", maxAttempts: 5, postcondition: { exists: { name: "Done" } } }]));
+  assert.deepEqual([result.escalation!.reason, result.actions], ["no_progress", 2]);
+  assert.match(result.escalation!.detail, /changed nothing on screen twice/);
+});
+
+test("policy escalations stop the plan with their reason and prior", async (t) => {
+  const abstain = setup(t, [form]);
+  const notFound = await runPlan(abstain.deps(executor(() => ({ operation: "abstain" }))), plan([{ id: "s", intent: "Open settings", postcondition: { exists: { name: "Settings" } } }]));
+  assert.equal(notFound.escalation!.reason, "target_not_found");
+  const risky = setup(t, [form]);
+  const approval = await runPlan(risky.deps(executor(() => ({ element: "Submit", operation: "press", risk: "destructive" }))),
+    plan([{ id: "s", intent: "Submit", postcondition: { exists: { name: "Done" } } }]));
+  assert.deepEqual([approval.escalation!.reason, approval.escalation!.prior?.element, risky.backend.actions.length], ["approval_required", "Submit", 0]);
+  const allowed = setup(t, [form, submitted]);
+  const done = await runPlan(allowed.deps(executor(() => ({ element: "Submit", operation: "press", risk: "destructive" }))),
+    plan([{ id: "s", intent: "Submit", postcondition: { exists: { name: "Done" } } }], ["s"]));
+  assert.equal(done.outcome, "completed", "allowDestructive authorizes the named step");
+});
+
+test("executor failure, untypeable text and backend failure escalate without replaying an action", async (t) => {
+  const down = setup(t, [form]);
+  const unavailable = await runPlan(down.deps(executor(() => new ExecutorError("timeout", "the executor did not answer within 10000 ms"))),
+    plan([{ id: "s", intent: "Submit", postcondition: { exists: { name: "Done" } } }]));
+  assert.deepEqual([unavailable.escalation!.reason, unavailable.decisions], ["executor_unavailable", 0]);
+
+  const text = setup(t, [window([{ role: "AXTextField", name: "Email" }])]);
+  const needsText = await runPlan(text.deps(executor(() => ({ element: "Email", operation: "enter_text" }))),
+    plan([{ id: "s", intent: "Enter the email", text: "a@b.c", postcondition: { value: { name: "Email", equals: "a@b.c" } } }]));
+  assert.deepEqual([needsText.escalation!.reason, text.backend.actions.length], ["needs_text", 0], "A refused literal sends no partial input");
+
+  const broken = setup(t, [form, submitted]);
+  broken.backend.actionFailures.push(new BackendError("driver_failed", "cua-driver click failed"));
+  const failed = await runPlan(broken.deps(executor(() => ({ element: "Submit", operation: "press" }))), plan([{ id: "s", intent: "Submit", postcondition: { exists: { name: "Done" } } }]));
+  assert.deepEqual([failed.escalation!.reason, failed.actions, broken.backend.actions.length], ["backend_failed", 0, 0]);
+});
+
+test("cancellation stops before the next request or action", async (t) => {
+  const { backend, deps } = setup(t, [form, submitted]);
+  const controller = new AbortController();
+  const result = await runPlan(deps(executor(() => { controller.abort(); return { element: "Submit", operation: "press" }; })),
+    plan([{ id: "s", intent: "Submit", postcondition: { exists: { name: "Done" } } }]), controller.signal);
+  assert.deepEqual([result.outcome, backend.actions.length], ["cancelled", 0]);
+});
+
+test("the action budget ends a plan with budget_exhausted", async (t) => {
+  const { deps } = setup(t, [form, window([{ name: "Next" }]), window([{ name: "Next" }])], { maxActionsPerPlan: 1 });
+  const result = await runPlan(deps(executor((_body, call) => ({ element: call === 1 ? "Submit" : "Next", operation: "press" }))), plan([
+    { id: "a", intent: "Submit", postcondition: { exists: { name: "Next" } } },
+    { id: "b", intent: "Continue", postcondition: { exists: { name: "Finished" } } }]));
+  assert.deepEqual([result.escalation!.reason, result.escalation!.stepId, result.steps[0]!.result], ["budget_exhausted", "b", "verified"]);
+});
+
+test("a key combination needs no element, and the plan record redacts typed text", async (t) => {
+  const { backend, root, deps } = setup(t, [form, submitted]);
+  const result = await runPlan(deps(executor(() => ({ operation: "key_combo" }))),
+    plan([{ id: "s", intent: "Submit with the keyboard", keys: "cmd+return", text: "secret words", postcondition: { exists: { name: "Done" } } }]));
+  assert.equal(result.outcome, "completed");
+  assert.deepEqual(backend.actions[0]!.action, { kind: "key", key: "return", modifiers: ["cmd"] });
+  const record = JSON.parse(readFileSync(join(root, "runs", "run-1", "plan.json"), "utf8"));
+  assert.equal(record.plan.steps[0].text, "<12 characters>");
+  assert.ok(readdirSync(join(root, "runs", "run-1")).some(file => file.startsWith("step-s-1-")));
+  assert.ok(!JSON.stringify(readdirSync(join(root, "runs", "run-1")).map(file => readFileSync(join(root, "runs", "run-1", file), "utf8"))).includes("secret words"));
+});
+
+test("plans are validated before any observation or action", () => {
+  const step = { id: "a", intent: "i", postcondition: { changed: true as const } };
+  assert.equal(validatePlan(plan([step]), 50), undefined);
+  assert.match(validatePlan(plan([]), 50)!, /no steps/);
+  assert.match(validatePlan(plan([step, step]), 50)!, /repeated/);
+  assert.match(validatePlan(plan([{ ...step, postcondition: { focused: { name: "x" } } as never }]), 50)!, /not supported/);
+  assert.match(validatePlan(plan([{ ...step, operation: "enter_text" }]), 50)!, /needs text/);
+  assert.match(validatePlan(plan([step], ["b"]), 50)!, /unknown step "b"/);
+  assert.match(validatePlan(plan([step, { ...step, id: "b" }]), 1)!, /limit is 1/);
+});
