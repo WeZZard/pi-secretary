@@ -25,7 +25,7 @@ const targets = JSON.parse(readFileSync(process.argv[2] ?? "", "utf8")) as Targe
 const config = defaultComputerUseConfiguration();
 const out = resolve("test-results/computer-use", `trees-${new Date().toISOString().replace(/[:.]/g, "-")}`);
 mkdirSync(join(out, "fixture-candidates"), { recursive: true });
-const backend = new LocalDriverBackend({ run: cuaDriverRunner(config.localDriverPath), maxTreeNodes: config.maxTreeNodes });
+const backend = new LocalDriverBackend({ run: cuaDriverRunner(process.env.CUA_DRIVER ?? config.localDriverPath), maxTreeNodes: config.maxTreeNodes });
 const telemetry = new Telemetry(out);
 const clean = (text: string) => text.replace(/\s+/g, " ").trim().toLowerCase();
 

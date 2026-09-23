@@ -14,7 +14,7 @@ export const planStepSchema = Type.Object({
   operation: Type.Optional(Type.Union(OPERATIONS.map(value => Type.Literal(value)), { description: "The expected operation, when known." })),
   text: Type.Optional(Type.String({ maxLength: 2000, description: "Complete literal text for enter_text. Only letters, digits, space, newline and tab can be typed." })),
   keys: Type.Optional(Type.String({ maxLength: 60, description: "A key combination for key_combo, for example cmd+shift+n or cmd+w." })),
-  postcondition: Type.Unknown({ description: "One predicate object: {exists:{name,role?}}, {absent:{name,role?}}, {value:{name,equals}}, {window:{titleContains}}, {changed:true}, {all:[...]}, or {any:[...]}. Only on-screen elements count." }),
+  postcondition: Type.Unknown({ description: "One predicate object: {exists:{name,role?}}, {absent:{name,role?}}, {value:{name,equals}}, {window:{titleContains}}, {text:{contains}}, {changed:true}, {all:[...]}, or {any:[...]}. Only on-screen elements count." }),
   max_attempts: Type.Optional(Type.Integer({ minimum: 1, maximum: 5 })),
 }, { additionalProperties: false });
 

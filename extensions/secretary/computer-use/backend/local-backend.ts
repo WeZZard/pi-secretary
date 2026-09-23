@@ -44,6 +44,15 @@ export interface LocalBackendOptions {
   now?: () => number;
 }
 
+/**
+ * One page-sized wheel notch moved Finder's icon view by 100 points (cua-driver 0.12.6, observed
+ * 2026-09-23), well short of a page. A page scroll therefore sends enough notches to move about
+ * 80 percent of the scrolled region's height, keeping some overlap as keyboard Page Down does.
+ */
+export const POINTS_PER_PAGE_NOTCH = 100;
+export const pageNotches = (extent: number): number =>
+  Math.min(50, Math.max(1, Math.round((extent * 0.8) / POINTS_PER_PAGE_NOTCH)));
+
 export class LocalDriverBackend implements ExecutionBackend {
   readonly kind = "local" as const;
   readonly #options: LocalBackendOptions;
@@ -176,7 +185,8 @@ export class LocalDriverBackend implements ExecutionBackend {
         : await this.#options.run("click", args, { timeoutMs: this.#timeout, signal });
     } else if (action.kind === "scroll") {
       const { x, y } = await this.#pixels(window, action.point, signal);
-      result = await this.#options.run("scroll", { ...base, x, y, direction: action.direction, by: action.by, amount: 1 }, { timeoutMs: this.#timeout, signal });
+      result = await this.#options.run("scroll", { ...base, x, y, direction: action.direction, by: action.by, amount: pageNotches(action.extent) },
+        { timeoutMs: this.#timeout, signal });
     } else {
       result = await this.#options.run("press_key", { ...base, key: action.key, ...(action.modifiers.length ? { modifiers: action.modifiers } : {}) },
         { timeoutMs: this.#timeout, signal });

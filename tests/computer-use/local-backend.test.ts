@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { writeFileSync } from "node:fs";
 import { BackendError } from "../../extensions/secretary/computer-use/backend/backend.ts";
-import { LocalDriverBackend, type DriverRunner } from "../../extensions/secretary/computer-use/backend/local-backend.ts";
+import { LocalDriverBackend, pageNotches, type DriverRunner } from "../../extensions/secretary/computer-use/backend/local-backend.ts";
 
 const windows = { windows: [
   { window_id: 1, pid: 7, app_name: "TextEdit", title: "", is_on_screen: false, z_index: 1 },
@@ -63,4 +63,11 @@ test("a closed application and an unmatched title are typed errors that list the
     ? { windows: [{ window_id: 5, pid: 7, app_name: "TextEdit", title: "notes.txt", is_on_screen: false }] } : [] });
   await assert.rejects(hidden.readWindow({ app: "TextEdit", windowTitle: "notes" }, { screenshot: false }),
     (error: BackendError) => error.code === "window_not_found" && /exists but is not on screen/.test(error.message));
+});
+
+test("a page scroll sends enough wheel notches to move most of the scrolled region", () => {
+  // The Finder list's visible part was 384 points tall; one notch moved it 100 points.
+  assert.equal(pageNotches(384), 3);
+  assert.equal(pageNotches(40), 1, "A small region still scrolls");
+  assert.equal(pageNotches(100_000), 50, "The driver accepts at most 50 notches");
 });

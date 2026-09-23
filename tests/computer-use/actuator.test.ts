@@ -10,7 +10,7 @@ test("operations become real-input actions at the frame center", () => {
   assert.deepEqual(actionsFor({ operation: "press", frame }), [{ kind: "click", point: { x: 120, y: 210 }, button: "left", count: 1 }]);
   assert.equal((actionsFor({ operation: "double_press", frame })[0] as { count: number }).count, 2);
   assert.equal((actionsFor({ operation: "context_press", frame })[0] as { button: string }).button, "right");
-  assert.deepEqual(actionsFor({ operation: "scroll_down", frame }), [{ kind: "scroll", point: { x: 120, y: 210 }, direction: "down", by: "page" }]);
+  assert.deepEqual(actionsFor({ operation: "scroll_down", frame }), [{ kind: "scroll", point: { x: 120, y: 210 }, direction: "down", by: "page", extent: frame.h }]);
   assert.deepEqual(actionsFor({ operation: "key_combo", keys: "Cmd+Shift+N" }), [{ kind: "key", key: "n", modifiers: ["cmd", "shift"] }]);
 });
 

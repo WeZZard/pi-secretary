@@ -20,7 +20,7 @@ if (!app) { console.error("usage: observe-window.ts <App> [window title] [--scre
 const config = { ...defaultComputerUseConfiguration(), backend: "local" as const, allowLocalDesktop: true };
 const out = resolve("test-results/computer-use", `observe-${new Date().toISOString().replace(/[:.]/g, "-")}`);
 mkdirSync(out, { recursive: true });
-const backend = new LocalDriverBackend({ run: cuaDriverRunner(config.localDriverPath), maxTreeNodes: config.maxTreeNodes });
+const backend = new LocalDriverBackend({ run: cuaDriverRunner(process.env.CUA_DRIVER ?? config.localDriverPath), maxTreeNodes: config.maxTreeNodes });
 const result = await executeObserve({ backend, config, telemetry: new Telemetry(out), remember: () => {} },
   { app, ...(title ? { window_title: title } : {}) }, screenshot);
 for (const part of result.content) {

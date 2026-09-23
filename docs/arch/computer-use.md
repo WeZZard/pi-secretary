@@ -262,14 +262,18 @@ A postcondition is a small predicate over the accessibility tree. Code evaluates
 | `absent { name, role? }` | No such element is present. |
 | `value { name, equals }` | The named element's value equals the given string. |
 | `window { titleContains }` | The frontmost window title contains the given string. |
+| `text { contains }` | The value or descendant text of some on-screen element contains the given string. Labels are not searched, because they name controls rather than show content. |
 | `changed` | The tree differs from the tree before the step. |
 | `all [ ... ]` and `any [ ... ]` | All or any of the nested predicates hold. |
 
 - The harness rejects a plan whose postconditions are malformed before it performs any action.
 - A step whose only postcondition is `changed` is allowed, but its outcome is recorded as weakly verified.
-- Predicates count only elements that are on screen, which means elements with a frame larger than 1 point in both dimensions. A closed menu's items are in the tree without frames, so `exists "Save"` would otherwise always hold.
+- Predicates count only elements that are on screen. An element is on screen when its frame is larger than 1 point in both dimensions and its center lies inside the window, or when it belongs to an open menu. This is the same rule the observer uses.
+- A closed menu's items are in the tree without frames, so `exists "Save"` would otherwise always hold. A scroll container keeps reporting items that were scrolled out of the window, so a frame-only rule would also count those.
 - A name matches an element's label, value or descendant text ([Section 6.1](#61-reading-the-tree)), ignoring case and extra whitespace. `value` compares the value exactly.
-- `changed` compares the role, label, value, state and rounded frame of every on-screen element before and after the step.
+- `text` exists because some displayed values are not separate elements. Calculator's display is static text under the window, so after pressing Equals the window's descendant text is "7+3 10", and no element is named "10".
+- Names and text are compared after removing Unicode bidirectional marks, which Calculator inserts before each number.
+- `changed` compares the role, label, value, descendant text, state and rounded frame of every on-screen element before and after the step. Descendant text is included because a Calculator key press changes only the display text.
 - A `focused` predicate was specified earlier and is withdrawn. `cua-driver` 0.12.6 reports no focus state, so code cannot evaluate it.
 
 ### 5.4 Result
@@ -326,6 +330,7 @@ Groups exist so that no question exceeds 26 alternatives. Every element question
 5. A window with 25 elements or fewer forms a single group, and the request omits the routing question.
 6. When the element count exceeds the configured maximum, the observer returns `state_too_large` rather than dropping elements silently.
 7. A group records how many named elements of its container lie outside the window, such as rows below the visible part of a list.
+8. A group's frame is its container's frame clipped to the window. A scroll container's frame spans its whole content, so its center can lie outside the window, as Finder's icon view showed in the live check ([research Section 10.3](../research/computer-use-s0-s1.md#10-live-checks-in-a-macos-virtual-machine-2026-09-23)).
 
 - Real windows often lack landmark containers. Calculator's 106 buttons and a web page's links and form controls all fell into one content region, so the split parts carry no meaning. [Section 7.1](#71-request-composition) compensates by describing each region with its members' names.
 
@@ -380,7 +385,7 @@ The harness sends one `POST /v1/systemone` request per step with `samples` set t
 | `context_press` | It right-clicks the element's frame center. | None. |
 | `enter_text` | It clicks the element's frame center, then presses one key per character. Characters outside the backend's key vocabulary are refused before any input. | The step's `text` field. |
 | `key_combo` | It sends the key combination to the frontmost window. | The step's `keys` field. |
-| `scroll_up` and `scroll_down` | They scroll by one page at the center of the chosen group's container. Containers are never element candidates, so a scroll targets a group rather than an element. This is how a target below the visible part of a list becomes reachable. | None. |
+| `scroll_up` and `scroll_down` | They scroll by one page at the center of the chosen group's visible frame. A page moves about 80 percent of that frame's height. Containers are never element candidates, so a scroll targets a group rather than an element. This is how a target below the visible part of a list becomes reachable. | None. |
 
 The builder offers only operations whose literal source is present. For example, `enter_text` is offered only when the step has a `text` field.
 
@@ -426,6 +431,7 @@ stateDiagram-v2
 
 - **Observe:** The harness reads the tree. The after-tree of one step is reused as the before-tree of the next step, so one observation serves both.
 - **Precheck:** The harness evaluates the postcondition before deciding. A step that is already satisfied is skipped without an executor request. This makes the "do nothing when the step is already done" convention explicit in code, following the lesson from Cua's forms specialist ([research Section 6](../research/computer-use-s0-s1.md#6-prior-art-consulted)).
+- The precheck makes a postcondition that is already true before its step skip that step. In the live check, a stale Calculator display satisfied every postcondition of a plan, and the plan completed without acting ([research Section 10.4](../research/computer-use-s0-s1.md#10-live-checks-in-a-macos-virtual-machine-2026-09-23)). The planner prompt must therefore ask for postconditions that describe the change the step causes, such as a value that is not yet shown.
 - **Decide:** The harness sends one executor request and applies the policy.
 - **Act:** The actuator performs one action.
 - **Verify:** The harness waits for the configured settle interval, observes again, and evaluates the postcondition. It also compares the tree with the before-tree.
@@ -548,7 +554,8 @@ Step wall time includes the relay's screenshot captures, so it must not be compa
 | Should the 26-alternative limit be patched in the service? | Do not patch it. The routing question removes the need without changing shared infrastructure. | Yes, if a flat schema is preferred. |
 | Is the grouping rule in [Section 6.3](#63-grouping) sound on real trees? | Validate it on recorded trees from at least three applications before implementing the executor path. | No. |
 | How often is the correct element missing from the table? | Measured in Phase 2: 6 of 19 labelled intents, for four causes. The target was scrolled out of view, reachable only through a closed menu, disabled, or an unnamed title-bar button ([research Section 9.2](../research/computer-use-s0-s1.md#92-retrieval-on-recorded-trees)). The first three are correct exclusions, which the plan must handle with scroll, menu or shortcut steps. | No. |
-| How does a step reach a target below the visible part of a list? | The executor never chose to scroll in 18 unlisted-target cases, even with the hidden count in the request. Scrolling must come from the plan or from a harness-side search of hidden names; this is unresolved. | No. |
+| How does a step reach a target below the visible part of a list? | The executor never chose to scroll in 18 unlisted-target cases, even with the hidden count in the request. When the plan's step asked for a scroll, the executor routed to the list and chose `scroll_down` in 2 of 2 live decisions ([research Section 10.4](../research/computer-use-s0-s1.md#10-live-checks-in-a-macos-virtual-machine-2026-09-23)). Scrolling should come from the plan. A harness-side search of hidden names remains an option. | No. |
+| Does a click reach a covered window? | Clicks in Calculator and scrolls in Finder reached covered windows. A click in a covered TextEdit document did not move the insertion point, and the typed text went to the start of the document ([research Section 10.2](../research/computer-use-s0-s1.md#10-live-checks-in-a-macos-virtual-machine-2026-09-23)). Until this is explained, a plan should place the insertion point with keys, such as `cmd+down` for the end of a document. | No. |
 | How does a step close or zoom a window? | The title-bar buttons have no name in the tree. The planner should use key combinations such as `cmd+w` until the driver exposes their names. | No. |
 | Should actions use direct accessibility activation? | Keep real input by default, as owner decision D3 requires. | Yes, because D3 is an owner decision. |
 | What does a real screenshot cost the planner? | Measured in Phase 1: the cost is proportional to pixel area, and a 1312×844 window screenshot costs 1,068 input tokens on Qwen 3.8 27B ([research Section 8](../research/computer-use-s0-s1.md#8-phase-1-observations-2026-09-23)). Choose the default image scale when the planner prompt is written in Phase 6. | No. |
@@ -565,7 +572,10 @@ Step wall time includes the relay's screenshot captures, so it must not be compa
 - **Recorded-tree evaluation:** It runs the observer and a live executor against accessibility trees recorded from real applications. It reports retrieval and judgment misses separately. This evaluation answers the grouping and near-miss questions in [Section 13](#13-open-questions).
 - **Live acceptance:** It runs complete delegated tasks in a relay virtual machine with the real planner and executor. It must record the relay evidence package and the step telemetry.
 - Generated output from every layer goes under `test-results/`, as required by the [test artifact policy](../testing/test-artifacts.md).
-- None of these checks has been executed. This document is a design, and its claims are not verified behavior.
+- The deterministic unit tests and the harness tests with the fake backend run in `npm run verify`.
+- The recorded-tree evaluation ran in Phase 2 and Phase 4 ([research Section 9](../research/computer-use-s0-s1.md#9-phase-2-to-4-observations-2026-09-23)).
+- Live checks with the local driver backend ran once each in a relay virtual machine, with hand-written plans and the live executor ([research Section 10](../research/computer-use-s0-s1.md#10-live-checks-in-a-macos-virtual-machine-2026-09-23)).
+- Live acceptance with the real planner and the relay backend has not been executed. The remaining claims of this document are design, not verified behavior.
 
 ## 15. References
 

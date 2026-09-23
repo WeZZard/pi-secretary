@@ -58,7 +58,8 @@ export interface Point { x: number; y: number }
 export type BackendAction =
   | { kind: "click"; point: Point; button: "left" | "right"; count: 1 | 2 }
   | { kind: "key"; key: string; modifiers: string[] }
-  | { kind: "scroll"; point: Point; direction: "up" | "down"; by: "page" };
+  /** `extent` is the height in points of the region being scrolled; a page is most of it. */
+  | { kind: "scroll"; point: Point; direction: "up" | "down"; by: "page"; extent: number };
 
 /** `unverifiable` is the driver's normal report for key input; code verifies the effect afterwards. */
 export interface ActionOutcome { kind: "completed" | "unverifiable"; detail?: string }

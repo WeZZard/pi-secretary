@@ -1,4 +1,5 @@
 import type { RawElement, WindowRead } from "./backend/backend.ts";
+import { BIDI_MARKS } from "./observer.ts";
 
 /**
  * Postconditions (design docs/arch/computer-use.md §5.3). Code evaluates them against a fresh
@@ -12,6 +13,7 @@ export type Postcondition =
   | { absent: { name: string; role?: string } }
   | { value: { name: string; equals: string } }
   | { window: { titleContains: string } }
+  | { text: { contains: string } }
   | { changed: true }
   | { all: Postcondition[] }
   | { any: Postcondition[] };
@@ -19,8 +21,30 @@ export type Postcondition =
 export interface Evaluation { holds: boolean; detail: string }
 
 const MAX_DEPTH = 8;
-const normalize = (text: string) => text.replace(/\s+/g, " ").trim().toLowerCase();
-const onScreen = (element: RawElement) => !!element.frame && element.frame.w > 1 && element.frame.h > 1;
+const normalize = (text: string) => text.replace(BIDI_MARKS, "").replace(/\s+/g, " ").trim().toLowerCase();
+
+/**
+ * The elements a person could see: a frame larger than 1 point, and a center inside the window
+ * unless the element belongs to a menu. This is the observer's rule (design §6.1). A frame-only
+ * rule counted a Finder icon scrolled 140 points above the window as on screen (observed 2026-09-23).
+ */
+function visibleElements(read: WindowRead): RawElement[] {
+  const byIndex = new Map(read.elements.map(element => [element.element_index, element]));
+  const windowFrame = read.elements.find(element => element.role === "AXWindow")?.frame;
+  const underMenu = (element: RawElement) => {
+    for (let parent = byIndex.get(element.parent_index ?? -1), depth = 0; parent && depth < 64; parent = byIndex.get(parent.parent_index ?? -1), depth++) {
+      if (parent.role === "AXMenu" || parent.role === "AXMenuBar") return true;
+    }
+    return false;
+  };
+  return read.elements.filter(element => {
+    const frame = element.frame;
+    if (!frame || frame.w <= 1 || frame.h <= 1) return false;
+    if (!windowFrame || underMenu(element)) return true;
+    const cx = frame.x + frame.w / 2, cy = frame.y + frame.h / 2;
+    return cx >= windowFrame.x && cx <= windowFrame.x + windowFrame.w && cy >= windowFrame.y && cy <= windowFrame.y + windowFrame.h;
+  });
+}
 
 function names(read: WindowRead, element: RawElement): string[] {
   return [element.label, element.value, read.descendantText?.[element.element_index]]
@@ -29,15 +53,20 @@ function names(read: WindowRead, element: RawElement): string[] {
 
 function matching(read: WindowRead, name: string, role?: string): RawElement[] {
   const wanted = normalize(name);
-  return read.elements.filter(element => onScreen(element) && (role === undefined || element.role === role || element.role === `AX${role}`)
+  return visibleElements(read).filter(element => (role === undefined || element.role === role || element.role === `AX${role}`)
     && names(read, element).includes(wanted));
 }
 
-/** A signature of what is visible, so an action that changes nothing on screen is detected (design §9). */
+/**
+ * A signature of what is visible, so an action that changes nothing on screen is detected (design §9).
+ * It includes descendant text: Calculator's display is unindexed static text, so a key press
+ * that only changes the display changes nothing else (observed 2026-09-23).
+ */
 export function visibleSignature(read: WindowRead): string {
-  return read.elements.filter(onScreen).map(element => {
+  return visibleElements(read).map(element => {
     const frame = element.frame!;
-    return [element.role, element.label ?? "", element.value ?? "", element.selected ? 1 : 0, element.enabled === false ? 0 : 1,
+    return [element.role, element.label ?? "", element.value ?? "", read.descendantText?.[element.element_index] ?? "",
+      element.selected ? 1 : 0, element.enabled === false ? 0 : 1,
       Math.round(frame.x), Math.round(frame.y), Math.round(frame.w), Math.round(frame.h)].join("\u0001");
   }).sort().join("\n");
 }
@@ -65,6 +94,10 @@ export function validatePostcondition(value: unknown, depth = 0): string | undef
     case "window": {
       const b = body as { titleContains?: unknown };
       return fields(body, ["titleContains"]) && text(b.titleContains) ? undefined : "window needs titleContains";
+    }
+    case "text": {
+      const b = body as { contains?: unknown };
+      return fields(body, ["contains"]) && text(b.contains) ? undefined : "text needs contains";
     }
     case "changed": return body === true ? undefined : "changed must be true";
     case "all": case "any": {
@@ -99,6 +132,14 @@ export function evaluatePostcondition(condition: Postcondition, after: WindowRea
   if ("window" in condition) {
     const holds = after.window.title.toLowerCase().includes(condition.window.titleContains.toLowerCase());
     return { holds, detail: `window title is ${JSON.stringify(after.window.title)}` };
+  }
+  if ("text" in condition) {
+    const wanted = normalize(condition.text.contains);
+    // Labels name controls, so they are excluded: the Calculator button labelled "7" satisfied
+    // `contains "7"` before anything was typed (observed 2026-09-23). Values and descendant text are content.
+    const holds = visibleElements(after).some(element => [element.value, after.descendantText?.[element.element_index]]
+      .some(text => typeof text === "string" && normalize(text).includes(wanted)));
+    return { holds, detail: `on-screen text ${holds ? "contains" : "does not contain"} ${JSON.stringify(condition.text.contains)}` };
   }
   if ("changed" in condition) {
     if (!before) return { holds: false, detail: "no earlier observation to compare with" };

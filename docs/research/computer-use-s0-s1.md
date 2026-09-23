@@ -243,7 +243,7 @@ These observations come from recording real accessibility trees and replaying th
 - Calculator in programmer mode exposed 106 buttons as direct children of the window, with no containers.
 - The title-bar buttons of every window had no label, value or descendant text.
 - Finder's Back button was named `back` and was disabled, because the folder had no history.
-- While these checks ran, every window, including other applications' windows, was reported off screen twice for minutes at a time. This is consistent with a Space switch or a locked screen. Live re-recording and the Phase 3 live check could not run during those periods, and the Phase 3 live check was not executed.
+- While these checks ran, every window, including other applications' windows, was reported off screen twice for minutes at a time. This is consistent with a Space switch or a locked screen. Live re-recording and the Phase 3 live check could not run during those periods on the development Mac. Both were later run in a relay virtual machine, as [Section 10](#10-live-checks-in-a-macos-virtual-machine-2026-09-23) records.
 
 ### 9.2 Retrieval on recorded trees
 
@@ -284,3 +284,65 @@ The first two runs grouped by 26 elements, before the `none` option existed. The
 - The executor never chose to scroll when the target was below the visible part of a list, in 18 of 18 decisions, even when the request stated how many items were hidden.
 - The executor judged "Submit the form" and "Sign out of every device" destructive in some seeds, which produced `approval_required` escalations with the correct element as the prior.
 - These results come from 19 intents on five windows. They show the direction of each change but do not establish rates for other applications.
+
+## 10. Live checks in a macOS virtual machine (2026-09-23)
+
+These checks ran the Phase 2, Phase 3 and Phase 5 scripts inside a disposable macOS 26 virtual machine leased through `pi-vm-relay`. The guest ran `cua-driver` through the local driver backend. Every action used real pointer or keyboard input, as owner decision D3 requires. The test content was a scratch TextEdit document, Calculator, a Finder window on a folder of 40 dummy files, and a local Safari test page. Safari stayed in front, so TextEdit, Calculator and Finder were partly or fully covered during every action.
+
+**Formulas:**
+
+- **Step time (ms)** is wall clock from the first action of a step to the evaluated postcondition, including the verifying observation. The scripted-plan script prints this formula with its table.
+- **Executor round-trip latency (ms)** is the harness-side time from sending the request to receiving the full response. This is the formula of [Section 9.3](#93-executor-decisions-on-recorded-trees), but the client here is the guest virtual machine rather than the development Mac. The two sets of values were measured under different network paths and are not compared.
+- **Input tokens** are the values that the executor service reported in `usage.input_tokens`.
+
+The run directories are under the ignored `relay-evidence/relay-computer-use-live-check-89d2966b/` directory. The relay manifest records the whole session as failed, because several intermediate runs exited with an error before the fixes below. Human review of the relay evidence is pending.
+
+### 10.1 Tree recording
+
+- The guest recorded all four windows through the local backend. No read was truncated.
+- The labelled retrieval check missed 4 of 16 intents. Every miss had a known cause. The close button exists only as a closed-menu item, Finder's Back button is disabled, the file "Report Q4" is not in the folder, and New Folder is reachable only through a closed menu.
+
+### 10.2 Real input into covered windows
+
+| Check | Steps verified | Result |
+| --- | --- | --- |
+| Type 19 characters into the TextEdit document | 1 of 1 | All 19 characters arrived through real key presses. The step time was 24,964 ms. |
+| Clear Calculator, then compute 7 plus 3 | 6 of 6 | The window's descendant text read "7+3 10" at the end. |
+| Scroll Finder's file list to the top, down two pages and up two pages | 6 of 6 | The last row appeared after the second page, and the first file returned after scrolling up. |
+
+- The TextEdit text arrived at the start of the document, although the step clicked the center of the text area first. The click, posted to the covered window's process, did not move the insertion point. A step that relies on a click to place the insertion point is therefore not reliable in a covered window.
+- Calculator's display is not an element. Its text exists only as descendant text of the window, and each number is preceded by a Unicode left-to-right mark.
+- Calculator's clear button is named "All Clear" when the display is empty and "Clear" otherwise, so the scripted check cleared the display with the Escape key instead.
+
+### 10.3 Defects found and fixed
+
+Each defect below made a check fail although the action had worked. Each fix has a unit test, and each check was run again after its fix.
+
+- **`changed` ignored descendant text.** Pressing "3" in Calculator changed only the display, so the visible signature did not change. The signature now includes descendant text.
+- **Names kept bidirectional marks.** The marks prevented a match on the display text. Names and compared text now drop them.
+- **No predicate could find text inside a larger text.** After Equals, the window's descendant text was "7+3 10", and no element was named "10". The new `text { contains }` predicate searches values and descendant text.
+- **`text` first searched labels too.** In the first live harness run, `text contains "7"` held before anything was pressed, because the button labelled "7" matched. The step was skipped by the precheck. Labels are no longer searched, because they name controls rather than show content.
+- **A group's frame could lie outside the window.** Finder's icon-view list reported a container frame 804 points tall inside a 436-point window, so the scroll point at its center fell outside the window. A group's frame is now clipped to the window.
+- **A page scroll moved much less than a page.** One page-sized wheel notch moved Finder's list by 100 points. The local backend now sends enough notches to move about 80 percent of the scrolled region's height.
+- **The verifier counted elements scrolled out of the window.** After a scroll, Finder still reported the first file 140 points above the window, and `absent` failed. The verifier now uses the observer's rule that an element's center must lie inside the window unless it belongs to a menu.
+
+### 10.4 The harness with the live executor
+
+`scripts/computer-use/run-plan-live.ts` ran `computer_run_plan` inputs through the real harness, the local backend and the live executor at `http://jev.home.arpa`. The planner was not involved, because the plans were written by hand.
+
+| Plan | Outcome | Executor decisions | Round-trip latency, per decision | Input tokens, per decision |
+| --- | --- | --- | --- | --- |
+| Calculator: press 7, Add, 3 and Equals | completed, 4 of 4 steps verified | 4 | 176, 230, 193 and 217 ms | 591 to 641 |
+| Finder: scroll the list down twice | completed, 2 of 2 steps verified | 2 | 607 and 365 ms | 1,365 and 1,423 |
+
+- In Calculator, the window has 22 kept elements and forms one group, so no routing question was asked. The executor chose the expected button in every step. The lowest element confidence was 0.79, for the 7 button.
+- In Finder, the executor answered the routing question with the list region at confidence 1.0 and chose `scroll_down` at confidence 1.0 in both steps. It answered `none` to every element question, which is correct for a scroll.
+- The first Calculator attempt skipped every step, because every postcondition already held on the stale display "7+3 10". The precheck works as designed, but a plan whose postconditions are already true before their steps does nothing. The postconditions must describe a change that the step causes.
+- The second attempt escalated `postcondition_failed` at the Add step, because the 7 step had been skipped by the label match described in Section 10.3. The escalation carried the executor's prior and the current table, as the escalation contract requires.
+
+### 10.5 Verification limits
+
+- These checks used hand-written plans. The planner model, the Pi tool call and the relay backend were not part of the loop.
+- The screenshots in the relay evidence show the desktop, where Safari covered the other windows. They do not show Calculator's display or Finder's list, so the accessibility tree is the only evidence for those results.
+- Each check ran once. The results show that the path works, not how often it works.
+

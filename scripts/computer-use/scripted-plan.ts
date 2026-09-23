@@ -19,7 +19,8 @@ import { observe, type Observation } from "../../extensions/secretary/computer-u
 import { Telemetry } from "../../extensions/secretary/computer-use/telemetry.ts";
 import { evaluatePostcondition, validatePostcondition, type Postcondition } from "../../extensions/secretary/computer-use/verifier.ts";
 
-interface Step { id: string; operation: Operation; target?: string; text?: string; keys?: string; postcondition: Postcondition }
+/** `target` names an element by prefix; `targetGroup` names a group by prefix, for scrolling its container. */
+interface Step { id: string; operation: Operation; target?: string; targetGroup?: string; text?: string; keys?: string; postcondition: Postcondition }
 const plan = JSON.parse(readFileSync(process.argv[2] ?? "", "utf8")) as { app: string; windowTitle?: string; settleMs?: number; steps: Step[] };
 for (const step of plan.steps) {
   const problem = validatePostcondition(step.postcondition);
@@ -28,7 +29,7 @@ for (const step of plan.steps) {
 const config = defaultComputerUseConfiguration();
 const out = resolve("test-results/computer-use", `scripted-${new Date().toISOString().replace(/[:.]/g, "-")}`);
 mkdirSync(out, { recursive: true });
-const backend = new LocalDriverBackend({ run: cuaDriverRunner(config.localDriverPath), maxTreeNodes: config.maxTreeNodes });
+const backend = new LocalDriverBackend({ run: cuaDriverRunner(process.env.CUA_DRIVER ?? config.localDriverPath), maxTreeNodes: config.maxTreeNodes });
 const telemetry = new Telemetry(out);
 const target = { app: plan.app, ...(plan.windowTitle ? { windowTitle: plan.windowTitle } : {}) };
 const wait = (ms: number) => new Promise(done => setTimeout(done, ms));
@@ -50,14 +51,18 @@ for (const step of plan.steps) {
     const element = step.target === undefined ? undefined
       : before.observation.groups.flatMap(group => group.elements).find(candidate => candidate.name.toLowerCase().startsWith(step.target!.toLowerCase()));
     if (step.target !== undefined && !element) throw new Error(`no kept element named ${JSON.stringify(step.target)}`);
-    const request = { operation: step.operation, ...(element ? { frame: element.frame } : {}), ...(step.text !== undefined ? { text: step.text } : {}),
+    const group = step.targetGroup === undefined ? undefined
+      : before.observation.groups.find(candidate => candidate.name.toLowerCase().startsWith(step.targetGroup!.toLowerCase()));
+    if (step.targetGroup !== undefined && !group?.frame) throw new Error(`no scrollable group named ${JSON.stringify(step.targetGroup)}`);
+    const frame = element?.frame ?? group?.frame;
+    const request = { operation: step.operation, ...(frame ? { frame } : {}), ...(step.text !== undefined ? { text: step.text } : {}),
       ...(step.keys !== undefined ? { keys: step.keys } : {}) } as ActuatorRequest;
     const outcomes = [];
     for (const action of actionsFor(request)) outcomes.push((await backend.act(before.read.window, action)).kind);
     await wait(plan.settleMs ?? config.settleMs);
     const after = await look(`after-${step.id}`);
     const evaluation = evaluatePostcondition(step.postcondition, after.read, before.read);
-    rows.push(`| ${step.id} | ${step.operation}${element ? ` ${JSON.stringify(element.name)}` : ""} | ${[...new Set(outcomes)].join(", ")} | ${evaluation.holds ? "holds" : "**fails**"}: ${evaluation.detail} | ${Math.round(performance.now() - started)} ms |`);
+    rows.push(`| ${step.id} | ${step.operation}${element ? ` ${JSON.stringify(element.name)}` : group ? ` in ${group.name}` : ""} | ${[...new Set(outcomes)].join(", ")} | ${evaluation.holds ? "holds" : "**fails**"}: ${evaluation.detail} | ${Math.round(performance.now() - started)} ms |`);
     before = after;
     if (!evaluation.holds) { failed = true; break; }
   } catch (error) {

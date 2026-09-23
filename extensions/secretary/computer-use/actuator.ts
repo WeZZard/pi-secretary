@@ -54,7 +54,8 @@ export function actionsFor(request: ActuatorRequest): BackendAction[] {
     case "double_press": return [{ kind: "click", point: center(request.frame), button: "left", count: 2 }];
     case "context_press": return [{ kind: "click", point: center(request.frame), button: "right", count: 1 }];
     case "scroll_up": case "scroll_down":
-      return [{ kind: "scroll", point: center(request.frame), direction: request.operation === "scroll_up" ? "up" : "down", by: "page" }];
+      return [{ kind: "scroll", point: center(request.frame), direction: request.operation === "scroll_up" ? "up" : "down", by: "page",
+        extent: request.frame.h }];
     case "key_combo": return [parseKeyCombo(request.keys)];
     case "enter_text": {
       // Validate the whole literal before any input, so a refused character never leaves partial text.

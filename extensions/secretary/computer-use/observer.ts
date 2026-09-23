@@ -77,9 +77,12 @@ const LANDMARKS: Record<string, string> = {
 
 const AUTOMATIC_IDENTIFIER = /^_NS:\d+$/;
 
+/** Bidirectional control marks, which Calculator's display text carries (observed 2026-09-23). */
+export const BIDI_MARKS = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+
 export function cleanName(text: string | undefined, maxLength: number): string | undefined {
   if (text === undefined || AUTOMATIC_IDENTIFIER.test(text.trim())) return undefined;
-  const collapsed = text.replace(/\s+/g, " ").trim();
+  const collapsed = text.replace(BIDI_MARKS, "").replace(/\s+/g, " ").trim();
   if (collapsed === "") return undefined;
   return collapsed.length <= maxLength ? collapsed : `${collapsed.slice(0, maxLength - 1)}…`;
 }
@@ -190,6 +193,16 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
     unsorted.set(key, bucket);
   }
   const containerFrame = (key: number | "content"): Frame | undefined => key === "content" ? undefined : byIndex.get(key)?.frame;
+  // A scroll container's frame spans its whole content, which can extend past the window: Finder's
+  // icon-view list did, so its center was outside the window (observed 2026-09-23). Scrolling
+  // targets the visible part, so a group's frame is clipped to the window.
+  const visiblePart = (frame: Frame | undefined): Frame | undefined => {
+    if (!frame || !windowFrame) return frame;
+    const x = Math.max(frame.x, windowFrame.x), y = Math.max(frame.y, windowFrame.y);
+    const w = Math.min(frame.x + frame.w, windowFrame.x + windowFrame.w) - x;
+    const h = Math.min(frame.y + frame.h, windowFrame.y + windowFrame.h) - y;
+    return w > 1 && h > 1 ? { x, y, w, h } : undefined;
+  };
   const buckets = new Map([...unsorted].sort(([a, first], [b, second]) => {
     if (a === "content" || b === "content") return a === "content" ? (b === "content" ? 0 : 1) : -1;
     return readingOrder({ frame: containerFrame(a) ?? first[0]!.element.frame! }, { frame: containerFrame(b) ?? second[0]!.element.frame! });
@@ -211,7 +224,7 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
     for (let part = 0; part < parts; part++) {
       const name = parts > 1 ? `${baseName} part ${part + 1}` : baseName;
       const slice = entries.slice(part * MAX_GROUP_ELEMENTS, (part + 1) * MAX_GROUP_ELEMENTS);
-      const frame = containerFrame(key) ?? windowFrame;
+      const frame = visiblePart(containerFrame(key) ?? windowFrame);
       const hidden = part === parts - 1 ? hiddenBy.get(key) ?? 0 : 0;
       groups.push({ name, elements: slice.map((entry, position) => toElement(entry, name, position)), ...(frame ? { frame } : {}), ...(hidden ? { hidden } : {}) });
     }

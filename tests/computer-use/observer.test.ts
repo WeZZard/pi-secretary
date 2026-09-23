@@ -88,4 +88,6 @@ test("named elements below the visible part of a container are counted as hidden
   const grouped = ready(observe(read(large), options));
   assert.equal(grouped.groups.find(group => group.name === "list")!.hidden, 17);
   assert.equal(grouped.groups.find(group => group.name === "toolbar")!.hidden, undefined);
+  assert.deepEqual(grouped.groups.find(group => group.name === "list")!.frame, { x: 200, y: 80, w: 1000, h: 520 },
+    "The 1500-point list container is clipped to the window, so a scroll lands inside it");
 });
