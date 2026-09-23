@@ -26,14 +26,20 @@ export function decide(input: {
   const prior: Prior = { confidences: {} };
   const note = (label: string, value: ChoiceAnswer | undefined) => { if (value) prior.confidences[label] = value.confidence; };
 
-  const operationAnswer = answer(questions.operation);
-  note("operation", operationAnswer);
-  if (operationAnswer) prior.operation = operationAnswer.choice;
-  if (!operationAnswer) return { kind: "escalate", reason: "executor_unavailable", detail: "the executor gave no operation answer", prior };
-  // Rules 2 and 3.
-  if (operationAnswer.choice === "reobserve") return { kind: "reobserve", prior };
-  if (operationAnswer.choice === "abstain") return { kind: "escalate", reason: "target_not_found", detail: "the executor found no listed control for this step", prior };
-  const operation = operationAnswer.choice as Operation;
+  let operation: Operation;
+  if (questions.fixedOperation) {
+    operation = questions.fixedOperation;
+    prior.operation = operation;
+  } else {
+    const operationAnswer = answer(questions.operation);
+    note("operation", operationAnswer);
+    if (operationAnswer) prior.operation = operationAnswer.choice;
+    if (!operationAnswer) return { kind: "escalate", reason: "executor_unavailable", detail: "the executor gave no operation answer", prior };
+    // Rules 2 and 3.
+    if (operationAnswer.choice === "reobserve") return { kind: "reobserve", prior };
+    if (operationAnswer.choice === "abstain") return { kind: "escalate", reason: "target_not_found", detail: "the executor found no listed control for this step", prior };
+    operation = operationAnswer.choice as Operation;
+  }
 
   // Rule 4: route on the region answer; never compare confidences across questions.
   let groupIndex = 0;
@@ -71,7 +77,7 @@ export function decide(input: {
   }
 
   // Rule 7: confidence is a safety gate on the answers actually used.
-  const used = ["operation", ...(questions.region !== undefined ? ["region"] : []), ...(needsElement ? ["element"] : [])];
+  const used = [...(questions.fixedOperation ? [] : ["operation"]), ...(questions.region !== undefined ? ["region"] : []), ...(needsElement ? ["element"] : [])];
   const low = used.filter(label => (prior.confidences[label] ?? 0) < input.confidenceGate);
   if (low.length > 0) {
     return { kind: "escalate", reason: "uncertain", detail: `confidence below ${input.confidenceGate} for ${low.join(", ")}`, prior };

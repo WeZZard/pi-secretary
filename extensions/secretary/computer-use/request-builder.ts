@@ -16,7 +16,9 @@ export interface QuestionMap {
   region?: string;
   /** Element question id per group index. */
   elements: string[];
-  operation: string;
+  /** Absent when the step fixes the operation; `fixedOperation` then holds it. */
+  operation?: string;
+  fixedOperation?: Operation;
   risk: string;
 }
 
@@ -51,13 +53,19 @@ const ABSTAIN = "No listed control can carry out the step.";
  */
 export const estimateTokens = (body: DecisionRequestBody): number => Math.ceil(JSON.stringify(body).length / 3);
 
+/**
+ * The planner decides the operation whenever the step says it: `keys` means key_combo, `text` means
+ * enter_text, and a named operation is the only one offered. The executor then chooses only the
+ * element and the risk. Through Pi, a step with keys was answered with press, which clicked the
+ * text area instead of pressing the key (observed 2026-09-23).
+ */
 export function offeredOperations(step: StepSpec, observation: Observation): Operation[] {
   const hasElements = observation.groups.some(group => group.elements.length > 0);
-  const operations: Operation[] = hasElements ? ["press", "double_press", "context_press"] : [];
-  if (step.text !== undefined && hasElements) operations.push("enter_text");
-  if (step.keys !== undefined) operations.push("key_combo");
-  if (observation.groups.some(group => group.frame)) operations.push("scroll_up", "scroll_down");
-  return operations;
+  const scrollable = observation.groups.some(group => group.frame);
+  if (step.keys !== undefined) return ["key_combo"];
+  if (step.text !== undefined) return hasElements ? ["enter_text"] : [];
+  const available: Operation[] = [...(hasElements ? ["press", "double_press", "context_press"] as const : []), ...(scrollable ? ["scroll_up", "scroll_down"] as const : [])];
+  return step.operation ? available.filter(operation => operation === step.operation) : available;
 }
 
 /**
@@ -77,7 +85,11 @@ export function buildDecisionRequest(input: {
   const offered = offeredOperations(step, observation);
   const multi = observation.groups.length > 1;
   const questions: Record<string, ChoiceQuestion> = {};
-  const map: QuestionMap = { elements: [], operation: "operation", risk: "risk" };
+  // When the step fixes the operation there is nothing to ask: through Pi, the executor answered
+  // abstain to a one-option operation question for a clear enter_text step (observed 2026-09-23).
+  // A missing target is still reported through each element question's "none".
+  const fixed = offered.length === 1 && (step.keys !== undefined || step.text !== undefined || step.operation !== undefined) ? offered[0] : undefined;
+  const map: QuestionMap = { elements: [], risk: "risk", ...(fixed ? { fixedOperation: fixed } : { operation: "operation" }) };
 
   if (multi) {
     map.region = "region";
@@ -99,7 +111,7 @@ export function buildDecisionRequest(input: {
   for (const id of map.elements) {
     if (input.noneOption !== false || Object.keys(questions[id]!.criteria).length < 2) questions[id]!.criteria["none"] = "None of these controls carries out the step.";
   }
-  questions.operation = { type: "choice", instructions: `Which action carries out the current step?${step.operation ? ` The planner expects ${step.operation}.` : ""}`,
+  if (!fixed) questions.operation = { type: "choice", instructions: `Which action carries out the current step?${step.operation ? ` The planner expects ${step.operation}.` : ""}`,
     criteria: { ...Object.fromEntries(offered.map(operation => [operation, OPERATION_TEXT[operation]])), reobserve: REOBSERVE, abstain: ABSTAIN } };
   questions.risk = { type: "choice", instructions: "How risky is carrying out the current step?", criteria: {
     safe: "It only reads, selects, navigates or types, and changes nothing lasting.",

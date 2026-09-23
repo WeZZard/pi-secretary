@@ -35,6 +35,18 @@ test("changed compares the visible tree, and combinators nest", () => {
   assert.equal(isWeakPostcondition({ exists: { name: "A" } }), false);
 });
 
+test("selected checks selection state, and a role that is not an accessibility role is rejected", () => {
+  const icon = (selected: boolean): WindowRead => ({ window: { pid: 1, windowId: 1, app: "Finder", title: "Fixture Folder" }, appActive: true, truncated: false, readMs: 0,
+    elements: [{ element_index: 0, role: "AXWindow", label: "Fixture Folder", depth: 0, frame: { x: 0, y: 0, w: 800, h: 600 } },
+      { element_index: 1, role: "AXImage", label: "Zoning notes.txt", parent_index: 0, depth: 1, frame: { x: 100, y: 100, w: 64, h: 64 }, ...(selected ? { selected: true } : {}) }] });
+  assert.deepEqual(evaluatePostcondition({ selected: { name: "Zoning notes.txt" } }, icon(true)), { holds: true, detail: "\"Zoning notes.txt\" is selected" });
+  assert.equal(evaluatePostcondition({ selected: { name: "Zoning notes.txt" } }, icon(false)).holds, false);
+  // Through Pi, a planner wrote this for a selection check (observed 2026-09-23).
+  assert.match(validatePostcondition({ exists: { name: "Zoning notes.txt", role: "selected" } }) ?? "", /not an accessibility role.*\{selected:\{name\}\}/);
+  assert.equal(validatePostcondition({ exists: { name: "OK", role: "Button" } }), undefined);
+  assert.equal(validatePostcondition({ exists: { name: "OK", role: "AXButton" } }), undefined);
+});
+
 test("malformed postconditions are rejected with a reason before any action", () => {
   assert.equal(validatePostcondition({ all: [{ exists: { name: "Save" } }, { value: { name: "Title", equals: "" } }] }), undefined);
   assert.match(validatePostcondition({ focused: { name: "Title" } })!, /not supported/);

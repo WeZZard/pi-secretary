@@ -19,6 +19,8 @@ export class ActuatorError extends Error {
 const MODIFIERS = new Map([["cmd", "cmd"], ["command", "cmd"], ["shift", "shift"], ["option", "option"], ["alt", "option"], ["ctrl", "ctrl"], ["control", "ctrl"], ["fn", "fn"]]);
 const NAMED_KEYS = new Set(["return", "tab", "escape", "up", "down", "left", "right", "space", "delete", "home", "end", "pageup", "pagedown",
   ...Array.from({ length: 12 }, (_, i) => `f${i + 1}`)]);
+/** Other names planners use for named keys. Through Pi, a planner wrote "Backspace" (observed 2026-09-23). */
+const KEY_ALIASES = new Map([["backspace", "delete"], ["enter", "return"], ["esc", "escape"]]);
 const center = (frame: Frame) => ({ x: frame.x + frame.w / 2, y: frame.y + frame.h / 2 });
 
 /**
@@ -40,10 +42,12 @@ export function keystrokesFor(text: string): BackendAction[] {
 
 export function parseKeyCombo(keys: string): BackendAction {
   const parts = keys.toLowerCase().split("+").map(part => part.trim()).filter(Boolean);
-  const key = parts.pop();
+  const last = parts.pop();
+  const key = last === undefined ? undefined : KEY_ALIASES.get(last) ?? last;
   const modifiers = parts.map(part => MODIFIERS.get(part));
   if (!key || modifiers.some(modifier => modifier === undefined) || !(NAMED_KEYS.has(key) || /^[a-z0-9]$/.test(key))) {
-    throw new ActuatorError("invalid_keys", `${JSON.stringify(keys)} is not a key combination such as cmd+shift+n.`);
+    throw new ActuatorError("invalid_keys", `${JSON.stringify(keys)} is not a key combination such as cmd+shift+n. `
+      + `Modifiers: cmd, shift, option, ctrl, fn. Keys: a letter, a digit, or ${[...NAMED_KEYS].filter(name => !/^f\d/.test(name)).join(", ")}, f1 to f12.`);
   }
   return { kind: "key", key, modifiers: modifiers as string[] };
 }

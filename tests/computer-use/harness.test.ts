@@ -225,4 +225,8 @@ test("text entry must check the text, and a key that only moves the insertion po
   assert.match(validatePlan(plan([{ id: "k", intent: "End", operation: "key_combo", keys: "cmd+Down", postcondition: { changed: true } }]), 50) ?? "",
     /only moves the insertion point.*set position on the enter_text step/);
   assert.equal(validatePlan(plan([{ id: "k", intent: "New", operation: "key_combo", keys: "cmd+n", postcondition: { changed: true } }]), 50), undefined);
+  assert.match(validatePlan(plan([{ id: "t", intent: "Type", text: "Hello", postcondition: { changed: true } }]), 50) ?? "", /must check the typed text/,
+    "A step with text is text entry whether or not it names the operation");
+  assert.match(validatePlan(plan([{ id: "k", intent: "Erase", keys: "Hyper+x", postcondition: { changed: true } }]), 50) ?? "", /step k: "Hyper\+x" is not a key combination/);
+  assert.match(validatePlan(plan([{ id: "b", intent: "Both", text: "a", keys: "cmd+a", postcondition: { text: { contains: "a" } } }]), 50) ?? "", /text or keys, not both/);
 });

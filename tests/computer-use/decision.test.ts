@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { ExecutorClient, ExecutorError, type DecisionResponse, type Fetch } from "../../extensions/secretary/computer-use/executor-client.ts";
 import { observe, type Observation } from "../../extensions/secretary/computer-use/observer.ts";
 import { decide } from "../../extensions/secretary/computer-use/policy.ts";
-import { buildDecisionRequest, type BuiltRequest } from "../../extensions/secretary/computer-use/request-builder.ts";
+import { buildDecisionRequest, type BuiltRequest, type StepSpec } from "../../extensions/secretary/computer-use/request-builder.ts";
 import { finderRead, textEditRead } from "./fixtures/trees.ts";
 
 const finder = () => observe({ ...finderRead(), readMs: 0 }, { id: "o", maxElements: 240, maxNameLength: 48 }) as Observation;
@@ -29,10 +29,16 @@ test("no question exceeds the executor's 26 alternatives, even with none added t
   assert.equal(Object.keys(built.body.questions.element_3!.criteria).length, 26);
 });
 
-test("a small window has no routing question, and literals decide which operations are offered", () => {
-  const built = ready(buildDecisionRequest({ goal: "g", step: { id: "s", intent: "Type the greeting", text: "Hello", keys: "cmd+a" }, observation: textEdit(), recent: [] }));
+test("a small window has no routing question, and the step's literal or operation decides the only operation offered", () => {
+  const built = ready(buildDecisionRequest({ goal: "g", step: { id: "s", intent: "Type the greeting", text: "Hello" }, observation: textEdit(), recent: [] }));
   assert.equal(built.questions.region, undefined);
-  assert.ok(built.offered.includes("enter_text") && built.offered.includes("key_combo"));
+  assert.deepEqual(built.offered, ["enter_text"]);
+  const offered = (step: Omit<StepSpec, "id" | "intent">) => ready(buildDecisionRequest({ goal: "g", step: { id: "s", intent: "i", ...step }, observation: textEdit(), recent: [] })).offered;
+  assert.deepEqual(offered({ keys: "delete" }), ["key_combo"], "A step with keys can no longer be answered with a click");
+  assert.equal(built.body.questions.operation, undefined, "A fixed operation is not asked, so the executor cannot abstain on it");
+  assert.equal(built.questions.fixedOperation, "enter_text");
+  assert.deepEqual(offered({ operation: "press" }), ["press"]);
+  assert.ok(offered({}).includes("press") && !offered({}).includes("enter_text") && !offered({}).includes("key_combo"));
   assert.deepEqual(Object.keys(built.body.questions.element_1!.criteria), ["A", "none"], "Every element question offers none");
 });
 
@@ -50,6 +56,17 @@ test("history is dropped oldest first to fit the budget, and a request over the 
 function response(answers: Record<string, [string, number]>): DecisionResponse {
   return { answers: Object.fromEntries(Object.entries(answers).map(([id, [choice, confidence]]) => [id, { choice, confidence }])), roundTripMs: 1 };
 }
+
+test("a step that fixes its operation acts without an operation answer, and the confidence gate skips the unasked question", () => {
+  const observation = finder();
+  const step = { id: "s", intent: "Search this folder", operation: "press" as const };
+  const built = ready(buildDecisionRequest({ goal: "g", step, observation, recent: [] }));
+  assert.equal(built.body.questions.operation, undefined);
+  const decision = decide({ observation, step, questions: built.questions, allowDestructive: false, confidenceGate: 0.4,
+    response: response({ region: ["toolbar", 0.9], element_1: ["F", 0.8], risk: ["safe", 0.9] }) });
+  assert.equal(decision.kind, "act");
+  assert.equal((decision as { operation: string }).operation, "press");
+});
 
 test("the policy routes on the region answer and never uses a confident answer from an unchosen group", () => {
   const observation = finder();

@@ -28,6 +28,8 @@ export interface ObservedElement {
   role: string;
   name: string;
   value?: string;
+  /** The end of a text field's or text area's content, for the planner only (design §5.1). */
+  contentEnd?: string;
   selected?: boolean;
   frame: Frame;
   group: string;
@@ -84,6 +86,9 @@ const LANDMARKS: Record<string, string> = {
 };
 
 const AUTOMATIC_IDENTIFIER = /^_NS:\d+$/;
+const TEXT_ROLES = new Set(["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"]);
+/** Characters of a text field's content shown to the planner, from the end. */
+const CONTENT_END_LENGTH = 200;
 
 /** Bidirectional control marks, which Calculator's display text carries (observed 2026-09-23). */
 export const BIDI_MARKS = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
@@ -193,6 +198,7 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
     ...(entry.element.value !== undefined && cleanName(entry.element.value, options.maxNameLength) !== entry.name
       ? { value: cleanName(entry.element.value, options.maxNameLength) } : {}),
     ...(entry.element.selected ? { selected: true } : {}),
+    ...(TEXT_ROLES.has(entry.element.role) && entry.element.value ? { contentEnd: entry.element.value.replace(BIDI_MARKS, "").slice(-CONTENT_END_LENGTH) } : {}),
     frame: entry.element.frame!, group, letter: letterAt(position),
   });
 
@@ -269,7 +275,11 @@ export function renderExecutorTable(observation: Observation): string {
 export function renderPlannerTable(observation: Observation): string {
   const table = observation.groups.map(group => `${group.name}:\n${group.elements.map(element => {
     const role = element.role.replace(/^AX/, "");
-    const state = [element.value !== undefined ? `value=${JSON.stringify(element.value)}` : "", element.selected ? "selected" : ""].filter(Boolean).join(" ");
+    // A text area's name is the start of its content, so the planner also sees how the content ends.
+    // Through Pi, a planner that could not see its typed line typed probe letters to find it (observed 2026-09-23).
+    const state = [element.value !== undefined ? `value=${JSON.stringify(element.value)}` : "",
+      element.contentEnd !== undefined && element.contentEnd !== element.name ? `content ends with ${JSON.stringify(element.contentEnd)}` : "",
+      element.selected ? "selected" : ""].filter(Boolean).join(" ");
     return `  ${element.letter} ${role} ${JSON.stringify(element.name)}${state ? ` ${state}` : ""}`;
   }).join("\n")}`).join("\n");
   if (!observation.texts?.length) return table;

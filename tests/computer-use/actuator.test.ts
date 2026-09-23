@@ -25,6 +25,8 @@ test("untypeable characters and malformed key combinations are refused before an
   assert.throws(() => keystrokesFor("é"), /cannot be typed/);
   for (const keys of ["cmd+", "hyper+n", "cmd+shift+plus", ""]) assert.throws(() => parseKeyCombo(keys), (error: ActuatorError) => error.code === "invalid_keys");
   assert.deepEqual(parseKeyCombo("escape"), { kind: "key", key: "escape", modifiers: [] });
+  assert.deepEqual(parseKeyCombo("Backspace"), { kind: "key", key: "delete", modifiers: [] }, "Planners call the delete key Backspace");
+  assert.throws(() => parseKeyCombo("hyper+n"), /Keys: a letter, a digit, or return, tab, escape/);
 });
 
 function pngOfWidth(width: number): Buffer {

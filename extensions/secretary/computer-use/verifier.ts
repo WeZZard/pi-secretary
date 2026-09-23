@@ -12,6 +12,7 @@ export type Postcondition =
   | { exists: { name: string; role?: string } }
   | { absent: { name: string; role?: string } }
   | { value: { name: string; equals: string } }
+  | { selected: { name: string } }
   | { window: { titleContains: string } }
   | { text: { contains: string } | { endsWith: string } }
   | { changed: true }
@@ -21,6 +22,8 @@ export type Postcondition =
 export interface Evaluation { holds: boolean; detail: string }
 
 const MAX_DEPTH = 8;
+/** An accessibility role, with or without the AX prefix. */
+const ROLE = /^(AX)?[A-Z][A-Za-z]*$/;
 const normalize = (text: string) => text.replace(BIDI_MARKS, "").replace(/\s+/g, " ").trim().toLowerCase();
 
 /**
@@ -85,7 +88,16 @@ export function validatePostcondition(value: unknown, depth = 0): string | undef
   switch (key) {
     case "exists": case "absent": {
       const b = body as { name?: unknown; role?: unknown };
-      return fields(body, ["name", "role"]) && text(b.name) && (b.role === undefined || text(b.role)) ? undefined : `${key} needs a name and an optional role`;
+      if (!(fields(body, ["name", "role"]) && text(b.name) && (b.role === undefined || text(b.role)))) return `${key} needs a name and an optional role`;
+      // Through Pi, a planner wrote role "selected", which no element has (observed 2026-09-23).
+      if (typeof b.role === "string" && !ROLE.test(b.role)) {
+        return `${key}: role ${JSON.stringify(b.role)} is not an accessibility role such as Button or TextField; to check that an element is selected, use {selected:{name}}`;
+      }
+      return undefined;
+    }
+    case "selected": {
+      const b = body as { name?: unknown };
+      return fields(body, ["name"]) && text(b.name) ? undefined : "selected needs a name";
     }
     case "value": {
       const b = body as { name?: unknown; equals?: unknown };
@@ -130,6 +142,12 @@ export function evaluatePostcondition(condition: Postcondition, after: WindowRea
     const holds = found.some(element => (element.value ?? "") === condition.value.equals);
     return { holds, detail: holds ? `${JSON.stringify(condition.value.name)} has the expected value`
       : `${JSON.stringify(condition.value.name)} has value ${JSON.stringify(found[0]!.value ?? "")}` };
+  }
+  if ("selected" in condition) {
+    const found = matching(after, condition.selected.name);
+    const holds = found.some(element => element.selected === true);
+    return { holds, detail: found.length === 0 ? `${JSON.stringify(condition.selected.name)} is not on screen`
+      : `${JSON.stringify(condition.selected.name)} ${holds ? "is" : "is not"} selected` };
   }
   if ("window" in condition) {
     const holds = after.window.title.toLowerCase().includes(condition.window.titleContains.toLowerCase());

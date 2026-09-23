@@ -40,6 +40,13 @@ test("an open sheet is the only group and elements behind it are discarded as be
   assert.deepEqual(result.groups[0]!.elements.map(element => element.name), ["Folder name", "Cancel", "Create"]);
   assert.equal(discardSummary(result.discards).behind_modal, 31);
   assert.match(renderPlannerTable(result), /A TextField "Folder name" value="untitled folder"/);
+
+  // A text area's name is the start of its content; the planner also sees how the content ends.
+  const document = textEditRead();
+  const area = document.elements.find(element => element.role === "AXTextArea")!;
+  area.label = undefined; area.value = `${"First line of a long document. ".repeat(4)}\nHello from Pi`;
+  const table = renderPlannerTable(ready(observe(read(document), options)));
+  assert.match(table, /A TextArea "First line of a long document\. First line of a …" content ends with ".*\\nHello from Pi"/);
 });
 
 test("truncation, a missing window element, and the element limit are failures, not partial tables", () => {

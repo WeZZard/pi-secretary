@@ -1,4 +1,4 @@
-import { ActuatorError, actionsFor } from "./actuator.ts";
+import { ActuatorError, actionsFor, parseKeyCombo } from "./actuator.ts";
 import { BackendError, type ExecutionBackend, type WindowRead, type WindowTarget } from "./backend/backend.ts";
 import type { ComputerUseConfiguration } from "./configuration.ts";
 import { ExecutorError, type DecisionRequestBody, type DecisionResponse } from "./executor-client.ts";
@@ -74,9 +74,14 @@ export function validatePlan(plan: Plan, maxSteps: number, basedOn?: Observation
     if (problem) return `step ${step.id}: ${problem}`;
     if (step.operation === "enter_text" && step.text === undefined) return `step ${step.id}: enter_text needs text`;
     if (step.operation === "key_combo" && step.keys === undefined) return `step ${step.id}: key_combo needs keys`;
+    if (step.text !== undefined && step.keys !== undefined) return `step ${step.id}: a step has text or keys, not both; split it into two steps`;
+    if (step.keys !== undefined) {
+      try { parseKeyCombo(step.keys); }
+      catch (error) { return `step ${step.id}: ${(error as Error).message}`; }
+    }
     if (step.maxAttempts !== undefined && (!Number.isInteger(step.maxAttempts) || step.maxAttempts < 1 || step.maxAttempts > 5)) return `step ${step.id}: maxAttempts must be 1 to 5`;
     if (step.idempotent !== undefined && typeof step.idempotent !== "boolean") return `step ${step.id}: idempotent must be true or false`;
-    if (step.operation === "enter_text" && !checksText(step.postcondition)) {
+    if (step.text !== undefined && !checksText(step.postcondition)) {
       return `step ${step.id}: an enter_text step must check the typed text with {text:{endsWith}}, {text:{contains}} or {value:{name,equals}}`;
     }
     if (step.operation === "key_combo" && step.keys !== undefined && isWeakPostcondition(step.postcondition)
