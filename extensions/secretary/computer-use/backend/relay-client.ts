@@ -76,10 +76,12 @@ async function resultBody(text: string): Promise<unknown> {
 export class RelaySession {
   readonly #connect: RelayConnect;
   readonly #acquire: Record<string, unknown>;
+  readonly #prepare: string[][];
   #ready?: Promise<RelayConnection>;
   #sequence = 0;
-  constructor(connect: RelayConnect, acquire: { image: string; env?: string; ttlHours: number }) {
+  constructor(connect: RelayConnect, acquire: { image: string; env?: string; ttlHours: number; prepare?: string[][] }) {
     this.#connect = connect;
+    this.#prepare = acquire.prepare ?? [];
     this.#acquire = { action: "acquire", task: "computer-use", image: acquire.image, extractions: [{ path: SCREENSHOT_EXTRACTION, name: SCREENSHOT_EXTRACTION }],
       ttlHours: acquire.ttlHours, ...(acquire.env ? { env: acquire.env } : {}) };
   }
@@ -93,17 +95,33 @@ export class RelaySession {
   }
 
   #connection(signal?: AbortSignal): Promise<RelayConnection> {
-    this.#ready ??= (async () => {
+    if (this.#ready) return this.#ready;
+    const ready = (async () => {
       const connection = await this.#connect();
-      for (const input of [this.#acquire, { action: "stage" }]) {
-        const result = await this.#call(connection, input, 15 * 60_000, signal);
-        if (result.isError) throw new BackendError("driver_failed", `relay ${String(input.action)} failed: ${result.text.slice(0, 500)}`);
+      let acquired = false;
+      try {
+        for (const input of [this.#acquire, { action: "stage" }]) {
+          const result = await this.#call(connection, input, 15 * 60_000, signal);
+          if (result.isError) throw new BackendError("driver_failed", `relay ${String(input.action)} failed: ${result.text.slice(0, 500)}`);
+          acquired = true;
+        }
+        // Configured preparation, such as opening the application a task needs, runs once after staging.
+        for (const argv of this.#prepare) {
+          await this.#runOn(connection, { kind: "exec", title: `Prepare: ${argv.join(" ")}`, expected: "The machine is ready for the task",
+            afterIntervalMs: 2000, timeoutMs: 120_000, body: { argv } }, signal);
+        }
+        return connection;
+      } catch (error) {
+        // The next attempt starts a new server, which would acquire a second machine; this one is released.
+        if (acquired) await connection.call({ action: "release" }, { timeoutMs: 5 * 60_000 }).catch(() => undefined);
+        await connection.close().catch(() => undefined);
+        throw error;
       }
-      return connection;
     })();
+    this.#ready = ready;
     // A failed start is not cached: the next call tries again.
-    this.#ready.catch(() => { this.#ready = undefined; });
-    return this.#ready;
+    ready.catch(() => { if (this.#ready === ready) this.#ready = undefined; });
+    return ready;
   }
 
   /**
@@ -111,7 +129,10 @@ export class RelaySession {
    * because the input may have reached the machine (design §11.2).
    */
   async run(input: RunInput, signal?: AbortSignal): Promise<RelayExecution> {
-    const connection = await this.#connection(signal);
+    return this.#runOn(await this.#connection(signal), input, signal);
+  }
+
+  async #runOn(connection: RelayConnection, input: RunInput, signal?: AbortSignal): Promise<RelayExecution> {
     const id = `cu-${String(++this.#sequence).padStart(4, "0")}`;
     const result = await this.#call(connection, { action: "run", kind: input.kind, reason: `Secretary computer use: ${input.title}`,
       step: { id, title: input.title, expected: input.expected, inputMode: "ordinary" }, snapshots: { afterIntervalMs: input.afterIntervalMs },
@@ -325,6 +346,8 @@ export interface RelayBackendOptions {
   /** The wait before the relay's after-screenshot of an action. */
   actionIntervalMs: number;
   timeoutMs?: number;
+  /** Commands run in the guest once after staging, such as `open -a Calculator`. */
+  prepare?: string[][];
   /** The guest's `lsappinfo`; tests replace it. */
   guestLsappinfo?: string;
 }

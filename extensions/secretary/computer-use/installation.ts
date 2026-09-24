@@ -36,7 +36,7 @@ export function createBackend(config: ComputerUseConfiguration, cwd: string): Ex
   if (config.backend === "local") return new LocalDriverBackend({ run: cuaDriverRunner(config.localDriverPath), maxTreeNodes: config.maxTreeNodes, foregroundDelivery: config.foregroundDelivery, frontmostPid: lsappinfoFrontmost });
   if (config.backend === "relay") {
     return new RelayBackend({ connect: stdioRelayConnect({ command: config.relayCommand, cwd }), image: config.relayImage!, ...(config.relayEnv ? { env: config.relayEnv } : {}),
-      ttlHours: config.relayTtlHours, maxTreeNodes: config.maxTreeNodes, foregroundDelivery: config.foregroundDelivery, actionIntervalMs: config.settleMs });
+      ttlHours: config.relayTtlHours, prepare: config.relayPrepare, maxTreeNodes: config.maxTreeNodes, foregroundDelivery: config.foregroundDelivery, actionIntervalMs: config.settleMs });
   }
   throw new Error(`computerUse.backend ${config.backend} has no execution backend`);
 }

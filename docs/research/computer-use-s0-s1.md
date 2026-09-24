@@ -689,3 +689,24 @@ The relay client was changed so that one read is one relay run. The guest progra
 - A click now uses the window position from the latest read. A window that moves between that read and the click would be clicked where it was; the step's postcondition would report the miss. This case has not been run.
 - The 512 MiB cap on `finish` was not reached with 21 runs. The run count at which it is reached is not measured; the earlier runs passed it at about 69.
 
+### 15.2 Delegation through Pi
+
+A real Pi parent in RPC mode delegated a Calculator task to the computer-use agent definition, which ran through the relay client in a fresh `macos26` machine. The parent and the agent both used `litellm/qwen3.8-27b`, and the executor was `jev.home.arpa`. The script is `scripts/computer-use/pi-delegation-live.ts`; `relayPrepare` opened Calculator after staging, because the tools do not launch applications. The tested revision is the working tree on top of `8f3ce58`.
+
+- The parent made one `Agent` call in the background and one `TaskOutput` call. It did not use the computer tools itself.
+- The agent observed the window, and its first plan was rejected before any action. It had asked for "the display text contains 7" after pressing 7, and the plan check refused it because "7" is also the name of a button (see below).
+- The agent's second plan completed with 4 executor decisions and 4 actions. Code verified only the last step, that the on-screen text contains "10". The steps for 7, Add and 3 were weakly verified, by a change on screen.
+- The agent observed again and saw "7+3 10". Its report put the code-verified fact apart from the weak ones, as the template requires. It added one inference, that the final state is consistent with correct intermediate states, and labelled it as such.
+- The parent's report repeated the agent's result and its limits correctly.
+- The run took 225 s from the prompt to the run's success, wall clock, including acquiring the machine.
+- The relay lease finished after Pi stopped, with delivery verified and execution passed, and the machine was released.
+
+**Finding: the control-name plan check is too strict.** It was added on 2026-09-23 after the planner wrote "text contains All Clear" to check a button ([Section 11](#11-first-checks-through-pi-2026-09-23)). It cannot tell that mistake apart from a text the window will show after the step, such as a digit on a calculator display. In this run it removed code verification from 3 of 4 steps.
+
+**Evidence:** `test-results/e2e/computer-use-delegation/2026-09-24T04-54-25-347Z-2f483b4b/`, with the parent's RPC events, the agent's session transcript under `extension-state/`, the run record and the relay evidence package. It is not versioned.
+
+**Verification limits:**
+
+- One run of one task. It shows that the chain works, not how often.
+- The model does not accept images, so the agent planned from the element table only.
+

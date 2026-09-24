@@ -162,3 +162,29 @@ test("a failed finish releases the machine and reports that the package was not 
   await assert.rejects(backend.close(), /evidence package was not delivered: .*512MiB.*The machine was released\./);
   assert.deepEqual(actions.slice(-3), ["finish", "release", "closed"]);
 });
+
+test("preparation runs once after staging, and a failed start releases the machine it acquired", async () => {
+  const actions: string[] = [];
+  let failPrepare = true;
+  const connection: RelayConnection = {
+    async call(input) {
+      actions.push(input.action === "run" ? `run ${input.kind} ${(input.argv as string[] | undefined)?.join(" ") ?? ""}`.trim() : String(input.action));
+      if (input.action === "run" && input.kind === "exec" && failPrepare) {
+        failPrepare = false;
+        return { text: `${JSON.stringify({ imageDelivery: { status: "attached" }, executionFailed: true })}\n${JSON.stringify({ outcome: { kind: "completed", exitStatus: { code: 1, signal: null } }, stderr: "no such app" })}`, isError: true };
+      }
+      if (input.action === "run") return { text: `${JSON.stringify({ imageDelivery: { status: "attached" }, executionFailed: false })}\n${JSON.stringify({ outcome: { kind: "completed", exitStatus: { code: 0, signal: null } }, stdout: "" })}`, isError: false };
+      return { text: "{}", isError: false };
+    },
+    async close() { actions.push("closed"); },
+  };
+  const backend = new RelayBackend({ connect: async () => connection, image: "macos26", ttlHours: 1, maxTreeNodes: 2000, foregroundDelivery: false, actionIntervalMs: 0,
+    prepare: [["/usr/bin/open", "-a", "Calculator"]] });
+  await assert.rejects(backend.readWindow({ app: "Calculator" }, { screenshot: false }), /Prepare: \/usr\/bin\/open -a Calculator/);
+  assert.deepEqual(actions, ["acquire", "stage", "run exec /usr/bin/open -a Calculator", "release", "closed"]);
+  actions.length = 0;
+  await backend.readWindow({ app: "Calculator" }, { screenshot: false }).catch(() => undefined);
+  assert.deepEqual(actions.slice(0, 4), ["acquire", "stage", "run exec /usr/bin/open -a Calculator", "run code"]);
+  await backend.readWindow({ app: "Calculator" }, { screenshot: false }).catch(() => undefined);
+  assert.equal(actions.filter(action => action.startsWith("run exec")).length, 1, "Preparation runs once per machine");
+});

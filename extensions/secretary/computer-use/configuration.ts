@@ -32,6 +32,8 @@ export interface ComputerUseConfiguration {
   /** The relay credential pack, passed as acquire's env. */
   relayEnv?: string;
   relayTtlHours: number;
+  /** Commands run in the relay machine once after staging, because the tools do not launch applications. */
+  relayPrepare: string[][];
 }
 
 /**
@@ -59,6 +61,7 @@ export const defaultComputerUseConfiguration = (): ComputerUseConfiguration => (
   localDriverPath: "cua-driver",
   relayCommand: DEFAULT_RELAY_COMMAND,
   relayTtlHours: 2,
+  relayPrepare: [],
 });
 
 type Field = keyof ComputerUseConfiguration;
@@ -84,6 +87,8 @@ const VALIDATORS: Record<Field, { check: (value: unknown) => boolean; expected: 
   relayCommand: { check: value => Array.isArray(value) && value.length > 0 && value.every(part => typeof part === "string" && part.length > 0), expected: "a non-empty array of non-empty strings" },
   relayImage: { check: value => typeof value === "string" && value.trim().length > 0, expected: "a non-empty string" },
   relayEnv: { check: value => typeof value === "string" && value.trim().length > 0, expected: "a non-empty string" },
+  relayPrepare: { check: value => Array.isArray(value) && value.every(argv => Array.isArray(argv) && argv.length > 0 && argv.every(part => typeof part === "string" && part.length > 0)),
+    expected: "an array of non-empty command arrays" },
   relayTtlHours: { check: value => typeof value === "number" && value >= 0.1 && value <= 720, expected: "a number from 0.1 to 720" },
 };
 

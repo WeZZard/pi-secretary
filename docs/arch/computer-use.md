@@ -220,6 +220,7 @@ The module reads a top-level `computerUse` object from the same `secretary.json`
 | `relayCommand` | It is the command that starts the relay client's own `mcp-vm-relay` server ([Section 11.2](#112-relay-client)). | `npx -y --prefer-offline @wezzard/mcp-vm-relay@0.4.0`, the version `pi-mcp-adapter` runs. Without `--prefer-offline`, a registry request reset by the network kept `npx` retrying past the client's 60-second start limit in 3 of 3 starts. |
 | `relayImage` | It is the relay image key passed to `acquire`. | None; the `relay` backend requires it. |
 | `relayEnv` | It is the relay credential pack passed to `acquire` as `env`. | None. |
+| `relayPrepare` | It lists commands, each an argument array, that the relay client runs in the machine once after staging, such as `["/usr/bin/open", "-a", "Calculator"]`. The tools do not launch applications, so a task that needs one open declares it here. | Empty. |
 | `relayTtlHours` | It is the lease time limit passed to `acquire`. It ends the machine if the child run ends without `finish`. | 2, not measured. |
 
 - Unknown fields in `computerUse` fail validation with an error that names the field.
