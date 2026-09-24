@@ -628,3 +628,40 @@ Two leases ran the fixes of Section 14.3 through Pi. Lease `relay-computer-use-b
 - The fixes made after the third batch ran through Pi in 7 runs, which show that each path works, not how often.
 - Five runs per task show that the paths work repeatedly on three tasks. They do not give a rate for other applications.
 - A person has not reviewed the step pictures.
+
+## 15. Relay client checks (2026-09-24)
+
+The relay client ([design Section 11.2](../arch/computer-use.md#112-relay-client)) ran on the development machine against a fresh `macos26` virtual machine, through its own `mcp-vm-relay` 0.4.0 server. The script is `scripts/computer-use/relay-live.ts`. It opens Calculator, reads the window, and then runs a four-step plan for 7 plus 3 through the real harness and the executor at `jev.home.arpa`. The tested revision is the working tree on top of `2edd2e9`.
+
+**Formulas.** Each number below names one of these:
+
+- *Relay read time, ms* is the wall clock from calling `readWindow` to its return, with a window screenshot, on a window that was already read once, so no warm-up read is included. One such read makes three relay runs, `list_windows`, `lsappinfo` and `get_window_state`, and one `image` call.
+- *Relay action time, ms* is the wall clock of one `act` call. For a click it makes two relay runs: `list_windows` for the window bounds, and the `cua` click. Each run includes the relay's own before and after display screenshots.
+
+**Results.**
+
+| Run | What happened |
+| --- | --- |
+| First | The `npx` start of the server timed out. A registry request reset by the network kept `npx` retrying past the client's 60-second start limit, in 3 of 3 starts. With `--prefer-offline`, 3 of 3 starts connected in about 285 ms, wall clock from `connect` to its return. |
+| Second | Reads worked, with 176 elements, but every screenshot failed with `presentation-unavailable`, and the first click escalated `backend_failed`. |
+| Third | The plan completed: 4 executor decisions, 4 actions, and 3 postconditions verified by code, the last one that the display ends with "10". |
+
+- The relay's `image` action refuses a PNG with compressed metadata chunks, `iCCP`, `zTXt` or `iTXt`, and then reports no original. Every macOS window screenshot here carried `iCCP` and `iTXt`. The relay's own presentation function refused the original, 92,113 bytes, and accepted a copy without those chunks, 88,715 bytes, at the same 460 × 816 pixels. The guest read program now removes the chunks.
+
+| Quantity | n | Median | Min | Max |
+| --- | --- | --- | --- | --- |
+| Relay read time, ms, before the plan | 5 | 22,891 | 22,530 | 23,269 |
+| Relay read time, ms, during the plan | 5 | 17,540 | 15,948 | 17,576 |
+| Relay action time, ms | 4 | 14,052 | 13,284 | 17,988 |
+
+- These numbers are one virtual machine and one application. They show the scale of the cost, not its spread.
+- In the second run, reads without a successful screenshot took a median of 13,606 ms by the same formula, so retrieving the screenshot cost about 9 seconds of each read.
+- Acquisition, staging and opening Calculator took 30,680 ms, and `finish` took 11,272 ms. Neither is a per-read quantity.
+- At these times, one plan step with a verifying read takes about 30 seconds. The local backend's reads took well under 2 seconds ([Section 14.4](#144-driver-call-time)).
+
+**Evidence:** The run directories are `test-results/computer-use/relay-live-2026-09-24T01-44-23-214Z/` and `test-results/computer-use/relay-live-2026-09-24T01-49-14-913Z/`, each with `log.txt`, the harness records and the delivered relay evidence package. They are not versioned.
+
+**Verification limits:**
+
+- The plan ran through the harness directly, not through Pi or a delegated agent.
+- Only Calculator was used. A Finder read, which needs the compressed read path most, has not run through the relay client.

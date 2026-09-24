@@ -18,7 +18,10 @@ const FAKE_DRIVER = `#!${process.execPath}
 const { writeFileSync } = require("node:fs");
 const [, , , tool, , json] = process.argv;
 const args = JSON.parse(json);
-const png = Buffer.alloc(33); Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png); png.write("IHDR", 12); png.writeUInt32BE(800, 16); png.writeUInt32BE(600, 20);
+const chunk = (type, data) => { const head = Buffer.alloc(8); head.writeUInt32BE(data.length, 0); head.write(type, 4, "latin1"); return Buffer.concat([head, data, Buffer.alloc(4)]); };
+const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(800, 0); ihdr.writeUInt32BE(600, 4);
+// Like a macOS window screenshot, it carries a compressed colour profile.
+const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("iCCP", Buffer.from("profile")), chunk("IDAT", Buffer.from("pixels")), chunk("IEND", Buffer.alloc(0))]);
 if (args.screenshot_out_file) writeFileSync(args.screenshot_out_file, png);
 const out = tool === "list_windows" ? { windows: [{ window_id: 5, pid: 7, app_name: "Finder", title: "Documents", is_on_screen: true, z_index: 1, bounds: { x: 100, y: 50, width: 400, height: 300 } }] }
   : tool === "get_window_state" ? { snapshot_id: "s", element_count: 400, elements: [{ element_index: 0, role: "AXWindow", label: "Documents", depth: 0, frame: { x: 100, y: 50, w: 400, h: 300 } },
@@ -53,7 +56,9 @@ test("a relay read acquires once, reads with code runs that pass the 64 KiB cap,
   assert.equal(read.elements.length, 400, "The whole tree arrived although its JSON is larger than 64 KiB");
   assert.ok(JSON.stringify(read.elements).length > 64 * 1024);
   assert.equal(read.appActive, true, "The active application came from lsappinfo in the guest");
-  assert.equal(Buffer.from(read.screenshot!.data, "base64").readUInt32BE(16), 800, "The screenshot is the untouched original");
+  const screenshot = Buffer.from(read.screenshot!.data, "base64");
+  assert.equal(screenshot.readUInt32BE(16), 800, "The screenshot keeps its full width");
+  assert.ok(!screenshot.includes("iCCP") && screenshot.includes("IDAT"), "The guest program removed the colour profile the relay refuses");
 
   const log = await calls();
   assert.deepEqual(log.slice(0, 2).map(call => call.action), ["acquire", "stage"]);

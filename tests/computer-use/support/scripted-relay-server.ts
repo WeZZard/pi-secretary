@@ -6,7 +6,7 @@
  * Every call is appended to the log as one JSON line.
  */
 import { execFile } from "node:child_process";
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -45,6 +45,10 @@ server.setRequestHandler(CallToolRequestSchema, async request => {
   else if (input.action === "run" && input.kind === "cua") text = completed(JSON.stringify({ ok: true }));
   else if (input.action === "image") {
     const originalPath = resolve(workspace, input.target.name, input.target.path);
+    // The relay refuses to present a PNG with compressed metadata, and then reports no original.
+    if (readFileSync(originalPath).includes("iCCP")) {
+      return { content: [{ type: "text", text: `${JSON.stringify({ imageDelivery: { status: "presentation-unavailable", diagnostic: "Image operation failed: presentation-unavailable" } })}\n{}` }], isError: true };
+    }
     text = `${JSON.stringify({ imageDelivery: { status: "attached", image: { source: "application", name: input.target.name, path: input.target.path, originalPath } } })}\n{}`;
   } else text = JSON.stringify({ ok: true, action: input.action });
   return { content: [{ type: "text", text }], isError: false };

@@ -31,7 +31,8 @@ export function stdioRelayConnect(options: { command: string[]; cwd: string }): 
     const transport = new StdioClientTransport({ command: command!, args, cwd: options.cwd, stderr: "ignore",
       env: { ...env, MCP_VM_RELAY_SESSION: `secretary-computer-use-${randomUUID()}`, MCP_VM_RELAY_PROJECT: options.cwd } });
     const client = new Client({ name: "secretary-computer-use", version: "1.0.0" });
-    await client.connect(transport);
+    // A first start may download the package, so it gets longer than a request.
+    await client.connect(transport, { timeout: 5 * 60_000 });
     return {
       async call(input, { timeoutMs, signal }) {
         const result = await client.callTool({ name: "relay", arguments: input }, undefined, { timeout: timeoutMs, signal });
@@ -155,12 +156,14 @@ export class RelaySession {
 /**
  * The guest program for a read: it calls the driver the relay staged and prints the result as
  * gzip-compressed, base64-encoded JSON, because one Finder read was 66,253 bytes (research §14.5).
+ * It also removes the ancillary chunks of a screenshot that the relay's `image` action refuses.
  */
 export function readProgram(tool: string, args: Record<string, unknown>): string {
   return `(async () => {
   const { execFile } = await import("node:child_process");
   const { gzipSync } = await import("node:zlib");
-  const { mkdirSync } = await import("node:fs");
+  const { existsSync, mkdirSync, readFileSync, writeFileSync } = await import("node:fs");
+  ${stripPngMetadata.toString()}
   const { dirname, resolve } = await import("node:path");
   const args = ${JSON.stringify(args)};
   if (typeof args.screenshot_out_file === "string") {
@@ -169,10 +172,33 @@ export function readProgram(tool: string, args: Record<string, unknown>): string
   }
   execFile(process.env.RELAY_CUA_DRIVER || "cua-driver", ["call", ${JSON.stringify(tool)}, "--json", JSON.stringify(args)], { maxBuffer: 256 * 1024 * 1024 }, (error, stdout, stderr) => {
     if (error) { process.stderr.write(String(stderr || error.message).slice(0, 2000)); process.exit(1); }
+    if (typeof args.screenshot_out_file === "string" && existsSync(args.screenshot_out_file)) {
+      writeFileSync(args.screenshot_out_file, stripPngMetadata(readFileSync(args.screenshot_out_file)));
+    }
     process.stdout.write(JSON.stringify({ gz: gzipSync(stdout).toString("base64") }));
   });
 })().catch(error => { process.stderr.write(String(error)); process.exit(1); });
 `;
+}
+
+/**
+ * Removes a PNG's compressed metadata chunks and the chunks that describe them. The relay refuses
+ * to present a PNG with iCCP, zTXt or iTXt, and every macOS window screenshot carries iCCP and iTXt
+ * (observed 2026-09-24). eXIf and Apple's iDOT go too; iDOT holds byte offsets that removing
+ * earlier chunks would make wrong. All are ancillary, so the picture itself is unchanged.
+ * It is serialized into the guest program, so it uses nothing from its module.
+ */
+export function stripPngMetadata(png: Buffer): Buffer {
+  const dropped = ["iCCP", "zTXt", "iTXt", "eXIf", "iDOT"];
+  if (png.length < 8) return png;
+  const kept = [png.subarray(0, 8)];
+  for (let at = 8; at + 12 <= png.length;) {
+    const end = at + 12 + png.readUInt32BE(at);
+    if (end > png.length) return png;
+    if (!dropped.includes(png.toString("latin1", at + 4, at + 8))) kept.push(png.subarray(at, end));
+    at = end;
+  }
+  return Buffer.concat(kept);
 }
 
 export function relayDriverRunner(session: RelaySession, options: { actionIntervalMs: number }): DriverRunner {
