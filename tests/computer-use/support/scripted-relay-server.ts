@@ -17,6 +17,7 @@ const log = process.env.SCRIPTED_RELAY_LOG!;
 const driver = process.env.SCRIPTED_RELAY_DRIVER!;
 const MAX_OUTPUT_BYTES = 64 * 1024;
 mkdirSync(workspace, { recursive: true });
+if (process.env.SCRIPTED_RELAY_PID_FILE) writeFileSync(process.env.SCRIPTED_RELAY_PID_FILE, String(process.pid));
 
 const executed = (execution: Record<string, unknown>) =>
   `${JSON.stringify({ imageDelivery: { status: "attached" }, executionFailed: false })}\n${JSON.stringify({ executionId: "e", ...execution }, null, 2)}`;

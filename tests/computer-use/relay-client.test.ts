@@ -45,7 +45,8 @@ async function scripted(t: TestContext) {
   process.env.SCRIPTED_RELAY_LOG = log;
   process.env.SCRIPTED_RELAY_DRIVER = driver;
   process.env.SCRIPTED_DRIVER_LOG = join(root, "driver.log");
-  t.after(() => { for (const name of ["SCRIPTED_RELAY_WORKSPACE", "SCRIPTED_RELAY_LOG", "SCRIPTED_RELAY_DRIVER", "SCRIPTED_DRIVER_LOG"]) delete process.env[name]; });
+  process.env.SCRIPTED_RELAY_PID_FILE = join(root, "server.pid");
+  t.after(() => { for (const name of ["SCRIPTED_RELAY_WORKSPACE", "SCRIPTED_RELAY_LOG", "SCRIPTED_RELAY_DRIVER", "SCRIPTED_DRIVER_LOG", "SCRIPTED_RELAY_PID_FILE"]) delete process.env[name]; });
   const backend = new RelayBackend({ connect: stdioRelayConnect({ command: [process.execPath, "--experimental-strip-types", "--no-warnings", server], cwd: root }),
     image: "macos26", env: "default", ttlHours: 1, maxTreeNodes: 2000, foregroundDelivery: true, actionIntervalMs: 300, guestLsappinfo: lsappinfo });
   // A failed assertion must not leave the server running, or the test process never exits.
@@ -86,8 +87,12 @@ test("a relay read is one code run that passes the 64 KiB cap, plus the screensh
     "Only the first read of a window makes the warm-up read");
   await assert.rejects(backend.readWindow({ app: "Safari" }, { screenshot: false }),
     (error: unknown) => error instanceof BackendError && error.code === "app_not_running", "The guest chose the window with the client's own rules");
+  const server = Number(await readFile(join(root, "server.pid"), "utf8"));
   await backend.close();
   assert.equal((await calls()).at(-1)!.action, "finish", "Closing delivers the evidence and releases the machine");
+  const alive = () => { try { process.kill(server, 0); return true; } catch { return false; } };
+  for (const deadline = Date.now() + 5000; alive() && Date.now() < deadline;) await new Promise(done => setTimeout(done, 50));
+  assert.equal(alive(), false, "Closing ends the relay server process");
 });
 
 test("a relay click is one cua run of real pointer input at window pixels", async t => {
@@ -187,4 +192,25 @@ test("preparation runs once after staging, and a failed start releases the machi
   assert.deepEqual(actions.slice(0, 4), ["acquire", "stage", "run exec /usr/bin/open -a Calculator", "run code"]);
   await backend.readWindow({ app: "Calculator" }, { screenshot: false }).catch(() => undefined);
   assert.equal(actions.filter(action => action.startsWith("run exec")).length, 1, "Preparation runs once per machine");
+});
+
+test("a cancelled read is not sent again, and closing still finishes the lease", async () => {
+  const actions: string[] = [];
+  const connection: RelayConnection = {
+    async call(input, { signal }) {
+      actions.push(input.action === "run" ? `run ${input.kind}` : String(input.action));
+      if (input.action !== "run") return { text: "{}", isError: false };
+      // The run waits until the caller cancels it, as a long relay run would.
+      return new Promise((_resolve, reject) => signal?.addEventListener("abort", () => reject(new Error("request cancelled")), { once: true }));
+    },
+    async close() { actions.push("closed"); },
+  };
+  const backend = new RelayBackend({ connect: async () => connection, image: "macos26", ttlHours: 1, maxTreeNodes: 2000, foregroundDelivery: false, actionIntervalMs: 0 });
+  const controller = new AbortController();
+  const read = backend.readWindow({ app: "Calculator" }, { screenshot: false, signal: controller.signal });
+  while (!actions.includes("run code")) await new Promise(done => setTimeout(done, 5));
+  controller.abort();
+  await assert.rejects(read, (error: unknown) => error instanceof BackendError && error.code === "aborted");
+  await backend.close();
+  assert.deepEqual(actions, ["acquire", "stage", "run code", "finish", "closed"], "One run, never repeated, and the lease is finished");
 });
