@@ -134,3 +134,20 @@ test("a refused acquisition is reported, and the next call tries again", async (
   await assert.rejects(backend.readWindow({ app: "Finder" }, { screenshot: false }), /relay acquire failed/);
   assert.equal(attempts, 2);
 });
+
+test("a failed finish releases the machine and reports that the package was not delivered", async () => {
+  const actions: string[] = [];
+  const connection: RelayConnection = {
+    async call(input) {
+      actions.push(String(input.action));
+      if (input.action === "finish") return { text: "Guest setup/transfer command failed (1): extraction exceeds 512MiB / 10000 files", isError: true };
+      if (input.action === "run") return { text: `${JSON.stringify({ imageDelivery: { status: "attached" }, executionFailed: false })}\n${JSON.stringify({ outcome: { kind: "completed", exitStatus: { code: 0, signal: null } }, stdout: "" })}`, isError: false };
+      return { text: "{}", isError: false };
+    },
+    async close() { actions.push("closed"); },
+  };
+  const backend = new RelayBackend({ connect: async () => connection, image: "macos26", ttlHours: 1, maxTreeNodes: 2000, foregroundDelivery: false, actionIntervalMs: 0 });
+  await backend.readWindow({ app: "Finder" }, { screenshot: false }).catch(() => undefined);
+  await assert.rejects(backend.close(), /evidence package was not delivered: .*512MiB.*The machine was released\./);
+  assert.deepEqual(actions.slice(-3), ["finish", "release", "closed"]);
+});

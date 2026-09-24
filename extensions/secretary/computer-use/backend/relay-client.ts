@@ -141,15 +141,27 @@ export class RelaySession {
     return readFile(original);
   }
 
-  /** Delivers the evidence package and releases the machine. */
+  /**
+   * Delivers the evidence package and releases the machine. A failed `finish` keeps the lease, so
+   * the client then releases it without the package: `finish` pulls the whole guest recording in
+   * one transfer capped at 512 MiB, and two display screenshots per run passed that cap in a
+   * 40-run check (research §15). The failure is still reported.
+   */
   async close(): Promise<void> {
     const ready = this.#ready;
     this.#ready = undefined;
     if (!ready) return;
     const connection = await ready.catch(() => undefined);
     if (!connection) return;
-    try { await connection.call({ action: "finish" }, { timeoutMs: 15 * 60_000 }); }
-    finally { await connection.close(); }
+    try {
+      const finished = await this.#call(connection, { action: "finish" }, 15 * 60_000);
+      if (!finished.isError) return;
+      const released = await this.#call(connection, { action: "release" }, 5 * 60_000);
+      throw new BackendError("driver_failed", `relay finish failed, so the evidence package was not delivered: ${finished.text.slice(0, 300)}. `
+        + (released.isError ? `Release also failed, and the machine remains until its lease expires: ${released.text.slice(0, 300)}` : "The machine was released."));
+    } finally {
+      await connection.close();
+    }
   }
 }
 

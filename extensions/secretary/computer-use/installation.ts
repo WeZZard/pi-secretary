@@ -62,7 +62,8 @@ export function installComputerUse(pi: ExtensionAPI, options: ComputerUseInstall
       return;
     }
     if (!observationAvailable(config)) return;
-    await backend?.close();
+    try { await backend?.close(); }
+    catch (error) { diagnostic(`Secretary computer use: ${error instanceof Error ? error.message : String(error)}`); }
     try { backend = (options.backendFactory ?? createBackend)(config, context.cwd); }
     catch (error) { backend = undefined; diagnostic(`Secretary computer use is disabled: ${error instanceof Error ? error.message : String(error)}`); return; }
     const session = createHash("sha256").update(context.sessionManager.getSessionId()).digest("hex");
@@ -110,7 +111,8 @@ export function installComputerUse(pi: ExtensionAPI, options: ComputerUseInstall
   });
 
   pi.on("session_shutdown", async () => {
-    await backend?.close();
+    try { await backend?.close(); }
+    catch (error) { diagnostic(`Secretary computer use: ${error instanceof Error ? error.message : String(error)}`); }
     backend = undefined;
     observations.clear();
   });

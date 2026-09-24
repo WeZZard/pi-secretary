@@ -656,7 +656,8 @@ The relay client ([design Section 11.2](../arch/computer-use.md#112-relay-client
 
 - These numbers are one virtual machine and one application. They show the scale of the cost, not its spread.
 - In the second run, reads without a successful screenshot took a median of 13,606 ms by the same formula, so retrieving the screenshot cost about 9 seconds of each read.
-- Acquisition, staging and opening Calculator took 30,680 ms, and `finish` took 11,272 ms. Neither is a per-read quantity.
+- Acquisition, staging and opening Calculator took 30,680 ms. Neither this nor `finish` is a per-read quantity.
+- `finish` failed in the second and third runs with "extraction exceeds 512MiB / 10000 files", and the relay kept both machines. The screenshot extraction was about 1 MB. The limit applies to each transfer out of the guest, and `finish` pulls the whole guest recording in one transfer. That recording holds two display screenshots of 5 to 11 MB for every relay run, and these runs made about 40 relay runs each. The client ignored the failed result and reported success. It now releases the machine after a failed `finish` and reports that the package was not delivered; this path has passed a contract test but has not run live. The two machines were released by hand through their owning relay sessions, and the VM service then listed none.
 - At these times, one plan step with a verifying read takes about 30 seconds. The local backend's reads took well under 2 seconds ([Section 14.4](#144-driver-call-time)).
 
 **Evidence:** The run directories are `test-results/computer-use/relay-live-2026-09-24T01-44-23-214Z/` and `test-results/computer-use/relay-live-2026-09-24T01-49-14-913Z/`, each with `log.txt`, the harness records and the delivered relay evidence package. They are not versioned.
