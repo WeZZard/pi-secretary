@@ -144,6 +144,7 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
       catch (error) {
         if (error instanceof BackendError && error.code === "aborted") throw new Stop(undefined, true);
         if (error instanceof BackendError && (error.code === "window_ambiguous" || error.code === "window_not_found")) return escalate(stepId, "window_unclear", error.message);
+        if (error instanceof BackendError && error.code === "state_too_large") return escalate(stepId, "state_too_large", error.message);
         return escalate(stepId, "backend_failed", error instanceof Error ? error.message : String(error));
       }
       const result: Observation | ObservationFailure = observe(read, { id: `${runId}-${String(++sequence).padStart(3, "0")}`, maxElements: config.maxElements, maxNameLength: config.maxNameLength });

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { defineTool, getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ExecutionBackend } from "./backend/backend.ts";
 import { cuaDriverRunner, LocalDriverBackend, lsappinfoFrontmost } from "./backend/local-backend.ts";
+import { RelayBackend, stdioRelayConnect } from "./backend/relay-client.ts";
 import { loadComputerUseConfiguration, observationAvailable, planExecutionAvailable, type ComputerUseConfiguration } from "./configuration.ts";
 import { ExecutorClient } from "./executor-client.ts";
 import type { Executor } from "./harness.ts";
@@ -25,16 +26,19 @@ export interface ComputerUseInstallOptions {
   /** Secretary data directory; telemetry is written below `<root>/computer-use/`. */
   root: string;
   /** Test seam: replaces the configured backend. */
-  backendFactory?: (config: ComputerUseConfiguration) => ExecutionBackend;
+  backendFactory?: (config: ComputerUseConfiguration, cwd: string) => ExecutionBackend;
   /** Test seam: replaces the executor client. */
   executorFactory?: (config: ComputerUseConfiguration) => Executor;
   agentDir?: () => string;
 }
 
-export function createBackend(config: ComputerUseConfiguration): ExecutionBackend {
+export function createBackend(config: ComputerUseConfiguration, cwd: string): ExecutionBackend {
   if (config.backend === "local") return new LocalDriverBackend({ run: cuaDriverRunner(config.localDriverPath), maxTreeNodes: config.maxTreeNodes, foregroundDelivery: config.foregroundDelivery, frontmostPid: lsappinfoFrontmost });
-  // design §11.2: the relay backend, a client of an mcp-vm-relay server session, is plan Phase 7.
-  throw new Error(`computerUse.backend ${config.backend} is not available in this build; use local for development`);
+  if (config.backend === "relay") {
+    return new RelayBackend({ connect: stdioRelayConnect({ command: config.relayCommand, cwd }), image: config.relayImage!, ...(config.relayEnv ? { env: config.relayEnv } : {}),
+      ttlHours: config.relayTtlHours, maxTreeNodes: config.maxTreeNodes, foregroundDelivery: config.foregroundDelivery, actionIntervalMs: config.settleMs });
+  }
+  throw new Error(`computerUse.backend ${config.backend} has no execution backend`);
 }
 
 export function installComputerUse(pi: ExtensionAPI, options: ComputerUseInstallOptions): void {
@@ -59,7 +63,7 @@ export function installComputerUse(pi: ExtensionAPI, options: ComputerUseInstall
     }
     if (!observationAvailable(config)) return;
     await backend?.close();
-    try { backend = (options.backendFactory ?? createBackend)(config); }
+    try { backend = (options.backendFactory ?? createBackend)(config, context.cwd); }
     catch (error) { backend = undefined; diagnostic(`Secretary computer use is disabled: ${error instanceof Error ? error.message : String(error)}`); return; }
     const session = createHash("sha256").update(context.sessionManager.getSessionId()).digest("hex");
     telemetry = new Telemetry(join(options.root, "computer-use", session));

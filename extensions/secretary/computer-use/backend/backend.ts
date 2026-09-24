@@ -90,7 +90,8 @@ export interface ExecutionBackend {
   close(): Promise<void>;
 }
 
-export type BackendErrorCode = "app_not_running" | "window_not_found" | "window_ambiguous" | "driver_failed" | "timeout" | "aborted";
+/** `state_too_large`: a transport cap cut the window's state short, as the relay's 64 KiB output cap can (design §11.2). */
+export type BackendErrorCode = "app_not_running" | "window_not_found" | "window_ambiguous" | "driver_failed" | "state_too_large" | "timeout" | "aborted";
 
 export class BackendError extends Error {
   readonly code: BackendErrorCode;

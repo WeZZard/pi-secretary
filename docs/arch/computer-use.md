@@ -2,7 +2,7 @@
 
 **Document type:** Software design specification.
 
-**Status:** Draft for review, revised 2026-09-24. Plan phases 1 to 5 are implemented with the local driver backend, and Pi ran them in relay virtual machines ([research Sections 11 to 14](../research/computer-use-s0-s1.md#11-first-checks-through-pi-2026-09-23)). The requirements, CU-01 to CU-07, were approved on 2026-09-24 ([Section 2.1](#21-required-outcomes)). Sections 2.3 and 11.2 were revised on 2026-09-24 for the move from `pi-vm-relay` to `mcp-vm-relay`. The agent definition of Section 4.3 and the relay backend of Section 11.2 are not implemented. No interaction design for computer use has been approved.
+**Status:** Draft for review, revised 2026-09-24. Plan phases 1 to 5 are implemented with the local driver backend, and Pi ran them in relay virtual machines ([research Sections 11 to 14](../research/computer-use-s0-s1.md#11-first-checks-through-pi-2026-09-23)). The requirements, CU-01 to CU-07, were approved on 2026-09-24 ([Section 2.1](#21-required-outcomes)). Sections 2.3 and 11.2 were revised on 2026-09-24 for the move from `pi-vm-relay` to `mcp-vm-relay`. The agent definition of Section 4.3 and the relay client of Section 11.2 are not implemented. No interaction design for computer use has been approved.
 
 **Evidence:** [Planner and executor investigation](../research/computer-use-s0-s1.md), measured on 2026-09-22.
 
@@ -60,7 +60,8 @@ These constraints come from the [research record](../research/computer-use-s0-s1
 
 These constraints come from the `mcp-vm-relay` and `relay-driver` repositories as of 2026-09-24. The owner retired `pi-vm-relay` in Pi on 2026-09-24. Pi now reaches the relay through `pi-mcp-adapter`, which runs the `mcp-vm-relay` server and exposes its `relay` tool to the model.
 
-- The relay runs guest commands through `run` actions. A `cua` run forwards one `cua-driver` tool call to the guest and returns its bounded standard output, and the result reports `outputTruncated`. `pi-vm-relay` capped the output at 64 KiB. The cap in `mcp-vm-relay` is not confirmed; it is likely enforced by `relay-driver`. The recorded Finder window states in the Pi batches were about 120 KB, so a 64 KiB cap would truncate every Finder read, and Phase 7 must check this first.
+- The relay runs guest commands through `run` actions. A `cua` run forwards one `cua-driver` tool call to the guest and returns its standard output. The guest receiver stops the command once its output passes 64 KiB and reports `outputTruncated` (`mcp-vm-relay/src/guest/receiver.ts`, `MAX_OUTPUT_BYTES`). The cap is a constant, not a run option.
+- The element array of one recorded Finder read, the fixture folder of the Pi batches with 379 elements, was 66,253 bytes as compact JSON, before the driver's Markdown rendering. A `cua` run of `get_window_state` would therefore be cut off for that window.
 - Each run captures a before screenshot and an after screenshot in PNG format, and each capture has a 60-second timeout.
 - The relay refuses direct accessibility activation and value setting unless the run declares `inputMode: "accessibility"`.
 - Owner decision D3 in `relay-driver/docs/decisions.md` says that ordinary interactions use real pointer and keyboard input. Accessibility may discover controls, resolve coordinates and observe state. Direct accessibility activation is reserved for tests of accessibility behavior and must be identified in the evidence.
@@ -167,7 +168,7 @@ extensions/secretary/computer-use/
   executor-client.ts     HTTP client for /v1/systemone
   backend/
     backend.ts           execution backend interface
-    relay-backend.ts     client of an mcp-vm-relay server session
+    relay-client.ts     client of an mcp-vm-relay server session
     local-backend.ts     development adapter for the host cua-driver
     cua-markdown.ts      descendant text from the driver's Markdown rendering
     fake-backend.ts      deterministic test desktop
@@ -216,9 +217,14 @@ The module reads a top-level `computerUse` object from the same `secretary.json`
 | `localDriverPath` | It is the `cua-driver` executable used by the `local` backend. | `cua-driver` |
 | `foregroundDelivery` | It sends clicks and menu shortcuts with the driver's foreground delivery ([Section 11.3](#113-local-driver-backend-for-development)). | `true` |
 | `stepPictures` | It records a picture of the target window before and after each action, and writes a review page ([Section 12.1](#121-records)). | `false` |
+| `relayCommand` | It is the command that starts the relay client's own `mcp-vm-relay` server ([Section 11.2](#112-relay-client)). | `npx -y @wezzard/mcp-vm-relay@0.4.0`, the version `pi-mcp-adapter` runs. |
+| `relayImage` | It is the relay image key passed to `acquire`. | None; the `relay` backend requires it. |
+| `relayEnv` | It is the relay credential pack passed to `acquire` as `env`. | None. |
+| `relayTtlHours` | It is the lease time limit passed to `acquire`. It ends the machine if the child run ends without `finish`. | 2, not measured. |
 
 - Unknown fields in `computerUse` fail validation with an error that names the field.
 - The `local` backend is accepted only when `allowLocalDesktop` is `true`, which is the developer setting in [Section 11.3](#113-local-driver-backend-for-development).
+- The `relay` backend is accepted only when `relayImage` is set.
 
 ## 5. Planner contract
 
@@ -533,16 +539,24 @@ The backend interface has four operations.
 - `close(outcome)` finishes or releases the lease.
 - Each action may carry a delivery mode, `background` or `foreground`. The local driver backend also offers two optional read-and-raise operations: `foreground(window, point)` reports whether the app is active and which windows are drawn over the point, and `bringToFront(window)` activates the app.
 
-### 11.2 Relay backend
+### 11.2 Relay client
 
-- The relay backend does not call the model-facing `relay` tool, because `pi-mcp-adapter` gives other extensions no way to call it, and because that tool's server session belongs to the parent's conversation, which may own its own virtual machine.
+The relay client is the part of Secretary that sends the harness's reads and actions to the relay. It is not the relay's own driver: the relay chooses how it performs a run, for example with `cua-driver` for a desktop or a browser engine for a page, and Secretary does not depend on that choice. The configuration value that selects it is `computerUse.backend: "relay"`.
+
+
+- The relay client does not call the model-facing `relay` tool, because `pi-mcp-adapter` gives other extensions no way to call it, and because that tool's server session belongs to the parent's conversation, which may own its own virtual machine.
 - The backend is its own Model Context Protocol client. It starts one `mcp-vm-relay` server per child run over standard input and output, with a fresh `MCP_VM_RELAY_SESSION` and `MCP_VM_RELAY_PROJECT` set to the working directory. It calls the server's `relay` tool with the same actions a model would use. The lease, owner lock and evidence rules therefore stay in `mcp-vm-relay`, and no second lease owner is written.
 - The server command is configuration, with the command that `pi-mcp-adapter` uses for the `vm-relay` server as the default: `npx -y @wezzard/mcp-vm-relay@<version>`.
-- The backend acquires one lease on the first tool call of a child run and keeps it for the rest of that run. It stages `cua-driver` and the runtime with `stage`, and it reads and acts with `run` of kind `cua`.
+- The backend acquires one lease on the first tool call of a child run and keeps it for the rest of that run. The acquisition declares one extraction, `computer-use-screenshots`, for the directory that receives window screenshots. The backend then stages the relay runtime with `stage`.
 - The backend releases the lease when the child run ends. It uses `finish` instead when the delegated task declares files to extract. It closes the server afterwards; if the child run ends without either, the server's closed input pauses renewal and the lease's time limit ends the machine.
-- Each read is a `cua` run of `get_window_state`, so each read also captures two display screenshots. The cost of that is unmeasured, and Phase 7 must measure it before settle intervals and budgets are set.
+- The relay client reuses the local driver backend (Section 11.3) and replaces only the function that calls the driver. Window lookup, warm-up reads, scale learning and point conversion therefore behave the same in both backends.
+- A driver call that provides input, such as a click, key press or scroll, is a `run` of kind `cua`. Its output is small.
+- A driver call that only reads, such as `list_windows` or `get_window_state`, is a `run` of kind `code`. The code is a short JavaScript program that calls the guest's `cua-driver` at the path the relay sets in `RELAY_CUA_DRIVER` and prints the result as gzip-compressed, base64-encoded JSON. A plain `cua` run cannot carry a read, because the guest receiver stops a process whose output passes 64 KiB, and one Finder read was 66,253 bytes (Section 2.3). A read whose encoded output still passes the cap escalates `state_too_large`.
+- The active application comes from an `exec` run of `/usr/bin/lsappinfo`, as in the local backend.
+- A window screenshot is written by `get_window_state` into the declared screenshot directory in the guest workspace. The client retrieves it with the `image` action and the source `application`, and reads the untouched original from the host path the relay reports in `image.originalPath`. The image block in the tool result is not used, because the relay resamples an image wider or taller than 2000 pixels for presentation, and scale learning needs the original width.
+- Each read and each action captures two display screenshots. The cost of that is unmeasured, and Phase 7 must measure it before settle intervals and budgets are set.
 - Every read uses `inputMode: "ordinary"`. Every action uses real pointer or keyboard input at coordinates computed from the element's frame, as required by owner decision D3.
-- The backend labels each relay step with the plan step identifier and intent, so that the relay's evidence package lines up with the step telemetry.
+- The backend labels each relay step with a sequence identifier, such as `cu-0007`, and the driver tool it calls. The relay's evidence package and the step telemetry are matched by time, because the backend interface does not pass the plan step to the backend.
 - An `uncertain` or `refused` outcome from the relay becomes `backend_failed`. The backend never retries such an action.
 - Pixel actions take window-local screenshot pixels. The backend converts screen points by subtracting the window's current bounds and multiplying by a scale learned from a screenshot of that window. The driver's reported display scale cannot be used, because it reported 1.0 while a 656-point window produced a 1312-pixel screenshot.
 - Text entry uses `press_key` once per character. `type_text` is not used, because it inserts text through accessibility first and falls back to keystrokes only when that fails. The documented `press_key` vocabulary covers letters, digits, space, return, tab and named keys, so other characters are refused until a real-keystroke path for them is found.
@@ -551,7 +565,7 @@ The backend interface has four operations.
 
 - A second backend calls the host's own `cua-driver` directly. It exists so that the observer and the harness can be developed before the relay integration is available.
 - It is a development backend. It is disabled unless a developer setting enables it, and it must target a disposable application window.
-- It uses the same real-input policy as the relay backend.
+- It uses the same real-input policy as the relay client.
 - It finds the window through `list_windows`, checks the active application through `list_apps`, and reads the tree through `get_window_state`. It never launches, activates or clicks anything during observation.
 - The active application comes from `lsappinfo front` and `lsappinfo info -only pid`, which took 6 to 8 ms. `list_apps` also scans installed applications and took 438 to 630 ms, so it is only the fallback when `lsappinfo` fails. The two sources agreed in 24 of 28 readings; the 4 disagreements came from the first pass in a new virtual machine, where `list_apps` still named the previous application ([research Section 14.6](../research/computer-use-s0-s1.md#146-fourth-batch-on-the-fixes)).
 - With `foregroundDelivery` on, clicks and shortcuts with Command, Control or Option use the driver's `foreground` delivery. The driver brings the window forward for the action and then restores the previous app. Scrolls, plain keys and arrow, Home, End and Page keys with any modifier, such as Cmd+Up and Cmd+Down, stay in `background` delivery, because text-navigation keys worked there.
@@ -607,8 +621,8 @@ Step wall time includes the relay's screenshot captures, so it must not be compa
 | What does a real screenshot cost the planner? | Measured in Phase 1: the cost is proportional to pixel area, and a 1312×844 window screenshot costs 1,068 input tokens on Qwen 3.8 27B ([research Section 8](../research/computer-use-s0-s1.md#8-phase-1-observations-2026-09-23)). Choose the default image scale when the planner prompt is written in Phase 6. | No. |
 | Should the executor also receive screenshots? | Do not send them in the first release. The accessibility tree is the executor's only input until screenshot cost is measured. | No. |
 | Should the fallback list keep models without image input? | Remove them, or accept planning without screenshots when they are selected. | Yes, because the list is user configuration. |
-| How does the relay backend reach the relay? | Closed on 2026-09-24. The backend is its own client of an `mcp-vm-relay` server session per child run ([Section 11.2](#112-relay-backend)). The retired `pi-vm-relay` export is no longer needed. | No. |
-| Should the relay backend use the official `@modelcontextprotocol/sdk` client? | Use it. It would be the package's first runtime dependency. A hand-written client for `initialize` and `tools/call` over standard input and output is the alternative, and it would copy protocol details that the SDK already maintains. | Yes, because it adds the first runtime dependency. |
+| How does the relay client reach the relay? | Closed on 2026-09-24. The backend is its own client of an `mcp-vm-relay` server session per child run ([Section 11.2](#112-relay-backend)). The retired `pi-vm-relay` export is no longer needed. | No. |
+| Should the relay client use the official `@modelcontextprotocol/sdk` client? | Closed on 2026-09-24: the owner chose `@modelcontextprotocol/sdk`. It is only the client side of the protocol in Secretary, and it does not change how the relay performs a run. | No. |
 | What does one relay run cost in latency? | Measure the relay round trip for a read and for an action before setting settle intervals and budgets. | No. |
 | May the planner perform steps itself when the executor is unavailable? | Not in the first release. The escalation reports the failure instead. | Yes, if a degraded mode is wanted. |
 
@@ -624,7 +638,7 @@ Step wall time includes the relay's screenshot captures, so it must not be compa
 - Standalone scripts ran the harness modules once each in a relay virtual machine, with Pi stubbed, hand-written plans and the live executor ([research Section 10](../research/computer-use-s0-s1.md#10-standalone-script-checks-in-a-macos-virtual-machine-2026-09-23)).
 - These script runs are not live checks. A live check counts only when Pi loads the extension and runs the task.
 - Pi ran three Calculator tasks and two TextEdit tasks in a relay virtual machine, each once, with the local driver backend inside the guest ([research Sections 11](../research/computer-use-s0-s1.md#11-first-checks-through-pi-2026-09-23) and [12](../research/computer-use-s0-s1.md#12-fix-checks-through-pi-2026-09-23)). The step pictures from those runs have not been reviewed by a person.
-- Live acceptance with the relay backend has not been executed, because that backend is not built. The remaining claims of this document are design, not verified behavior.
+- Live acceptance with the relay client has not been executed, because that backend is not built. The remaining claims of this document are design, not verified behavior.
 
 ## 15. References
 

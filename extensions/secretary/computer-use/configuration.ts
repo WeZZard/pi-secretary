@@ -25,7 +25,17 @@ export interface ComputerUseConfiguration {
   foregroundDelivery: boolean;
   allowLocalDesktop: boolean;
   localDriverPath: string;
+  /** Design §11.2: the command that starts an mcp-vm-relay server over standard input and output. */
+  relayCommand: string[];
+  /** The relay image key, for example one listed by relay action=probe. Required for the relay client. */
+  relayImage?: string;
+  /** The relay credential pack, passed as acquire's env. */
+  relayEnv?: string;
+  relayTtlHours: number;
 }
+
+/** The version pi-mcp-adapter runs for the vm-relay server (checked 2026-09-24). */
+export const DEFAULT_RELAY_COMMAND = ["npx", "-y", "@wezzard/mcp-vm-relay@0.4.0"];
 
 export const defaultComputerUseConfiguration = (): ComputerUseConfiguration => ({
   backend: "none",
@@ -42,6 +52,8 @@ export const defaultComputerUseConfiguration = (): ComputerUseConfiguration => (
   foregroundDelivery: true,
   allowLocalDesktop: false,
   localDriverPath: "cua-driver",
+  relayCommand: DEFAULT_RELAY_COMMAND,
+  relayTtlHours: 2,
 });
 
 type Field = keyof ComputerUseConfiguration;
@@ -64,6 +76,10 @@ const VALIDATORS: Record<Field, { check: (value: unknown) => boolean; expected: 
   foregroundDelivery: { check: value => typeof value === "boolean", expected: "a boolean" },
   allowLocalDesktop: { check: value => typeof value === "boolean", expected: "a boolean" },
   localDriverPath: { check: value => typeof value === "string" && value.trim().length > 0, expected: "a non-empty string" },
+  relayCommand: { check: value => Array.isArray(value) && value.length > 0 && value.every(part => typeof part === "string" && part.length > 0), expected: "a non-empty array of non-empty strings" },
+  relayImage: { check: value => typeof value === "string" && value.trim().length > 0, expected: "a non-empty string" },
+  relayEnv: { check: value => typeof value === "string" && value.trim().length > 0, expected: "a non-empty string" },
+  relayTtlHours: { check: value => typeof value === "number" && value >= 0.1 && value <= 720, expected: "a number from 0.1 to 720" },
 };
 
 function applyComputerUse(section: unknown, path: string, result: ComputerUseConfiguration): void {
@@ -96,6 +112,7 @@ export function loadComputerUseConfiguration(cwd: string, agentDir: string, trus
   if (result.backend === "local" && !result.allowLocalDesktop) {
     throw new Error("computerUse.backend local operates this machine's desktop; set computerUse.allowLocalDesktop to true to enable it for development");
   }
+  if (result.backend === "relay" && result.relayImage === undefined) throw new Error("computerUse.backend relay needs computerUse.relayImage, the relay image key");
   return result;
 }
 

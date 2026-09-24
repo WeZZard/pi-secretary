@@ -65,8 +65,9 @@ export async function executeObserve(
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return { content: [{ type: "text", text: `Observation failed: ${message}` }],
-      details: { observationId, status: "backend_failed", attempts, error: message, ...(recordPath ? { recordPath } : {}) } };
+    const status = error instanceof BackendError && error.code === "state_too_large" ? "state_too_large" : "backend_failed";
+    return { content: [{ type: "text", text: status === "state_too_large" ? `Observation failed. Status: state_too_large. ${message}` : `Observation failed: ${message}` }],
+      details: { observationId, status, attempts, error: message, ...(recordPath ? { recordPath } : {}) } };
   }
   const finalRead = read!;
   const final = result!;

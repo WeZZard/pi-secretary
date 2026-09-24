@@ -45,6 +45,17 @@ export const lsappinfoFrontmost: FrontmostPid = async ({ timeoutMs, signal }) =>
   return pid === undefined ? undefined : Number(pid);
 };
 
+/** A file the driver writes a window screenshot to, and the way to read it back. */
+export interface ScreenshotFile { path: string; read(signal?: AbortSignal): Promise<Buffer>; discard(): Promise<void> }
+export type ScreenshotFiles = (name: string) => Promise<ScreenshotFile>;
+
+/** Screenshot files in a fresh temporary directory on this machine, removed after reading. */
+export const localScreenshotFiles: ScreenshotFiles = async name => {
+  const dir = await mkdtemp(join(tmpdir(), "secretary-computer-use-"));
+  const path = join(dir, name);
+  return { path, read: () => readFile(path), discard: () => rm(dir, { recursive: true, force: true }) };
+};
+
 interface ListedWindow { window_id: number; pid: number; app_name: string; title: string; is_on_screen: boolean; z_index?: number; layer?: number;
   bounds?: { x: number; y: number; width: number; height: number } }
 
@@ -70,6 +81,8 @@ export interface LocalBackendOptions {
   foregroundDelivery?: boolean;
   /** A faster source of the active application. When it fails or cannot tell, `list_apps` answers. */
   frontmostPid?: FrontmostPid;
+  /** Where the driver writes screenshots. The relay client passes files in the guest (design §11.2). */
+  screenshots?: ScreenshotFiles;
 }
 
 const TEXT_NAVIGATION_KEYS = new Set(["up", "down", "left", "right", "home", "end", "pageup", "pagedown"]);
@@ -164,7 +177,7 @@ export class LocalDriverBackend implements ExecutionBackend {
     const started = now();
     const window = await this.#findWindow(target, options.signal);
     const appActive = await this.#isActive(window.pid, options.signal);
-    const shotDir = options.screenshot ? await mkdtemp(join(tmpdir(), "secretary-computer-use-")) : undefined;
+    const shot = options.screenshot ? await this.#screenshots("window.png") : undefined;
     try {
       const key = `${window.pid}:${window.windowId}`;
       if (!this.#warmed.has(key)) {
@@ -173,16 +186,16 @@ export class LocalDriverBackend implements ExecutionBackend {
         this.#warmed.add(key);
       }
       const args: Record<string, unknown> = { pid: window.pid, window_id: window.windowId, max_elements: this.#options.maxTreeNodes };
-      if (shotDir) args.screenshot_out_file = join(shotDir, "window.png");
+      if (shot) args.screenshot_out_file = shot.path;
       else args.include_screenshot = false;
       const state = await this.#options.run("get_window_state", args, { timeoutMs: this.#timeout, signal: options.signal }) as
-        { elements?: RawElement[]; element_count?: number; snapshot_id?: string; screenshot_file_path?: string; tree_markdown?: string };
+        { elements?: RawElement[]; element_count?: number; snapshot_id?: string; tree_markdown?: string };
       if (!Array.isArray(state.elements)) throw new BackendError("driver_failed", "cua-driver get_window_state returned no structured elements");
       const count = state.element_count ?? state.elements.length;
       let screenshot: WindowRead["screenshot"];
-      if (shotDir) {
+      if (shot) {
         let png: Buffer | undefined;
-        try { png = await readFile(state.screenshot_file_path ?? join(shotDir, "window.png")); }
+        try { png = await shot.read(options.signal); }
         catch { png = undefined; }
         if (png) {
           screenshot = { data: png.toString("base64"), mimeType: "image/png" };
@@ -194,9 +207,11 @@ export class LocalDriverBackend implements ExecutionBackend {
       return { window, appActive, snapshotId: state.snapshot_id, elements: state.elements, ...(descendantText ? { descendantText } : {}), truncated: count >= this.#options.maxTreeNodes,
         ...(screenshot ? { screenshot } : {}), readMs: now() - started };
     } finally {
-      if (shotDir) await rm(shotDir, { recursive: true, force: true });
+      await shot?.discard();
     }
   }
+
+  get #screenshots(): ScreenshotFiles { return this.#options.screenshots ?? localScreenshotFiles; }
 
   async #bounds(window: WindowRef, signal?: AbortSignal) {
     const listed = await this.#options.run("list_windows", { pid: window.pid }, { timeoutMs: this.#timeout, signal }) as { windows?: ListedWindow[] };
@@ -218,14 +233,13 @@ export class LocalDriverBackend implements ExecutionBackend {
   async #scaleFor(window: WindowRef, signal?: AbortSignal): Promise<number> {
     const known = this.#scale.get(`${window.pid}:${window.windowId}`);
     if (known !== undefined) return known;
-    const shotDir = await mkdtemp(join(tmpdir(), "secretary-computer-use-"));
+    const shot = await this.#screenshots("scale.png");
     try {
-      const path = join(shotDir, "scale.png");
-      await this.#options.run("get_window_state", { pid: window.pid, window_id: window.windowId, max_elements: 1, screenshot_out_file: path },
+      await this.#options.run("get_window_state", { pid: window.pid, window_id: window.windowId, max_elements: 1, screenshot_out_file: shot.path },
         { timeoutMs: this.#timeout, signal });
-      return await this.#learnScale(window, await readFile(path), signal);
+      return await this.#learnScale(window, await shot.read(signal), signal);
     } finally {
-      await rm(shotDir, { recursive: true, force: true });
+      await shot.discard();
     }
   }
 

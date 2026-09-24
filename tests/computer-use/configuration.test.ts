@@ -47,3 +47,15 @@ test("unknown fields, invalid values, and an unacknowledged local desktop are re
   put(global, { computerUse: { backend: "local" } });
   assert.throws(() => loadComputerUseConfiguration(cwd, agentDir, false), /allowLocalDesktop/);
 });
+
+test("the relay client needs an image key and defaults to the adapter's relay server command", (t) => {
+  const { cwd, agentDir, global, put } = fixture(t);
+  put(global, { computerUse: { backend: "relay" } });
+  assert.throws(() => loadComputerUseConfiguration(cwd, agentDir, true), /needs computerUse.relayImage/);
+  put(global, { computerUse: { backend: "relay", relayImage: "macos26", relayEnv: "default" } });
+  const config = loadComputerUseConfiguration(cwd, agentDir, true);
+  assert.deepEqual([config.relayImage, config.relayEnv, config.relayTtlHours], ["macos26", "default", 2]);
+  assert.deepEqual(config.relayCommand, ["npx", "-y", "@wezzard/mcp-vm-relay@0.4.0"]);
+  put(global, { computerUse: { backend: "relay", relayImage: "macos26", relayCommand: [] } });
+  assert.throws(() => loadComputerUseConfiguration(cwd, agentDir, true), /relayCommand must be a non-empty array/);
+});
