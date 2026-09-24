@@ -18,6 +18,7 @@ const FAKE_DRIVER = `#!${process.execPath}
 const { writeFileSync } = require("node:fs");
 const [, , , tool, , json] = process.argv;
 const args = JSON.parse(json);
+require("node:fs").appendFileSync(process.env.SCRIPTED_DRIVER_LOG, tool + (args.screenshot_out_file ? " with screenshot" : "") + "\\n");
 const chunk = (type, data) => { const head = Buffer.alloc(8); head.writeUInt32BE(data.length, 0); head.write(type, 4, "latin1"); return Buffer.concat([head, data, Buffer.alloc(4)]); };
 const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(800, 0); ihdr.writeUInt32BE(600, 4);
 // Like a macOS window screenshot, it carries a compressed colour profile.
@@ -35,22 +36,27 @@ async function scripted(t: TestContext) {
   const driver = join(root, "cua-driver");
   await writeFile(driver, FAKE_DRIVER);
   await chmod(driver, 0o755);
+  const lsappinfo = join(root, "lsappinfo");
+  await writeFile(lsappinfo, `#!/bin/sh\ncase "$1" in front) echo "ASN:0x0-0x7:" ;; *) echo '"pid"=7' ;; esac\n`);
+  await chmod(lsappinfo, 0o755);
   const log = join(root, "calls.jsonl");
   await writeFile(log, "");
   process.env.SCRIPTED_RELAY_WORKSPACE = join(root, "workspace");
   process.env.SCRIPTED_RELAY_LOG = log;
   process.env.SCRIPTED_RELAY_DRIVER = driver;
-  t.after(() => { delete process.env.SCRIPTED_RELAY_WORKSPACE; delete process.env.SCRIPTED_RELAY_LOG; delete process.env.SCRIPTED_RELAY_DRIVER; });
+  process.env.SCRIPTED_DRIVER_LOG = join(root, "driver.log");
+  t.after(() => { for (const name of ["SCRIPTED_RELAY_WORKSPACE", "SCRIPTED_RELAY_LOG", "SCRIPTED_RELAY_DRIVER", "SCRIPTED_DRIVER_LOG"]) delete process.env[name]; });
   const backend = new RelayBackend({ connect: stdioRelayConnect({ command: [process.execPath, "--experimental-strip-types", "--no-warnings", server], cwd: root }),
-    image: "macos26", env: "default", ttlHours: 1, maxTreeNodes: 2000, foregroundDelivery: true, actionIntervalMs: 300 });
+    image: "macos26", env: "default", ttlHours: 1, maxTreeNodes: 2000, foregroundDelivery: true, actionIntervalMs: 300, guestLsappinfo: lsappinfo });
   // A failed assertion must not leave the server running, or the test process never exits.
   t.after(async () => { await backend.close(); await rm(root, { recursive: true, force: true }); });
   const calls = async () => (await readFile(log, "utf8")).trim().split("\n").filter(Boolean).map(line => JSON.parse(line) as Record<string, any>);
-  return { backend, calls, root };
+  const driverCalls = async () => (await readFile(join(root, "driver.log"), "utf8")).trim().split("\n");
+  return { backend, calls, root, driverCalls };
 }
 
-test("a relay read acquires once, reads with code runs that pass the 64 KiB cap, and fetches the screenshot original", async t => {
-  const { backend, calls, root } = await scripted(t);
+test("a relay read is one code run that passes the 64 KiB cap, plus the screenshot original", async t => {
+  const { backend, calls, root, driverCalls } = await scripted(t);
   const read = await backend.readWindow({ app: "Finder", windowTitle: "Documents" }, { screenshot: true });
   assert.equal(read.window.windowId, 5);
   assert.equal(read.elements.length, 400, "The whole tree arrived although its JSON is larger than 64 KiB");
@@ -68,14 +74,18 @@ test("a relay read acquires once, reads with code runs that pass the 64 KiB cap,
   assert.match(log[0]!.session, /^secretary-computer-use-/, "The client runs its own relay session, apart from the parent's");
   assert.equal(log[0]!.project, root);
   const runs = log.filter(call => call.action === "run");
-  assert.deepEqual(runs.map(call => call.kind), ["code", "exec", "code", "code", "code"], "list_windows, lsappinfo, warm-up, read, and the bounds for the scale");
-  for (const run of runs) {
-    assert.equal(run.step.inputMode, "ordinary");
-    assert.equal(run.snapshots.afterIntervalMs, 0, "A read waits for nothing");
-  }
-  assert.deepEqual(runs.map(run => run.step.id), ["cu-0001", "cu-0002", "cu-0003", "cu-0004", "cu-0005"]);
+  assert.deepEqual(runs.map(call => call.kind), ["code"], "One run lists the windows, reads the active application, warms up, reads and measures the scale");
+  assert.equal(runs[0]!.step.inputMode, "ordinary");
+  assert.equal(runs[0]!.snapshots.afterIntervalMs, 0, "A read waits for nothing");
+  assert.equal(runs[0]!.step.id, "cu-0001");
   const image = log.find(call => call.action === "image")!;
-  assert.deepEqual(image.target, { source: "application", name: "computer-use-screenshots", path: "0001-window.png" });
+  assert.deepEqual(image.target, { source: "application", name: "computer-use-screenshots", path: "read-0001.png" });
+  await backend.readWindow({ app: "Finder", windowTitle: "Documents" }, { screenshot: false });
+  assert.equal((await calls()).filter(call => call.action === "image").length, 1, "A read without a screenshot fetches no image");
+  assert.deepEqual(await driverCalls(), ["list_windows", "get_window_state", "get_window_state with screenshot", "list_windows", "get_window_state with screenshot"],
+    "Only the first read of a window makes the warm-up read");
+  await assert.rejects(backend.readWindow({ app: "Safari" }, { screenshot: false }),
+    (error: unknown) => error instanceof BackendError && error.code === "app_not_running", "The guest chose the window with the client's own rules");
   await backend.close();
   assert.equal((await calls()).at(-1)!.action, "finish", "Closing delivers the evidence and releases the machine");
 });
@@ -84,8 +94,9 @@ test("a relay click is one cua run of real pointer input at window pixels", asyn
   const { backend, calls } = await scripted(t);
   const read = await backend.readWindow({ app: "Finder" }, { screenshot: true });
   await backend.act(read.window, { kind: "click", point: { x: 150, y: 70 }, button: "left", count: 1 });
-  const cua = (await calls()).filter(call => call.kind === "cua");
-  assert.equal(cua.length, 1);
+  const runs = (await calls()).filter(call => call.action === "run");
+  assert.deepEqual(runs.map(call => call.kind), ["code", "cua"], "The click reuses the read's bounds and scale");
+  const cua = runs.filter(call => call.kind === "cua");
   assert.equal(cua[0]!.tool, "click");
   assert.deepEqual({ x: cua[0]!.args.x, y: cua[0]!.args.y, delivery: cua[0]!.args.delivery_mode }, { x: 100, y: 40, delivery: "foreground" }, "Points become pixels at the learned scale of 2");
   assert.equal(cua[0]!.args.element_index, undefined, "No accessibility activation");

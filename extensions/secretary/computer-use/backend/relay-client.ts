@@ -4,7 +4,7 @@ import { gunzipSync } from "node:zlib";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { BackendError, type ActionOutcome, type BackendAction, type ExecutionBackend, type ForegroundState, type Point, type ReadOptions, type WindowRead, type WindowRef, type WindowTarget } from "./backend.ts";
-import { LocalDriverBackend, type DriverRunner, type FrontmostPid, type ScreenshotFiles } from "./local-backend.ts";
+import { LocalDriverBackend, selectWindow, toWindowRead, windowRef, type DriverRunner, type FrontmostPid, type ListedWindow, type ScreenshotFiles, type WindowBounds, type WindowState } from "./local-backend.ts";
 
 /**
  * The relay client (design docs/arch/computer-use.md §11.2). It sends the harness's reads and
@@ -213,14 +213,76 @@ export function stripPngMetadata(png: Buffer): Buffer {
   return Buffer.concat(kept);
 }
 
+/** Decodes the gzip-compressed, base64-encoded JSON a guest program printed. */
+function decoded(execution: RelayExecution, what: string): unknown {
+  try { return JSON.parse(gunzipSync(Buffer.from((JSON.parse(execution.stdout ?? "") as { gz: string }).gz, "base64")).toString("utf8")); }
+  catch { throw new BackendError("driver_failed", `${what} returned output that is not JSON`); }
+}
+
+interface WindowReadInput { target: WindowTarget; maxTreeNodes: number; warmed: string[]; screenshotPath: string; lsappinfo: string }
+interface GuestWindowRead {
+  error?: { code: "app_not_running" | "window_not_found" | "window_ambiguous"; message: string };
+  window: ListedWindow; frontPid: number | null; listedActive: boolean | null; state: WindowState; pngWidth: number | null;
+}
+
+/**
+ * The guest program for one whole window read, as one relay run (design §11.2). It lists the
+ * windows, chooses the target with the client's own `selectWindow`, reads the active application,
+ * makes the warm-up read of a window it has not read before, reads the tree with a screenshot, and
+ * measures the screenshot's width for the scale. The first relay client made three relay runs for
+ * this and took a median of 22,891 ms per read (research §15).
+ */
+export function windowReadProgram(input: WindowReadInput): string {
+  return `(async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { gzipSync } = await import("node:zlib");
+  const fs = await import("node:fs");
+  const { dirname, resolve } = await import("node:path");
+  ${selectWindow.toString()}
+  ${stripPngMetadata.toString()}
+  const input = ${JSON.stringify(input)};
+  const driver = process.env.RELAY_CUA_DRIVER || "cua-driver";
+  const call = (tool, args) => {
+    const value = JSON.parse(execFileSync(driver, ["call", tool, "--json", JSON.stringify(args)], { maxBuffer: 256 * 1024 * 1024, encoding: "utf8" }));
+    if (value && typeof value === "object" && (value.isError === true || value.error)) throw new Error("cua-driver " + tool + " failed: " + JSON.stringify(value).slice(0, 500));
+    return value;
+  };
+  const print = value => process.stdout.write(JSON.stringify({ gz: gzipSync(JSON.stringify(value)).toString("base64") }));
+  const selected = selectWindow(call("list_windows", {}).windows || [], input.target);
+  if (!selected.window) return print({ error: selected });
+  const window = selected.window;
+  let frontPid = null, listedActive = null;
+  try {
+    const front = execFileSync(input.lsappinfo, ["front"], { encoding: "utf8" }).trim();
+    const pid = /"pid"=(\\d+)/.exec(execFileSync(input.lsappinfo, ["info", "-only", "pid", front], { encoding: "utf8" }));
+    if (pid) frontPid = Number(pid[1]);
+  } catch {}
+  if (frontPid === null) {
+    const apps = call("list_apps", {});
+    listedActive = (Array.isArray(apps) ? apps : apps.apps || []).some(app => app.pid === window.pid && app.active === true);
+  }
+  const base = { pid: window.pid, window_id: window.window_id, max_elements: input.maxTreeNodes };
+  if (!input.warmed.includes(window.pid + ":" + window.window_id)) call("get_window_state", { ...base, include_screenshot: false });
+  const shot = resolve(input.screenshotPath);
+  fs.mkdirSync(dirname(shot), { recursive: true });
+  const state = call("get_window_state", { ...base, screenshot_out_file: shot });
+  let pngWidth = null;
+  if (fs.existsSync(shot)) {
+    const png = stripPngMetadata(fs.readFileSync(shot));
+    fs.writeFileSync(shot, png);
+    if (png.length >= 24 && png.readUInt32BE(12) === 0x49484452) pngWidth = png.readUInt32BE(16);
+  }
+  print({ window, frontPid, listedActive, state, pngWidth });
+})().catch(error => { process.stderr.write(String((error && error.stack) || error).slice(0, 2000)); process.exit(1); });
+`;
+}
+
 export function relayDriverRunner(session: RelaySession, options: { actionIntervalMs: number }): DriverRunner {
   return async (tool, args, { timeoutMs, signal }) => {
     if (READ_TOOLS.has(tool)) {
       const execution = await session.run({ kind: "code", title: `Read with ${tool}`, expected: "The screen does not change", afterIntervalMs: 0, timeoutMs,
         body: { code: readProgram(tool, args), language: "javascript" } }, signal);
-      let value: unknown;
-      try { value = JSON.parse(gunzipSync(Buffer.from((JSON.parse(execution.stdout ?? "") as { gz: string }).gz, "base64")).toString("utf8")); }
-      catch { throw new BackendError("driver_failed", `cua-driver ${tool} returned output that is not JSON`); }
+      const value = decoded(execution, `cua-driver ${tool}`);
       const failure = value as { isError?: boolean; error?: unknown };
       if (failure && typeof failure === "object" && (failure.isError === true || failure.error)) {
         throw new BackendError("driver_failed", `cua-driver ${tool} failed: ${JSON.stringify(value).slice(0, 500)}`);
@@ -263,19 +325,57 @@ export interface RelayBackendOptions {
   /** The wait before the relay's after-screenshot of an action. */
   actionIntervalMs: number;
   timeoutMs?: number;
+  /** The guest's `lsappinfo`; tests replace it. */
+  guestLsappinfo?: string;
 }
 
+/**
+ * A read is one relay run and, when a screenshot is wanted, one `image` call. Actions go through
+ * the local driver backend with relay runs, and take the window's bounds and scale from its latest
+ * read instead of reading the bounds again. If the window moved since that read, the click lands
+ * where the window was, and the step's postcondition reports the miss.
+ */
 export class RelayBackend implements ExecutionBackend {
   readonly kind = "relay" as const;
   readonly #session: RelaySession;
   readonly #driver: LocalDriverBackend;
+  readonly #options: RelayBackendOptions;
+  readonly #warmed = new Set<string>();
+  readonly #geometry = new Map<string, { bounds: WindowBounds; scale: number }>();
+  #reads = 0;
   constructor(options: RelayBackendOptions) {
+    this.#options = options;
     this.#session = new RelaySession(options.connect, options);
     this.#driver = new LocalDriverBackend({ run: relayDriverRunner(this.#session, options), maxTreeNodes: options.maxTreeNodes,
       foregroundDelivery: options.foregroundDelivery, frontmostPid: relayFrontmost(this.#session), screenshots: relayScreenshotFiles(this.#session),
-      timeoutMs: options.timeoutMs ?? 60_000 });
+      geometry: window => this.#geometry.get(`${window.pid}:${window.windowId}`), timeoutMs: this.#timeout });
   }
-  readWindow(target: WindowTarget, options: ReadOptions): Promise<WindowRead> { return this.#driver.readWindow(target, options); }
+  get #timeout(): number { return this.#options.timeoutMs ?? 60_000; }
+  /** The lease, for scripts that prepare the machine, such as opening an application. */
+  get session(): RelaySession { return this.#session; }
+
+  async readWindow(target: WindowTarget, options: ReadOptions): Promise<WindowRead> {
+    const started = performance.now();
+    const file = `read-${String(++this.#reads).padStart(4, "0")}.png`;
+    const execution = await this.#session.run({ kind: "code", title: `Read the ${target.app} window`, expected: "The screen does not change", afterIntervalMs: 0,
+      timeoutMs: this.#timeout, body: { code: windowReadProgram({ target, maxTreeNodes: this.#options.maxTreeNodes, warmed: [...this.#warmed],
+        screenshotPath: `${SCREENSHOT_EXTRACTION}/${file}`, lsappinfo: this.#options.guestLsappinfo ?? "/usr/bin/lsappinfo" }), language: "javascript" } }, options.signal);
+    const result = decoded(execution, "The window read") as GuestWindowRead;
+    if (result.error) throw new BackendError(result.error.code, result.error.message);
+    const window = windowRef(result.window);
+    const key = `${window.pid}:${window.windowId}`;
+    this.#warmed.add(key);
+    const bounds = result.window.bounds;
+    if (result.pngWidth && bounds && bounds.width > 0) this.#geometry.set(key, { bounds, scale: result.pngWidth / bounds.width });
+    else this.#geometry.delete(key);
+    const appActive = result.frontPid !== null ? result.frontPid === window.pid : result.listedActive === true;
+    let screenshot: WindowRead["screenshot"];
+    if (options.screenshot && result.pngWidth && Array.isArray(result.state.elements)) {
+      try { screenshot = { data: (await this.#session.screenshot(file, options.signal)).toString("base64"), mimeType: "image/png" }; }
+      catch (error) { if (options.signal?.aborted) throw new BackendError("aborted", "the window read was cancelled"); }
+    }
+    return toWindowRead(window, appActive, result.state, this.#options.maxTreeNodes, screenshot, performance.now() - started);
+  }
   act(window: WindowRef, action: BackendAction, signal?: AbortSignal): Promise<ActionOutcome> { return this.#driver.act(window, action, signal); }
   foreground(window: WindowRef, point: Point | undefined, signal?: AbortSignal): Promise<ForegroundState> { return this.#driver.foreground(window, point, signal); }
   bringToFront(window: WindowRef, signal?: AbortSignal): Promise<void> { return this.#driver.bringToFront(window, signal); }

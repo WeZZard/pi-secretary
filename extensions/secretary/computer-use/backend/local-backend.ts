@@ -56,8 +56,44 @@ export const localScreenshotFiles: ScreenshotFiles = async name => {
   return { path, read: () => readFile(path), discard: () => rm(dir, { recursive: true, force: true }) };
 };
 
-interface ListedWindow { window_id: number; pid: number; app_name: string; title: string; is_on_screen: boolean; z_index?: number; layer?: number;
-  bounds?: { x: number; y: number; width: number; height: number } }
+export interface WindowBounds { x: number; y: number; width: number; height: number }
+export interface ListedWindow { window_id: number; pid: number; app_name: string; title: string; is_on_screen: boolean; z_index?: number; layer?: number;
+  bounds?: WindowBounds }
+
+export const windowRef = (window: ListedWindow): WindowRef => ({ pid: window.pid, windowId: window.window_id, app: window.app_name, title: window.title });
+
+/**
+ * Chooses the target window from `list_windows`. It returns an error rather than throwing, and uses
+ * nothing outside itself, because the relay client also runs it inside the guest (design §11.2).
+ */
+export function selectWindow(windows: ListedWindow[], target: WindowTarget):
+  { window: ListedWindow } | { code: "app_not_running" | "window_not_found" | "window_ambiguous"; message: string } {
+  const app = target.app.trim().toLowerCase();
+  const ofApp = windows.filter(window => window.app_name.toLowerCase() === app);
+  if (ofApp.length === 0) return { code: "app_not_running", message: `No window of ${target.app} is open. This tool does not launch applications.` };
+  const titles = () => ofApp.filter(window => window.title !== "").map(window => JSON.stringify(window.title)).join(", ") || "none with a title";
+  const title = target.windowTitle?.toLowerCase();
+  const matching = target.windowId !== undefined ? ofApp.filter(window => window.window_id === target.windowId)
+    : ofApp.filter(window => title === undefined ? window.title !== "" : window.title.toLowerCase().includes(title));
+  if (target.windowId !== undefined && matching.length === 0) {
+    return { code: "window_not_found", message: `The ${target.app} window that was observed is closed. Windows: ${titles()}.` };
+  }
+  // A lower z_index is nearer the front: Safari at 13 was drawn over TextEdit at 36 (observed 2026-09-23).
+  const onScreen = matching.filter(window => window.is_on_screen).sort((a, b) => (a.z_index ?? 0) - (b.z_index ?? 0));
+  if (target.single && target.windowId === undefined && onScreen.length > 1) {
+    return { code: "window_ambiguous", message: `${onScreen.length} ${target.app} windows match${target.windowTitle ? ` ${JSON.stringify(target.windowTitle)}` : ""}: `
+      + `${onScreen.map(window => JSON.stringify(window.title)).join(", ")}. Name one with window_title, or plan against an observation of it with based_on.` };
+  }
+  const chosen = onScreen[0];
+  if (!chosen && matching.length > 0) {
+    // Observed 2026-09-23: a visible window briefly reported is_on_screen false.
+    return { code: "window_not_found", message: `The ${target.app} window ${JSON.stringify(matching[0]!.title)} exists but is not on screen; it may be minimized, hidden, or on another Space.` };
+  }
+  if (!chosen) {
+    return { code: "window_not_found", message: `No on-screen ${target.app} window matches${target.windowTitle ? ` ${JSON.stringify(target.windowTitle)}` : ""}. Windows: ${titles()}.` };
+  }
+  return { window: chosen };
+}
 
 /** Width of a PNG from its IHDR chunk. */
 export function pngWidth(png: Buffer): number | undefined {
@@ -83,6 +119,23 @@ export interface LocalBackendOptions {
   frontmostPid?: FrontmostPid;
   /** Where the driver writes screenshots. The relay client passes files in the guest (design §11.2). */
   screenshots?: ScreenshotFiles;
+  /**
+   * The window's bounds and screenshot scale from its latest read. When it answers, a pixel action
+   * uses them instead of reading the bounds again. The relay client uses it, because every driver
+   * call there is a relay run of several seconds (research §15).
+   */
+  geometry?: (window: WindowRef) => { bounds: WindowBounds; scale: number } | undefined;
+}
+
+export interface WindowState { elements?: RawElement[]; element_count?: number; snapshot_id?: string; tree_markdown?: string }
+
+/** Builds a read from one `get_window_state` result. */
+export function toWindowRead(window: WindowRef, appActive: boolean, state: WindowState, maxTreeNodes: number, screenshot: WindowRead["screenshot"], readMs: number): WindowRead {
+  if (!Array.isArray(state.elements)) throw new BackendError("driver_failed", "cua-driver get_window_state returned no structured elements");
+  const count = state.element_count ?? state.elements.length;
+  const descendantText = typeof state.tree_markdown === "string" ? descendantTextByIndex(state.tree_markdown) : undefined;
+  return { window, appActive, snapshotId: state.snapshot_id, elements: state.elements, ...(descendantText ? { descendantText } : {}), truncated: count >= maxTreeNodes,
+    ...(screenshot ? { screenshot } : {}), readMs };
 }
 
 const TEXT_NAVIGATION_KEYS = new Set(["up", "down", "left", "right", "home", "end", "pageup", "pagedown"]);
@@ -130,31 +183,9 @@ export class LocalDriverBackend implements ExecutionBackend {
 
   async #findWindow(target: WindowTarget, signal?: AbortSignal): Promise<WindowRef> {
     const listed = await this.#options.run("list_windows", {}, { timeoutMs: this.#timeout, signal }) as { windows?: ListedWindow[] };
-    const app = target.app.trim().toLowerCase();
-    const ofApp = (listed.windows ?? []).filter(window => window.app_name.toLowerCase() === app);
-    if (ofApp.length === 0) throw new BackendError("app_not_running", `No window of ${target.app} is open. This tool does not launch applications.`);
-    const titles = () => ofApp.filter(window => window.title !== "").map(window => JSON.stringify(window.title)).join(", ") || "none with a title";
-    const title = target.windowTitle?.toLowerCase();
-    const matching = target.windowId !== undefined ? ofApp.filter(window => window.window_id === target.windowId)
-      : ofApp.filter(window => title === undefined ? window.title !== "" : window.title.toLowerCase().includes(title));
-    if (target.windowId !== undefined && matching.length === 0) {
-      throw new BackendError("window_not_found", `The ${target.app} window that was observed is closed. Windows: ${titles()}.`);
-    }
-    // A lower z_index is nearer the front: Safari at 13 was drawn over TextEdit at 36 (observed 2026-09-23).
-    const onScreen = matching.filter(window => window.is_on_screen).sort((a, b) => (a.z_index ?? 0) - (b.z_index ?? 0));
-    if (target.single && target.windowId === undefined && onScreen.length > 1) {
-      throw new BackendError("window_ambiguous", `${onScreen.length} ${target.app} windows match${target.windowTitle ? ` ${JSON.stringify(target.windowTitle)}` : ""}: `
-        + `${onScreen.map(window => JSON.stringify(window.title)).join(", ")}. Name one with window_title, or plan against an observation of it with based_on.`);
-    }
-    const chosen = onScreen[0];
-    if (!chosen && matching.length > 0) {
-      // Observed 2026-09-23: a visible window briefly reported is_on_screen false.
-      throw new BackendError("window_not_found", `The ${target.app} window ${JSON.stringify(matching[0]!.title)} exists but is not on screen; it may be minimized, hidden, or on another Space.`);
-    }
-    if (!chosen) {
-      throw new BackendError("window_not_found", `No on-screen ${target.app} window matches${target.windowTitle ? ` ${JSON.stringify(target.windowTitle)}` : ""}. Windows: ${titles()}.`);
-    }
-    return { pid: chosen.pid, windowId: chosen.window_id, app: chosen.app_name, title: chosen.title };
+    const selected = selectWindow(listed.windows ?? [], target);
+    if ("code" in selected) throw new BackendError(selected.code, selected.message);
+    return windowRef(selected.window);
   }
 
   get #timeout(): number { return this.#options.timeoutMs ?? 15_000; }
@@ -188,12 +219,9 @@ export class LocalDriverBackend implements ExecutionBackend {
       const args: Record<string, unknown> = { pid: window.pid, window_id: window.windowId, max_elements: this.#options.maxTreeNodes };
       if (shot) args.screenshot_out_file = shot.path;
       else args.include_screenshot = false;
-      const state = await this.#options.run("get_window_state", args, { timeoutMs: this.#timeout, signal: options.signal }) as
-        { elements?: RawElement[]; element_count?: number; snapshot_id?: string; tree_markdown?: string };
-      if (!Array.isArray(state.elements)) throw new BackendError("driver_failed", "cua-driver get_window_state returned no structured elements");
-      const count = state.element_count ?? state.elements.length;
+      const state = await this.#options.run("get_window_state", args, { timeoutMs: this.#timeout, signal: options.signal }) as WindowState;
       let screenshot: WindowRead["screenshot"];
-      if (shot) {
+      if (shot && Array.isArray(state.elements)) {
         let png: Buffer | undefined;
         try { png = await shot.read(options.signal); }
         catch { png = undefined; }
@@ -203,9 +231,7 @@ export class LocalDriverBackend implements ExecutionBackend {
           await this.#learnScale(window, png, options.signal).catch(() => undefined);
         }
       }
-      const descendantText = typeof state.tree_markdown === "string" ? descendantTextByIndex(state.tree_markdown) : undefined;
-      return { window, appActive, snapshotId: state.snapshot_id, elements: state.elements, ...(descendantText ? { descendantText } : {}), truncated: count >= this.#options.maxTreeNodes,
-        ...(screenshot ? { screenshot } : {}), readMs: now() - started };
+      return toWindowRead(window, appActive, state, this.#options.maxTreeNodes, screenshot, now() - started);
     } finally {
       await shot?.discard();
     }
@@ -245,8 +271,9 @@ export class LocalDriverBackend implements ExecutionBackend {
 
   /** Converts screen points to the window-local screenshot pixels that pixel actions take. */
   async #pixels(window: WindowRef, point: { x: number; y: number }, signal?: AbortSignal) {
-    const scale = await this.#scaleFor(window, signal);
-    const bounds = await this.#bounds(window, signal);
+    const known = this.#options.geometry?.(window);
+    const scale = known?.scale ?? await this.#scaleFor(window, signal);
+    const bounds = known?.bounds ?? await this.#bounds(window, signal);
     const x = (point.x - bounds.x) * scale, y = (point.y - bounds.y) * scale;
     if (x < 0 || y < 0 || x > bounds.width * scale || y > bounds.height * scale) {
       throw new BackendError("driver_failed", `The target point lies outside the ${window.app} window; the window may have moved since the observation.`);

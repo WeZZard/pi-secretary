@@ -666,3 +666,26 @@ The relay client ([design Section 11.2](../arch/computer-use.md#112-relay-client
 
 - The plan ran through the harness directly, not through Pi or a delegated agent.
 - Only Calculator was used. A Finder read, which needs the compressed read path most, has not run through the relay client.
+
+### 15.1 One relay run per read
+
+The relay client was changed so that one read is one relay run. The guest program lists the windows, chooses the target with the client's own selection function, reads the active application, makes the warm-up read of a window not read before, reads the tree with a screenshot, and measures the screenshot's width for the scale. A click reuses the window bounds and scale from the latest read, so it is one relay run instead of two. The same script and the same formulas as above ran in a fresh `macos26` machine.
+
+| Quantity | Before, median | After, n | After, median | After, min | After, max |
+| --- | --- | --- | --- | --- | --- |
+| Relay read time, ms, before the plan | 22,891 | 5 | 5,042 | 4,876 | 5,276 |
+| Relay read time, ms, during the plan | 17,540 | 5 | 4,507 | 4,445 | 4,796 |
+| Relay action time, ms | 14,052 | 4 | 7,127 | 7,038 | 7,175 |
+
+- The script made 69 relay runs before the change and 21 after it, counted from the run requests in each evidence package.
+- The plan completed again, with 4 executor decisions, 4 actions and 3 postconditions verified by code.
+- `finish` succeeded, and took 90,430 ms. The package was delivered with delivery verified and execution passed, and the machine was released. Its size on this machine was 684 MB, mostly the relay's display screenshots.
+- A click still takes about 7 seconds as one relay run, most of it the relay's before and after display screenshots and their transfer. A read without a screenshot fetch would be one relay run, but that was not measured separately.
+
+**Evidence:** `test-results/computer-use/relay-live-2026-09-24T02-53-38-861Z/`, which is not versioned.
+
+**Verification limits:**
+
+- A click now uses the window position from the latest read. A window that moves between that read and the click would be clicked where it was; the step's postcondition would report the miss. This case has not been run.
+- The 512 MiB cap on `finish` was not reached with 21 runs. The run count at which it is reached is not measured; the earlier runs passed it at about 69.
+

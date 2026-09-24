@@ -107,7 +107,7 @@ model: inherit
 
 Secretary can delegate a task in one open macOS application window to a computer-use agent. The agent observes the window through its accessibility tree, a structured-decision executor chooses each control, real pointer and keyboard input performs it, and code checks every step. The requirements are CU-01 to CU-07 in the [computer-use requirements](docs/user-stories/computer-use.md), and the design is the [computer-use design](docs/arch/computer-use.md).
 
-- The `relay` backend runs the task in a fresh virtual machine through its own `mcp-vm-relay` server. Set `relayImage` to the relay image key, and `relayEnv` to the credential pack if the image needs one. A four-step Calculator plan completed through it in a relay virtual machine, but each read takes about 23 seconds there.
+- The `relay` backend runs the task in a fresh virtual machine through its own `mcp-vm-relay` server. Set `relayImage` to the relay image key, and `relayEnv` to the credential pack if the image needs one. A four-step Calculator plan completed through it in a relay virtual machine, and each read takes about 5 seconds there.
 - The development backend, `local`, operates this machine's desktop through `cua-driver`, so use it only in a disposable virtual machine or against disposable windows.
 - The tools `computer_observe` and `computer_run_plan` are registered only when `computerUse` is configured. They are registered in the parent session too, because a delegated agent's tools are the parent's tools narrowed by its allowlist.
 - The agent definition runs in the background, so delegation needs the interactive terminal or RPC mode. A `pi --print` parent cannot delegate to it.

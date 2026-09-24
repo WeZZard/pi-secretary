@@ -8,14 +8,13 @@
  * Formulas, one per quantity:
  * - relay read time, ms: wall clock from calling readWindow to its return, with a screenshot, on a
  *   window already read once (so no warm-up read is included).
- * - relay action time, ms: wall clock of one backend act call, which includes the window-bounds
- *   read and the cua run with the relay's own before and after display screenshots.
+ * - relay action time, ms: wall clock of one backend act call, including every relay run it makes
+ *   and the relay's own before and after display screenshots of each.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ExecutionBackend } from "../../extensions/secretary/computer-use/backend/backend.ts";
-import { LocalDriverBackend } from "../../extensions/secretary/computer-use/backend/local-backend.ts";
-import { RelaySession, relayDriverRunner, relayFrontmost, relayScreenshotFiles, stdioRelayConnect } from "../../extensions/secretary/computer-use/backend/relay-client.ts";
+import { RelayBackend, stdioRelayConnect } from "../../extensions/secretary/computer-use/backend/relay-client.ts";
 import { DEFAULT_RELAY_COMMAND, defaultComputerUseConfiguration } from "../../extensions/secretary/computer-use/configuration.ts";
 import { ExecutorClient } from "../../extensions/secretary/computer-use/executor-client.ts";
 import { Telemetry } from "../../extensions/secretary/computer-use/telemetry.ts";
@@ -25,9 +24,9 @@ const [image = "macos26", readCount = "5", url = "http://jev.home.arpa"] = proce
 const out = resolve("test-results/computer-use", `relay-live-${new Date().toISOString().replace(/[:.]/g, "-")}`);
 mkdirSync(out, { recursive: true });
 const config = { ...defaultComputerUseConfiguration(), backend: "relay" as const, relayImage: image, executorUrl: url, executorTimeoutMs: 60_000 };
-const session = new RelaySession(stdioRelayConnect({ command: DEFAULT_RELAY_COMMAND, cwd: out }), { image, env: "default", ttlHours: 1 });
-const driver = new LocalDriverBackend({ run: relayDriverRunner(session, { actionIntervalMs: config.settleMs }), maxTreeNodes: config.maxTreeNodes,
-  foregroundDelivery: config.foregroundDelivery, frontmostPid: relayFrontmost(session), screenshots: relayScreenshotFiles(session), timeoutMs: 60_000 });
+const driver = new RelayBackend({ connect: stdioRelayConnect({ command: DEFAULT_RELAY_COMMAND, cwd: out }), image, env: "default", ttlHours: 1,
+  maxTreeNodes: config.maxTreeNodes, foregroundDelivery: config.foregroundDelivery, actionIntervalMs: config.settleMs });
+const session = driver.session;
 const readMs: number[] = [], actMs: number[] = [];
 const timed = async <T>(into: number[], work: () => Promise<T>) => { const start = performance.now(); try { return await work(); } finally { into.push(performance.now() - start); } };
 const backend: ExecutionBackend = { kind: "relay",
@@ -71,7 +70,7 @@ try {
   process.exitCode = 1;
 } finally {
   const closing = performance.now();
-  try { await session.close(); log(`finish: ${Math.round(performance.now() - closing)} ms`); }
+  try { await driver.close(); log(`finish: ${Math.round(performance.now() - closing)} ms`); }
   catch (error) { log(`finish FAILED: ${String(error)}`); process.exitCode = 1; }
   log(`Output: ${out}`);
 }
