@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WindowRead } from "../../extensions/secretary/computer-use/backend/backend.ts";
@@ -23,6 +23,7 @@ function context(t: TestContext, used = 0) {
   let recorded = 0;
   const executor = { decide: async (): Promise<DecisionResponse> => ({ roundTripMs: 1, answers: { operation: { choice: "abstain", confidence: 0.9 } } }) };
   return {
+    root,
     recorded: () => recorded,
     context: { deps: { backend: new FakeBackend({ Form: [form] }), executor, telemetry: new Telemetry(root), config: { ...defaultComputerUseConfiguration(), settleMs: 0 }, sleep: async () => {} },
       observation: (id: string) => id === "obs-1" ? formObservation : undefined, escalations: { used, limit: 2, record: () => { recorded++; } } },
@@ -52,6 +53,18 @@ test("plans are rejected before execution for an unknown observation, a malforme
   assert.equal(exhausted.details.outcome, "rejected");
 });
 
+test("every rejection writes a record with the rule that fired", async (t) => {
+  const { context: ctx, root } = context(t);
+  const typed = { ...params, steps: [{ id: "a", intent: "Type", text: "secret words", keys: "cmd+a", postcondition: { changed: true } }] };
+  const result = await executeRunPlan(ctx, typed);
+  assert.equal(result.details.rule, "text_and_keys");
+  await executeRunPlan(ctx, { ...params, based_on: "obs-9" });
+  const files = readdirSync(join(root, "rejections"));
+  const records = files.map(file => JSON.parse(readFileSync(join(root, "rejections", file), "utf8")));
+  assert.deepEqual(records.map(record => record.rule).sort(), ["text_and_keys", "unknown_observation"]);
+  assert.equal(records.find(record => record.rule === "text_and_keys").plan.steps[0].text, "<12 characters>", "Typed text is redacted as in plan records");
+});
+
 test("a plan based on an observation acts on that observation's window", async (t) => {
   const { context: ctx } = context(t);
   await executeRunPlan(ctx, { ...params, based_on: "obs-1" });
@@ -65,10 +78,10 @@ test("a completed result lists each step compactly", () => {
   "Outcome: completed. Executor decisions: 1. Actions: 1.\n- a: verified, press \"Submit\" (\"Done\" is on screen)\n- b: skipped (the postcondition already held)");
 });
 
-test("a plan that checks a control's name with a text check is rejected before any action", async (t) => {
+test("a text check for a string that is also a control's name reaches the runtime (decision PS-D3)", async (t) => {
   const result = await executeRunPlan(context(t).context, { ...params, based_on: "obs-1",
     steps: [{ id: "submit", intent: "Submit", postcondition: { text: { contains: "Submit" } } }] });
-  assert.match((result.content[0] as { text: string }).text, /^Plan rejected: step submit: text "Submit" is the name of a control/);
+  assert.equal(result.details.outcome, "escalated", "The plan ran; the scripted executor abstained");
 });
 
 test("the result lists what code verified, separately from steps that only changed the screen", () => {

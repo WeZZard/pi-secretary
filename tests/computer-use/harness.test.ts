@@ -7,7 +7,7 @@ import { BackendError, type RawElement, type WindowRead } from "../../extensions
 import { FakeBackend } from "../../extensions/secretary/computer-use/backend/fake-backend.ts";
 import { defaultComputerUseConfiguration } from "../../extensions/secretary/computer-use/configuration.ts";
 import { ExecutorError, type DecisionRequestBody, type DecisionResponse } from "../../extensions/secretary/computer-use/executor-client.ts";
-import { labelUsedAsText, runPlan, validatePlan, type Plan } from "../../extensions/secretary/computer-use/harness.ts";
+import { runPlan, validatePlan, type Plan } from "../../extensions/secretary/computer-use/harness.ts";
 import { observe } from "../../extensions/secretary/computer-use/observer.ts";
 import { Telemetry } from "../../extensions/secretary/computer-use/telemetry.ts";
 
@@ -196,30 +196,51 @@ test("a key combination needs no element, and the plan record redacts typed text
   assert.ok(!JSON.stringify(readdirSync(join(root, "runs", "run-1")).map(file => readFileSync(join(root, "runs", "run-1", file), "utf8"))).includes("secret words"));
 });
 
-test("plans are validated before any observation or action", () => {
+test("a plan that cannot run is rejected before any observation or action, and the rejection names its rule", () => {
   const step = { id: "a", intent: "i", postcondition: { changed: true as const } };
+  const rule = (candidate: Plan, maxSteps = 50) => validatePlan(candidate, maxSteps)?.rule;
   assert.equal(validatePlan(plan([step]), 50), undefined);
-  assert.match(validatePlan(plan([]), 50)!, /no steps/);
-  assert.match(validatePlan(plan([step, step]), 50)!, /repeated/);
-  assert.match(validatePlan(plan([{ ...step, postcondition: { focused: { name: "x" } } as never }]), 50)!, /not supported/);
-  assert.match(validatePlan(plan([{ ...step, operation: "enter_text" }]), 50)!, /needs text/);
-  assert.match(validatePlan(plan([step], ["b"]), 50)!, /unknown step "b"/);
-  assert.match(validatePlan(plan([step, { ...step, id: "b" }]), 1)!, /limit is 1/);
+  assert.equal(rule(plan([])), "no_steps");
+  assert.equal(rule(plan([step, { ...step, id: "b" }]), 1), "too_many_steps");
+  assert.equal(rule(plan([step, step])), "repeated_step_id");
+  assert.equal(rule(plan([{ ...step, postcondition: { focused: { name: "x" } } as never }])), "postcondition");
+  assert.equal(rule(plan([{ ...step, operation: "enter_text" }])), "needs_text");
+  assert.equal(rule(plan([{ ...step, operation: "key_combo" }])), "needs_keys");
+  assert.equal(rule(plan([{ id: "b", intent: "Both", text: "a", keys: "cmd+a", postcondition: { text: { contains: "a" } } }])), "text_and_keys");
+  assert.match(validatePlan(plan([{ id: "k", intent: "Erase", keys: "Hyper+x", postcondition: { changed: true } }]), 50)?.message ?? "", /step k: "Hyper\+x" is not a key combination/);
+  assert.equal(rule(plan([step], ["b"])), "unknown_destructive_step");
+  assert.equal(rule(plan([{ id: "r", intent: "Send", maxAttempts: 3, postcondition: { exists: { name: "Sent" } } }])), "unsafe_repeat");
 });
 
-test("a text check for a control's name is rejected against the observation the plan was based on", () => {
-  // Observed through Pi on 2026-09-23: "text contains All Clear" checked a button name and failed after a working press.
-  const calculator = window([{ name: "All Clear" }, { name: "7" }]);
-  calculator.descendantText = { 0: "\u200e0" };
-  const observation = observe({ ...calculator, readMs: 0 }, { id: "obs-1", maxElements: 240, maxNameLength: 48 });
-  assert.equal(observation.status, "ready");
-  if (observation.status !== "ready") return;
-  assert.equal(labelUsedAsText({ text: { contains: "All Clear" } }, observation), "All Clear");
-  assert.equal(labelUsedAsText({ any: [{ changed: true }, { text: { contains: "7" } }] }, observation), "7");
-  assert.equal(labelUsedAsText({ text: { contains: "0" } }, observation), undefined, "The display shows 0, which is content");
-  const problem = validatePlan(plan([{ id: "clear", intent: "Clear", postcondition: { text: { contains: "All Clear" } } }]), 50, observation);
-  assert.match(problem ?? "", /is the name of a control.*exists/);
-  assert.equal(validatePlan(plan([{ id: "clear", intent: "Clear", postcondition: { exists: { name: "All Clear" } } }]), 50, observation), undefined);
+test("no plan is rejected on a guess about what it meant or what the window will show (decision PS-D3)", () => {
+  // Each of these was rejected before 2026-09-26 although it can run.
+  assert.equal(validatePlan(plan([{ id: "p7", intent: "Press 7", postcondition: { text: { endsWith: "7" } } }]), 50), undefined, "a digit the display will show, also a button name");
+  assert.equal(validatePlan(plan([{ id: "t", intent: "Type", operation: "enter_text", text: "Hello", postcondition: { changed: true } }]), 50), undefined, "typed text with a weak check");
+  assert.equal(validatePlan(plan([{ id: "k", intent: "End", operation: "key_combo", keys: "cmd+Down", postcondition: { changed: true } }]), 50), undefined, "a navigation key with a weak check");
+});
+
+test("a text check for a digit that is also a button name verifies Calculator's display", async (t) => {
+  // Through Pi on 2026-09-25, "the display shows 7" was rejected three times because a button is named 7.
+  const calculator = (display: string) => { const read = window([{ name: "7" }, { name: "Add" }]); read.descendantText = { 0: `\u200e${display}` }; return read; };
+  const { deps } = setup(t, [calculator("0"), calculator("7")]);
+  const result = await runPlan(deps(executor(() => ({ element: "7", operation: "press" }))),
+    plan([{ id: "press7", intent: "Press 7", postcondition: { text: { endsWith: "7" } } }]));
+  assert.equal(result.outcome, "completed");
+  assert.equal(result.steps[0]!.result, "verified");
+});
+
+test("advice from the removed plan rules arrives after the step runs", async (t) => {
+  const field = (value: string) => window([{ role: "AXTextField", name: "Name", value }]);
+  const typed = setup(t, [field(""), field("Hello")]);
+  const result = await runPlan(typed.deps(executor(() => ({ element: "Name", operation: "enter_text" }))),
+    plan([{ id: "t", intent: "Type the name", operation: "enter_text", text: "Hello", postcondition: { changed: true } }]));
+  assert.equal(result.steps[0]!.result, "weakly_verified");
+  assert.match(result.steps[0]!.detail ?? "", /typed text itself was not checked, which only a \{text\} or \{value\} postcondition does/);
+  const moved = setup(t, [form, form]);
+  const stopped = await runPlan(moved.deps(executor(() => ({ operation: "key_combo" }))),
+    plan([{ id: "k", intent: "Go to the end", operation: "key_combo", keys: "cmd+down", postcondition: { changed: true } }]));
+  assert.equal(stopped.escalation!.reason, "no_progress");
+  assert.match(stopped.escalation!.detail, /cmd\+down only moves the insertion point.*set position on the enter_text step/);
 });
 
 test("with step pictures on, each action gets a hashed picture before and after, and a review page lists them", async (t) => {
@@ -244,18 +265,4 @@ test("with step pictures off, no picture or review page is written", async (t) =
     plan([{ id: "submit", intent: "Submit the form", postcondition: { exists: { name: "Done" } } }]));
   assert.equal(result.steps[0]!.pictures, undefined);
   assert.ok(!readdirSync(join(root, "runs", "run-1")).includes("review.md"));
-});
-
-test("text entry must check the text, and a key that only moves the insertion point cannot be verified by a change", () => {
-  const typed = { id: "t", intent: "Type", operation: "enter_text" as const, text: "Hello" };
-  assert.match(validatePlan(plan([{ ...typed, postcondition: { changed: true } }]), 50) ?? "", /must check the typed text/);
-  assert.equal(validatePlan(plan([{ ...typed, postcondition: { text: { endsWith: "Hello" } } }]), 50), undefined);
-  assert.match(validatePlan(plan([{ id: "k", intent: "End", operation: "key_combo", keys: "cmd+Down", postcondition: { changed: true } }]), 50) ?? "",
-    /only moves the insertion point.*set position on the enter_text step/);
-  assert.equal(validatePlan(plan([{ id: "k", intent: "New", operation: "key_combo", keys: "cmd+n", postcondition: { changed: true } }]), 50), undefined);
-  assert.match(validatePlan(plan([{ id: "t", intent: "Type", text: "Hello", postcondition: { changed: true } }]), 50) ?? "", /must check the typed text/,
-    "A step with text is text entry whether or not it names the operation");
-  assert.match(validatePlan(plan([{ id: "k", intent: "Erase", keys: "Hyper+x", postcondition: { changed: true } }]), 50) ?? "", /step k: "Hyper\+x" is not a key combination/);
-  assert.match(validatePlan(plan([{ id: "b", intent: "Both", text: "a", keys: "cmd+a", postcondition: { text: { contains: "a" } } }]), 50) ?? "", /text or keys, not both/);
-  assert.match(validatePlan(plan([{ id: "r", intent: "Send", maxAttempts: 3, postcondition: { exists: { name: "Sent" } } }]), 50) ?? "", /max_attempts above 1 needs idempotent: true or a scroll operation/);
 });

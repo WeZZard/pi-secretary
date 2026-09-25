@@ -107,6 +107,9 @@ These facts come from `cua-driver describe get_window_state` for version 0.12.6.
 | Every literal value comes from the plan. | The executor answers choices and cannot produce text. | [Research Section 6](../research/computer-use-s0-s1.md#6-prior-art-consulted) |
 | Escalations are typed. | A typed reason tells the planner what kind of help is needed. | Cua `jev-use`, [research Section 6](../research/computer-use-s0-s1.md#6-prior-art-consulted) |
 | Observation records the full tree, the reduced list and every discard reason. | Retrieval failure is the largest untested risk. | [Research Section 7](../research/computer-use-s0-s1.md#7-verification-limits) |
+| A check before a plan runs rejects only a plan that cannot run, or one that asks to repeat an action that could take effect twice. It never rejects a plan on a guess about what the planner meant or about a future screen. | A check before the run understands only part of what the runtime supports, so a guessing rule rejects correct plans. Owner decision [PS-D3](../decisions.md). | [Research Sections 16.2 and 16.3](../research/computer-use-s0-s1.md#162-calculator-with-thinking-off) |
+| A step names its control from the observation, and the harness confirms that control in each fresh read before it acts. | The plan is built from controls the window offers. The planner's output is not bound by the tool schema, so the runtime check remains. Owner decision [PS-D4](../decisions.md). | [Research Section 16.3](../research/computer-use-s0-s1.md#163-review-of-the-plan-check) |
+| A plan stops before its first action when its window changed since the observation it was written against. | A replay over 61 recorded plans stopped 3, all of which failed when they ran, and stopped no plan that completed. Owner decision [PS-D4](../decisions.md). | [Research Section 16.1](../research/computer-use-s0-s1.md#161-a-plan-start-window-check-replayed) |
 
 ## 4. Architecture
 
@@ -259,6 +262,7 @@ The planner calls this tool with a complete plan. The tool returns only when the
 | --- | --- |
 | `id` | It is a short identifier that is unique within the plan. |
 | `intent` | It is one sentence that says what the step achieves, for example "Open the File menu." |
+| `control` | It is optional. It names the control the step acts on, copied from a line of the observation: `name`, and optionally `role` and `region`, for example `{region: "content", role: "Button", name: "3"}`. The harness confirms the control in each fresh read before it acts ([Section 9](#9-step-lifecycle)). A step that acts on a control that no observation shows yet, such as an item of a menu that an earlier step opens, may still name it. |
 | `operation` | It is optional. It names the expected operation from [Section 7.2](#72-operations) when the planner knows it. |
 | `text` | It is an optional literal string for text entry. It must be complete, because the executor cannot generate text. |
 | `keys` | It is an optional key combination for a keyboard shortcut, for example `cmd+shift+n`. |
@@ -267,11 +271,31 @@ The planner calls this tool with a complete plan. The tool returns only when the
 | `position` | It is optional, for `enter_text` only: `end`, `start` or `replace`. It places the insertion point with keys after the click and before typing ([Section 7.2](#72-operations)). |
 | `max_attempts` | It is optional, from 1 to 5. It limits how often the harness may act for the step before escalating `postcondition_failed`. The default is 1, 2 for an `idempotent` step, and 3 for a scroll. A value above 1 requires `idempotent` or a scroll operation. |
 
-- The harness validates the whole plan before any observation. Repeated step identifiers, malformed postconditions, `enter_text` without `text`, `key_combo` without `keys`, and unknown `allow_destructive` identifiers reject the plan.
-- A step has `text` or `keys`, not both. Each key combination is parsed during validation, and an unknown key name rejects the plan with the list of valid names. The names `backspace`, `enter` and `esc` are accepted for `delete`, `return` and `escape`.
-- An `enter_text` step must check the typed text with `text { endsWith }`, `text { contains }` or `value { name, equals }`. In a live check, "the text contains Hello" was true although the words landed at the wrong place.
-- A `key_combo` step that sends only a navigation key, such as `cmd+down`, is rejected when its only postcondition is `changed`. Such a key moves the insertion point, which the tree does not show, so the step could never be verified. The validator names the `position` field instead.
-- When the plan names its observation in `based_on`, a `text` predicate whose string is the name of a control in that observation is rejected. The validator names `exists` instead. Through Pi, the planner wrote "text contains All Clear" to check a button, and a successful press was reported as failed ([research Section 11](../research/computer-use-s0-s1.md#11-first-checks-through-pi-2026-09-23)).
+The harness checks the whole plan before any observation. The check follows one rule: it rejects only a plan that cannot run, or one that asks to repeat an action that could take effect twice. It never rejects a plan on a guess about what the planner meant or about a future screen ([decision PS-D3](../decisions.md)). A check before the run understands only part of what the runtime supports, so a guessing rule rejects correct plans ([research Section 16.2](../research/computer-use-s0-s1.md#162-calculator-with-thinking-off)).
+
+**A plan that cannot run is rejected when:**
+
+- It has no steps or more than 50 steps.
+- A step identifier is repeated, or `allow_destructive` names an unknown step.
+- A postcondition is malformed, or a `control` has an empty name or a role that is not an accessibility role.
+- An `enter_text` step has no `text`, or a `key_combo` step has no `keys`.
+- A step has both `text` and `keys`.
+- A key combination does not parse. The rejection lists the valid key names. The names `backspace`, `enter` and `esc` are accepted for `delete`, `return` and `escape`.
+- `max_attempts` is outside 1 to 5, or `idempotent` is not a boolean.
+
+**An unsafe request is rejected when:**
+
+- `max_attempts` is above 1 for a step that is neither `idempotent` nor a scroll. Repeating an action that took effect could act twice.
+
+**Rules removed on 2026-09-26.** The following rules rejected plans that could run. Their advice moved to the result the planner receives after the step runs.
+
+| Removed rule | Why it was wrong | Where the advice is now |
+| --- | --- | --- |
+| A `text` predicate whose string is a control name in the `based_on` observation was rejected. | It could not tell a check of a control apart from text the window shows after the step, such as a digit on Calculator's display. It also rejected `text { endsWith }`, which the agent's instructions recommend ([research Section 16.3](../research/computer-use-s0-s1.md#163-review-of-the-plan-check)). | A failed text check names a control with a matching name and says to check it with `exists` ([Section 5.3](#53-postconditions)). |
+| An `enter_text` step had to check the typed text with `text` or `value`. | A plan with a weaker check can run. In a live check, "the text contains Hello" was true although the words landed at the wrong place, which is a reason to write a better check, not to refuse the plan. | A typed step checked only by `changed` is weakly verified, and its detail says that typed text is verified only by a `text` or `value` check. |
+| A `key_combo` step that sends only a navigation key, such as `cmd+down`, with only `changed` was rejected. | The rule predicted that the step could never be verified. | The `no_progress` detail of such a step says that the key moves only the insertion point and names the `position` field. |
+
+- Each rejection is recorded with the rule that fired ([Section 12.1](#121-records)).
 
 ### 5.3 Postconditions
 
@@ -284,7 +308,7 @@ A postcondition is a small predicate over the accessibility tree. Code evaluates
 | `value { name, equals }` | The named element's value equals the given string. |
 | `selected { name }` | The named element is selected, such as a file in a Finder list. |
 | `window { titleContains }` | The frontmost window title contains the given string. |
-| `text { contains }` or `text { endsWith }` | The value or descendant text of some on-screen element contains, or ends with, the given string. Exactly one of the two is given. Labels are not searched, because they name controls rather than show content. When the check fails and a control with a matching name is on screen, the failure names that control and says to check it with `exists` ([research Section 14](../research/computer-use-s0-s1.md#14-pi-task-batch-2026-09-23)). |
+| `text { contains }` or `text { endsWith }` | The value or descendant text of some on-screen element contains, or ends with, the given string. Exactly one of the two is given. Labels are not searched, because they name controls rather than show content. The string may equal a control's name when the window will show it as text, such as a digit on Calculator's display. When the check fails and a control with a matching name is on screen, the failure names that control and says to check it with `exists` ([research Section 14](../research/computer-use-s0-s1.md#14-pi-task-batch-2026-09-23)). |
 | `changed` | The tree differs from the tree before the step. |
 | `all [ ... ]` and `any [ ... ]` | All or any of the nested predicates hold. |
 
@@ -451,13 +475,17 @@ The policy runs in code after each response. It applies the following rules in o
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Observe
+    [*] --> StartCheck
+    StartCheck --> Escalate: window changed since based_on
+    StartCheck --> Precheck: window matches, or no based_on
     Observe --> Precheck
     Precheck --> Advance: postcondition holds and step is idempotent
     Precheck --> Escalate: postcondition holds and step is not idempotent
-    Precheck --> Decide: postcondition does not hold
+    Precheck --> ControlCheck: postcondition does not hold
+    ControlCheck --> Escalate: named control not in the window
+    ControlCheck --> Decide: control found, or none named
     Decide --> Observe: reobserve (limit 2)
-    Decide --> Escalate: policy returns an escalation
+    Decide --> Escalate: policy returns an escalation, or the chosen control differs from the named one
     Decide --> Act: policy selects an action
     Act --> Verify
     Verify --> Advance: postcondition holds
@@ -468,11 +496,17 @@ stateDiagram-v2
     Escalate --> [*]
 ```
 
+- **Start check:** The harness reads the tree once before the first step. When the plan names its observation in `based_on`, the harness compares that observation with this first read. Both reads are reduced to the same comparison: the window identifier, the window title, the kept controls outside the menu bar as a list of role and name, and the elements outside the menu bar that open over the window, whose roles are sheet, dialog, popover, menu and system dialog.
+  - The plan stops with `window_changed`, before any executor request, when the window or its title differs, when a control of the observation is gone, or when a new element opened over the window. Values and shown text are ignored, because a step is expected to change them.
+  - A control that was added does not stop the plan, because it cannot make a step act on the wrong control.
+  - When the window differs from the observation but matches the last read of the previous plan in this session, and that plan ran after the observation, the plan continues. The harness made that change itself.
+  - In a replay over 61 recorded plans, this check stopped 3 plans, all of which failed when they ran, and stopped no plan that completed ([research Section 16.1](../research/computer-use-s0-s1.md#161-a-plan-start-window-check-replayed)).
 - **Observe:** The harness reads the tree. The after-tree of one step is reused as the before-tree of the next step, so one observation serves both.
 - **Precheck:** The harness evaluates the postcondition before deciding. When it already holds, the result depends on the step's `idempotent` field.
   - An idempotent step is skipped without an executor request, and the record says why. This keeps the "do nothing when the step is already done" convention of Cua's forms specialist ([research Section 6](../research/computer-use-s0-s1.md#6-prior-art-consulted)) for steps that are safe to skip.
   - Any other step escalates `already_satisfied`. A postcondition that holds before the step cannot show that the step worked. In a standalone script check, a stale Calculator display satisfied every postcondition, and the plan completed without acting ([research Section 10.4](../research/computer-use-s0-s1.md#10-standalone-script-checks-in-a-macos-virtual-machine-2026-09-23)). Through Pi, the planner wrote "text contains 7" for the Add step, which was skipped, and the sum was wrong ([research Section 11](../research/computer-use-s0-s1.md#11-first-checks-through-pi-2026-09-23)).
-- **Decide:** The harness sends one executor request and applies the policy.
+- **Control check:** When the step names a `control`, the harness looks for it in the current read. An element matches when its name matches as in [Section 5.3](#53-postconditions), its role matches when a role is given, and its group is the named region when a region is given. When no element matches, the step escalates `target_not_found` without an executor request.
+- **Decide:** The harness sends one executor request and applies the policy. When the step names a `control` and the executor chose an element that does not match it, the step escalates `uncertain` with the executor's answer as a prior, and no action is taken. The executor still chooses the element and the operation, and the named control is a cross-check on that choice ([decision PS-D4](../decisions.md)).
 - **Act:** The actuator performs one action.
 - **Verify:** The harness waits for the configured settle interval, observes again, and evaluates the postcondition. It also compares the tree with the before-tree.
 - **No repeat after an effect:** An action that changed the screen but missed its postcondition ends the step with `postcondition_failed`, unless the step is `idempotent`. Through Pi, a planner checked Calculator's Add with a predicate that cannot hold, and the harness pressed Add a second time after the first press had taken effect ([research Section 14](../research/computer-use-s0-s1.md#14-pi-task-batch-2026-09-23)). A second press of a Send button would send twice. A scroll is exempt, because it only moves the view: it acts up to 3 times by default, and it stops with `no_progress` when the view stops moving. Through Pi, every scroll toward a file below the visible list needed a new plan before this exemption ([research Section 14.6](../research/computer-use-s0-s1.md#146-fourth-batch-on-the-fixes)).
@@ -515,8 +549,8 @@ An escalation ends the `computer_run_plan` call and returns control to the plann
 | --- | --- | --- |
 | `needs_text` | The step's text contains characters that the backend cannot type with real key presses. A step without `text` is never offered `enter_text`, so missing text cannot reach the executor. | Rewrite the text with typeable characters, or split the step. |
 | `state_too_large` | The tree was truncated, the table exceeds the element limit, or the executor rejects the request as too long even without history. | Narrow the target, for example by closing panels or choosing a smaller window. |
-| `uncertain` | Confidence is below the gate, or the element and operation are incompatible. The answers are returned as a prior. | Confirm the prior or rewrite the step more specifically. |
-| `target_not_found` | The executor abstained. | Check the returned observation and revise the step. |
+| `uncertain` | Confidence is below the gate, the element and operation are incompatible, or the executor chose a control other than the one the step names. The answers are returned as a prior. | Confirm the prior or rewrite the step more specifically. |
+| `target_not_found` | The executor abstained, or the control the step names is not in the window. | Check the returned observation and revise the step. |
 | `already_satisfied` | The postcondition held before the step, and the step is not marked `idempotent`. No action was taken. | Write a postcondition that is false before the step, or mark the step `idempotent` when repeating it does no harm. |
 | `postcondition_failed` | The postcondition still fails after all attempts. | Revise the step or the postcondition. |
 | `no_progress` | An action changed nothing in the tree, or the window keeps changing. | Inspect the returned screenshot and revise the approach. |
@@ -525,6 +559,7 @@ An escalation ends the `computer_run_plan` call and returns control to the plann
 | `executor_unavailable` | The executor service failed or timed out. | Report the failure. The planner must not perform the steps itself in this release. |
 | `backend_failed` | The relay refused an action, reported an uncertain outcome, or lost the lease. | Report the failure. The harness never replays an uncertain action. |
 | `window_unclear` | Several windows of the app match and none was named, or the window the plan started on has closed. No action was taken on another window. | Name the window with `window_title`, or observe it and plan with `based_on`. |
+| `window_changed` | Before the first step, the window differs from the `based_on` observation: another window or title, a control gone, or a sheet, dialog, popover or menu opened over it. No action was taken. | Plan again from the returned observation. |
 
 - Every escalation carries the step identifier, the reason, the last executor answers, and a fresh observation when one can be taken.
 - When the escalation limit is reached, the tool rejects further `computer_run_plan` calls in the child run, and the planner must report to the parent.
@@ -588,6 +623,7 @@ The relay client is the part of Secretary that sends the harness's reads and act
 
 - Each step writes one record with the observation identifier, the retrieval record from [Section 6.4](#64-retrieval-record), the executor request and response, the policy result, the action, the relay execution identifier, and the postcondition result.
 - Each `computer_run_plan` call writes a summary with the step count, the executor decision count, the escalation reason, and the latency totals.
+- Each rejected `computer_run_plan` call writes a rejection record with the rule that fired, its message and the plan. Rejections are therefore counted, and a rule that rejects correct plans can be found in the records ([research Section 16.3](../research/computer-use-s0-s1.md#163-review-of-the-plan-check)).
 - Records are written under the Secretary data directory, next to the agent records. Test runs write under the repository's ignored `test-results/` directory.
 - Records may contain window contents and typed text. The configuration must allow text values to be redacted before they are written.
 - With `stepPictures` on, the harness records a picture of the target window before and after each action. The pictures are saved in the run's `pictures/` directory with a SHA-256 hash. The step outcome names them, and the executor request records do not.
@@ -606,6 +642,7 @@ Each metric has one formula for the life of this design, as required by the proj
 | Step wall time, median (ms) | It is the time from the start of Observe to the end of Verify for one step, as the median over a run. |
 | Retrieval miss rate | It is the fraction of reviewed wrong steps whose correct element was absent from the executor's table. |
 | Judgment miss rate | It is the fraction of reviewed wrong steps whose correct element was present but not chosen. |
+| Plan rejections per child run | It is the count of `computer_run_plan` calls in a child run that were rejected before any read, counted per rule. |
 
 Step wall time includes the relay's screenshot captures, so it must not be compared with executor round-trip latency.
 
@@ -624,9 +661,11 @@ Step wall time includes the relay's screenshot captures, so it must not be compa
 | What does a real screenshot cost the planner? | Measured in Phase 1: the cost is proportional to pixel area, and a 1312×844 window screenshot costs 1,068 input tokens on Qwen 3.8 27B ([research Section 8](../research/computer-use-s0-s1.md#8-phase-1-observations-2026-09-23)). Choose the default image scale when the planner prompt is written in Phase 6. | No. |
 | Should the executor also receive screenshots? | Do not send them in the first release. The accessibility tree is the executor's only input until screenshot cost is measured. | No. |
 | Should the fallback list keep models without image input? | Remove them, or accept planning without screenshots when they are selected. | Yes, because the list is user configuration. |
-| How does the relay client reach the relay? | Closed on 2026-09-24. The backend is its own client of an `mcp-vm-relay` server session per child run ([Section 11.2](#112-relay-backend)). The retired `pi-vm-relay` export is no longer needed. | No. |
+| How does the relay client reach the relay? | Closed on 2026-09-24. The backend is its own client of an `mcp-vm-relay` server session per child run ([Section 11.2](#112-relay-client)). The retired `pi-vm-relay` export is no longer needed. | No. |
 | Should the relay client use the official `@modelcontextprotocol/sdk` client? | Closed on 2026-09-24: the owner chose `@modelcontextprotocol/sdk`. It is only the client side of the protocol in Secretary, and it does not change how the relay performs a run. | No. |
 | What does one relay run cost in latency? | Measure the relay round trip for a read and for an action before setting settle intervals and budgets. | No. |
+| Should rejected plans count against a limit? | Not yet. Rejections are now recorded per rule. Set a limit when the records show how often a planner repeats a rejected plan. In the Calculator run of 2026-09-25, three rejections cost about 4 s each ([research Section 16.2](../research/computer-use-s0-s1.md#162-calculator-with-thinking-off)). | No. |
+| Should a predicate check that shown text changed? | Consider it. When a text check cannot be written, `{changed:true}` accepts any change, including a press of the wrong button. A predicate that holds only when the window's shown text changed would be a stronger fallback. | Yes, because it adds a predicate. |
 | May the planner perform steps itself when the executor is unavailable? | Not in the first release. The escalation reports the failure instead. | Yes, if a degraded mode is wanted. |
 
 ## 14. Verification plan

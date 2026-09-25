@@ -85,4 +85,15 @@ export class Telemetry {
     await writeFile(path, `${JSON.stringify({ schema: "secretary.computer-use.plan/1", recordedAt: new Date().toISOString(), ...rest, plan: { ...plan, steps } }, null, 1)}\n`, { mode: 0o600 });
     return path;
   }
+
+  /** A `computer_run_plan` call rejected before any read, with the rule that rejected it (design §12.1). */
+  async recordRejection(record: { rule: string; message: string; redact: boolean; plan: { steps?: { text?: string }[] } }): Promise<string> {
+    const directory = join(this.root, "rejections");
+    await mkdir(directory, { recursive: true });
+    const { redact, plan, ...rest } = record;
+    const steps = plan.steps?.map(step => step.text !== undefined && redact ? { ...step, text: `<${[...step.text].length} characters>` } : step);
+    const path = join(directory, `${Date.now()}-${rest.rule.replace(/[^A-Za-z0-9_-]/g, "_")}.json`);
+    await writeFile(path, `${JSON.stringify({ schema: "secretary.computer-use.rejection/1", recordedAt: new Date().toISOString(), ...rest, plan: { ...plan, ...(steps ? { steps } : {}) } }, null, 1)}\n`, { mode: 0o600 });
+    return path;
+  }
 }

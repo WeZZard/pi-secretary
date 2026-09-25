@@ -75,43 +75,43 @@ const DEFAULT_IDEMPOTENT_ATTEMPTS = 2;
 const DEFAULT_SCROLL_ATTEMPTS = 3;
 const isScroll = (operation: string | undefined) => operation === "scroll_up" || operation === "scroll_down";
 
-/** Returns the first problem with a plan, before any action (design §5.2). */
-export function validatePlan(plan: Plan, maxSteps: number, basedOn?: Observation): string | undefined {
-  if (plan.steps.length === 0) return "the plan has no steps";
-  if (plan.steps.length > maxSteps) return `the plan has ${plan.steps.length} steps; the limit is ${maxSteps}`;
+/** A rejected plan and the rule that rejected it, recorded per rule (design §12.1). */
+export interface PlanProblem { rule: string; message: string }
+
+/**
+ * Returns the first reason the plan cannot run, before any action (design §5.2, decision PS-D3).
+ * It rejects only a plan that cannot run, or one that asks to repeat an action that could act twice;
+ * it never guesses what the planner meant or what the window will show.
+ */
+export function validatePlan(plan: Plan, maxSteps: number): PlanProblem | undefined {
+  const problem = (rule: string, message: string): PlanProblem => ({ rule, message });
+  if (plan.steps.length === 0) return problem("no_steps", "the plan has no steps");
+  if (plan.steps.length > maxSteps) return problem("too_many_steps", `the plan has ${plan.steps.length} steps; the limit is ${maxSteps}`);
   const ids = new Set<string>();
   for (const step of plan.steps) {
-    if (ids.has(step.id)) return `step id ${JSON.stringify(step.id)} is repeated`;
+    if (ids.has(step.id)) return problem("repeated_step_id", `step id ${JSON.stringify(step.id)} is repeated`);
     ids.add(step.id);
-    const problem = validatePostcondition(step.postcondition);
-    if (problem) return `step ${step.id}: ${problem}`;
-    if (step.operation === "enter_text" && step.text === undefined) return `step ${step.id}: enter_text needs text`;
-    if (step.operation === "key_combo" && step.keys === undefined) return `step ${step.id}: key_combo needs keys`;
-    if (step.text !== undefined && step.keys !== undefined) return `step ${step.id}: a step has text or keys, not both; split it into two steps`;
+    const invalid = validatePostcondition(step.postcondition);
+    if (invalid) return problem("postcondition", `step ${step.id}: ${invalid}`);
+    if (step.operation === "enter_text" && step.text === undefined) return problem("needs_text", `step ${step.id}: enter_text needs text`);
+    if (step.operation === "key_combo" && step.keys === undefined) return problem("needs_keys", `step ${step.id}: key_combo needs keys`);
+    if (step.text !== undefined && step.keys !== undefined) return problem("text_and_keys", `step ${step.id}: a step has text or keys, not both; split it into two steps`);
     if (step.keys !== undefined) {
       try { parseKeyCombo(step.keys); }
-      catch (error) { return `step ${step.id}: ${(error as Error).message}`; }
+      catch (error) { return problem("keys", `step ${step.id}: ${(error as Error).message}`); }
     }
-    if (step.maxAttempts !== undefined && (!Number.isInteger(step.maxAttempts) || step.maxAttempts < 1 || step.maxAttempts > 5)) return `step ${step.id}: maxAttempts must be 1 to 5`;
+    if (step.maxAttempts !== undefined && (!Number.isInteger(step.maxAttempts) || step.maxAttempts < 1 || step.maxAttempts > 5)) return problem("max_attempts", `step ${step.id}: maxAttempts must be 1 to 5`);
     if ((step.maxAttempts ?? 1) > 1 && step.idempotent !== true && !isScroll(step.operation)) {
-      return `step ${step.id}: max_attempts above 1 needs idempotent: true or a scroll operation, because repeating an action that took effect could act twice`;
+      return problem("unsafe_repeat", `step ${step.id}: max_attempts above 1 needs idempotent: true or a scroll operation, because repeating an action that took effect could act twice`);
     }
-    if (step.idempotent !== undefined && typeof step.idempotent !== "boolean") return `step ${step.id}: idempotent must be true or false`;
-    if (step.text !== undefined && !checksText(step.postcondition)) {
-      return `step ${step.id}: an enter_text step must check the typed text with {text:{endsWith}}, {text:{contains}} or {value:{name,equals}}`;
-    }
-    if (step.operation === "key_combo" && step.keys !== undefined && isWeakPostcondition(step.postcondition)
-      && NAVIGATION_KEYS.has(step.keys.toLowerCase().split("+").pop()!.trim())) {
-      return `step ${step.id}: ${step.keys} only moves the insertion point, which the accessibility tree does not show, so {changed:true} cannot verify it; set position on the enter_text step instead`;
-    }
-    if (basedOn) {
-      const label = labelUsedAsText(step.postcondition, basedOn);
-      if (label) return `step ${step.id}: text ${JSON.stringify(label)} is the name of a control, and text checks search only what the window shows; use {exists:{name:${JSON.stringify(label)}}} to check a control`;
-    }
+    if (step.idempotent !== undefined && typeof step.idempotent !== "boolean") return problem("idempotent", `step ${step.id}: idempotent must be true or false`);
   }
-  for (const id of plan.allowDestructive) if (!ids.has(id)) return `allowDestructive names unknown step ${JSON.stringify(id)}`;
+  for (const id of plan.allowDestructive) if (!ids.has(id)) return problem("unknown_destructive_step", `allowDestructive names unknown step ${JSON.stringify(id)}`);
   return undefined;
 }
+
+/** A key that only moves the insertion point or the selection, which the accessibility tree does not show. */
+const isNavigationKey = (keys: string | undefined) => keys !== undefined && NAVIGATION_KEYS.has(keys.toLowerCase().split("+").pop()!.trim());
 
 class Stop extends Error {
   readonly escalation?: Escalation;
@@ -244,14 +244,18 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
         history.push(record);
         if (evaluation.holds) {
           outcome.result = record.outcome === "weakly_verified" ? "weakly_verified" : "verified";
-          outcome.detail = evaluation.detail;
+          // Advice moved from a removed plan rule (design §5.2): the typed words can land in the wrong place.
+          outcome.detail = step.text !== undefined && !checksText(step.postcondition)
+            ? `${evaluation.detail}; the typed text itself was not checked, which only a {text} or {value} postcondition does` : evaluation.detail;
           break;
         }
         unchanged = visibleSignature(before.read) === visibleSignature(current.read) ? unchanged + 1 : 0;
         outcome.result = "failed";
         outcome.detail = evaluation.detail;
         if (unchanged >= NO_CHANGE_LIMIT) {
-          escalate(step.id, "no_progress", `${described} changed nothing on screen; it was not repeated${isScroll(decision.operation) ? ", because the view has reached its end" : ", because a repeat could act twice"}`, decision.prior);
+          escalate(step.id, "no_progress", `${described} changed nothing on screen; it was not repeated${isScroll(decision.operation) ? ", because the view has reached its end" : ", because a repeat could act twice"}`
+            // Advice moved from a removed plan rule (design §5.2).
+            + (decision.operation === "key_combo" && isNavigationKey(step.keys) ? `. ${step.keys} only moves the insertion point, which the accessibility tree does not show; set position on the enter_text step instead` : ""), decision.prior);
         }
         const repeatable = step.idempotent === true || isScroll(decision.operation);
         const limit = repeatable ? step.maxAttempts ?? (isScroll(decision.operation) ? DEFAULT_SCROLL_ATTEMPTS : DEFAULT_IDEMPOTENT_ATTEMPTS) : DEFAULT_ATTEMPTS;
@@ -304,24 +308,6 @@ function checksText(condition: Postcondition): boolean {
   if ("all" in condition) return condition.all.some(checksText);
   if ("any" in condition) return condition.any.every(checksText);
   return "text" in condition || "value" in condition;
-}
-
-/** The first `text { contains }` string that equals a control's name in the observation (fix plan F-8). */
-export function labelUsedAsText(condition: Postcondition, observation: Observation): string | undefined {
-  if ("all" in condition || "any" in condition) {
-    for (const part of "all" in condition ? condition.all : condition.any) {
-      const found = labelUsedAsText(part, observation);
-      if (found) return found;
-    }
-    return undefined;
-  }
-  if (!("text" in condition)) return undefined;
-  const target = "endsWith" in condition.text ? condition.text.endsWith : condition.text.contains;
-  const wanted = target.replace(/\s+/g, " ").trim().toLowerCase();
-  const isControl = observation.groups.some(group => group.elements.some(element =>
-    element.name.toLowerCase() === wanted && !(element.value !== undefined && element.value.toLowerCase().includes(wanted))));
-  const shown = (observation.texts ?? []).some(text => text.toLowerCase().includes(wanted));
-  return isControl && !shown ? target : undefined;
 }
 
 function summarize(decision: Decision): Record<string, unknown> {

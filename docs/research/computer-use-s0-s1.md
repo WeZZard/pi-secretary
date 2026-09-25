@@ -710,3 +710,53 @@ A real Pi parent in RPC mode delegated a Calculator task to the computer-use age
 - One run of one task. It shows that the chain works, not how often.
 - The model does not accept images, so the agent planned from the element table only.
 
+
+## 16. Plan checks and thinking (2026-09-25 to 2026-09-26)
+
+### 16.1 A plan-start window check, replayed
+
+A proposed check compares the observation a plan was written against with the plan's first read. It compares the kept controls by role and name, the window identifier, the window title, and elements that open over the window, such as a sheet, a dialog or a context menu. It ignores values and shown text. When the two differ, it also accepts a match with the last read of an earlier plan of ours that ran after that observation. The script `scripts/computer-use/replay-drift-check.ts` replayed it over every recorded plan and changed no behavior.
+
+- 61 plans had a first read and an observation to compare, from 79 recorded session directories. Copies of a run were counted once.
+- The check would have stopped 3 plans and let 58 through. All 3 were Finder plans that ran on a different window from the one observed, and each ended in an escalation when it ran. No plan that completed would have been stopped.
+- 4 plans were let through only because their first read matched the last read of an earlier plan of ours.
+- The check cost 0.012 ms of CPU time per comparison, over 61 comparisons.
+- The staleness gap, which is the time from the observation to the plan's first read, had a median of 37.0 s and a longest value of 254.9 s.
+
+**Evidence:** `test-results/computer-use/drift-replay-2026-09-25T20-54-56-847Z/report.md`. It is not versioned.
+
+**Verification limits:** The replay judges recorded reads. It does not show what the planner would have done after a stop.
+
+### 16.2 Calculator with thinking off
+
+The Calculator task of [Section 15.2](#152-delegation-through-pi) ran again through Pi on 2026-09-25 at 22:41 UTC, with the computer-use definition set to `thinking: off`. The script, the task, the model, the executor and the relay image were the same.
+
+| Quantity | Run of 2026-09-24 | Run of 2026-09-25 |
+| --- | --- | --- |
+| Thinking level recorded for the child | `off` | `off` |
+| Thinking text in the child's replies, characters | 14,298 | 0 |
+| Output tokens of the child's model replies | 4,655 | 1,526 |
+| Model wait time: the sum of the times from each user message or tool result to the next assistant message | 102.3 s | 27.1 s |
+| Tool time: the sum of the times from each assistant message to its tool result | 106.3 s | 97.0 s |
+| Run wall time: from sending the prompt to stopping Pi | 240 s | 183 s |
+| Plans rejected by the control-name plan check | 1 | 3 |
+| Result | 10, correct | 10, correct |
+
+- The child was already at thinking level `off` in the earlier run, because it inherited the parent's level, and the model still produced thinking text. Between the two runs, the provider package `pi-provider-litellm` changed from version 3.1.0 to 3.2.0, and 3.2.0 sends `off` as the reasoning effort `none`. The package change is the likely cause of the difference. The earlier run did not record the provider request, so this is not proven.
+- The executor chose the correct control in every step of both runs.
+- In the second run, the planner wrote "the display shows 7" after pressing 7 three times, with small changes, and the control-name check rejected each plan. The planner then used `{changed:true}` for the first three steps. Code verified only the last step, that the on-screen text contains "10".
+
+**Evidence:** `test-results/e2e/computer-use-delegation/2026-09-25T22-41-55-635Z-e39a7820/`. It is not versioned.
+
+**Verification limits:** One run for each setting. The parent was at thinking level `off` in both runs, so the runs do not show that the definition's field overrides a higher parent level. The deterministic tests in `tests/agents/thinking.test.ts` cover that.
+
+### 16.3 Review of the plan check
+
+An independent reviewer read the code on 2026-09-26 and judged the control-name plan check. Its findings were checked against the code.
+
+- The check also rejects `{text:{endsWith}}`, which the agent's instructions tell the planner to use for typed text. The instructions and the check contradicted each other.
+- The mistake the check was written for is already caught after the step. When a text check fails and a control with a matching name is on screen, the failure names the control and says to use `exists`. Because an action that took effect is not repeated, that mistake costs one escalation and never a double action.
+- The planner's output is not constrained by the tool schema. The schema is fixed when the tool is registered, and the provider request carries no strict flag. A list of allowed controls in the schema would guide the planner but would not bind it.
+- The executor's choice of control is already limited to a list built from a fresh read before each step.
+
+The owner decided on 2026-09-26 to remove the check and to build plans from the controls the observation offers ([decisions PS-D3 and PS-D4](../decisions.md)).
