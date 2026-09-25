@@ -41,7 +41,35 @@ interface Conversation { label: string; source: string; messages: Json[] }
 interface Run {
   id: string; when: string; source: string; task: string;
   conversations: Conversation[]; records: string[]; check?: Json; package?: string;
+  /** Relay evidence package directories whose screenshots belong to this run. */
+  packages: string[];
+  /** Harness step pictures: runs/<runId>/pictures/<step>-<attempt>-<before|after>.png. */
+  pictures: string[];
 }
+
+/** A relay display screenshot, named by the relay after its capture time, phase and execution. */
+interface DisplayShot { path: string; at: number; phase: string; execution: string; caption: string }
+function displayShots(packageDir: string): DisplayShot[] {
+  const shots: DisplayShot[] = [];
+  for (const path of walk(join(packageDir, "state", "snapshots")).filter(file => file.endsWith(".png"))) {
+    const match = /-(\d{8}T\d{6}\.\d{3}Z)-(before|after)-(execution-[A-Za-z0-9]+)\.png$/.exec(path);
+    if (!match) continue;
+    const stamp = match[1]!.replace(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/, "$1-$2-$3T$4:$5:$6");
+    const request = join(packageDir, "host", "requests", `${match[3]}.json`);
+    let what = match[3]!;
+    if (existsSync(request)) {
+      const body = readJson(request);
+      const input = body.kind === "cua" ? ` (cua-driver ${body.tool}${body.args?.x !== undefined ? ` at pixel ${body.args.x},${body.args.y}` : ""}${body.args?.key ? ` key ${body.args.key}` : ""})`
+        : body.kind === "exec" ? ` (${(body.argv ?? []).join(" ").slice(0, 200)})` : body.kind ? ` (${body.kind} run)` : "";
+      what = `relay step ${body.step?.id ?? "?"}, "${body.step?.title ?? ""}"${input}`;
+    }
+    shots.push({ path, at: Date.parse(stamp), phase: match[2]!, execution: match[3]!, caption: `Whole VM display ${match[2]} ${what}` });
+  }
+  return shots.sort((a, b) => a.at - b.at);
+}
+/** Relay evidence packages delivered into a run directory, not the finalization attempts. */
+const packagesIn = (dir: string) => existsSync(join(dir, "relay-evidence"))
+  ? readdirSync(join(dir, "relay-evidence")).filter(name => /^relay-[^.]+$/.test(name)).map(name => join(dir, "relay-evidence", name)) : [];
 
 /** Messages from Pi `--mode json`/RPC events (message_end) or from a session transcript (message entries). */
 function messagesOf(path: string): Json[] {
@@ -66,10 +94,12 @@ for (const events of walk(join(repository, "relay-evidence")).filter(path => bas
   const dir = dirname(events);
   const messages = messagesOf(events);
   const records = walk(join(dir, "secretary", "computer-use")).filter(path => path.endsWith(".json"));
+  const pictures = walk(join(dir, "secretary", "computer-use")).filter(path => path.includes("/pictures/") && path.endsWith(".png"));
   const siblings = join(dirname(dir), "runs.json");
   const check = existsSync(siblings) ? (readJson(siblings) as Json[]).find(entry => entry.name === basename(dir)) : undefined;
   const first = messages.find(message => message.role === "user");
-  runs.push({ id: "", when: started(messages, events), source: rel(dir), package: packageOf(events),
+  const pkg = packageOf(events);
+  runs.push({ id: "", when: started(messages, events), source: rel(dir), package: pkg, packages: pkg ? [join(repository, "relay-evidence", pkg)] : [], pictures,
     task: text(first).slice(0, 200), conversations: [{ label: "Pi (planner)", source: rel(events), messages }], records, ...(check ? { check } : {}) });
 }
 
@@ -78,7 +108,7 @@ for (const dir of readdirSync(join(repository, "test-results/computer-use")).fil
   const records = walk(dir).filter(path => /\/(observations|runs)\//.test(path) && path.endsWith(".json") && !path.includes("relay-evidence"));
   if (records.length === 0) continue;
   runs.push({ id: "", when: new Date(Math.min(...records.map(path => time(readJson(path).recordedAt)))).toISOString(), source: rel(dir),
-    task: "Scripted plan: Calculator 7 + 3 (scripts/computer-use/relay-live.ts, no model)", conversations: [], records });
+    task: "Scripted plan: Calculator 7 + 3 (scripts/computer-use/relay-live.ts, no model)", conversations: [], records, packages: packagesIn(dir), pictures: [] });
 }
 
 // Live delegation: a Pi parent in RPC mode and the computer-use agent's session transcript.
@@ -92,7 +122,7 @@ for (const name of existsSync(delegations) ? readdirSync(delegations) : []) {
   }
   const records = walk(join(dir, "extension-state", "computer-use")).filter(path => path.endsWith(".json"));
   const first = conversations[0]?.messages.find(message => message.role === "user");
-  runs.push({ id: "", when: started(conversations.flatMap(conversation => conversation.messages), join(dir, "log.txt")), source: rel(dir), task: text(first).slice(0, 200), conversations, records });
+  runs.push({ id: "", when: started(conversations.flatMap(conversation => conversation.messages), join(dir, "log.txt")), source: rel(dir), task: text(first).slice(0, 200), conversations, records, packages: packagesIn(dir), pictures: [] });
 }
 
 function text(message: Json | undefined): string {
@@ -113,6 +143,22 @@ for (const run of runs) {
   const events: { at: number; order: number; body: string }[] = [];
   let order = 0;
   const add = (at: number, body: string) => events.push({ at, order: order++, body });
+  const docDir = dirname(join(out, file));
+  // Figures are numbered after the timeline is sorted; FIGURE is the placeholder.
+  const figure = (path: string, caption: string) => `\n![Figure \u0000FIGURE\u0000](${relative(docDir, path).split("/").map(encodeURIComponent).join("/")})\n\n*Figure \u0000FIGURE\u0000. ${caption}*\n`;
+
+  // Window screenshots the relay client wrote at every read, in read order (design §11.2).
+  const readShots = [...new Map(run.packages.flatMap(dir => walk(join(dir, "extractions")))
+    .filter(path => /\/read-\d{4}\.png$/.test(path)).map(path => [basename(path), path] as const)).values()].sort();
+  const observations = run.records.filter(path => path.includes("/observations/")).map(path => ({ path, at: time(readJson(path).recordedAt) })).sort((a, b) => a.at - b.at);
+  const readShotFor = new Map<string, { path: string; note: string }>();
+  if (readShots.length >= observations.length && observations.length > 0) {
+    // The scripted runs make reads without records first, so the recorded reads are the last ones.
+    const offset = readShots.length - observations.length;
+    observations.forEach((observation, i) => readShotFor.set(observation.path, { path: readShots[offset + i]!,
+      note: offset === 0 ? "matched to this read by order" : `matched by order to the last ${observations.length} of ${readShots.length} reads; the script made ${offset} reads without records first` }));
+  }
+  const usedPictures = new Set<string>();
 
   for (const conversation of run.conversations) {
     for (const message of conversation.messages) {
@@ -148,14 +194,22 @@ for (const run of runs) {
       const shown = Object.values(record.descendantText ?? {}).map(value => JSON.stringify(String(value).replace(/‎/g, ""))).join(", ");
       add(at, `### ${clock(at)} harness: observation (${record.purpose ?? "?"}, attempt ${record.attempt ?? 1})\n\n`
         + `- File: \`${basename(path)}\`\n- Status: ${record.status}; window ${JSON.stringify(record.window?.title)} of ${record.window?.app}; active app: ${record.appActive}; read ${Math.round(record.readMs ?? 0)} ms\n`
-        + `- Text shown in the window: ${shown || "none"}\n\n<details><summary>Element table given to the executor</summary>\n${fence(record.executorTable ?? "")}</details>\n`);
+        + `- Text shown in the window: ${shown || "none"}\n\n<details><summary>Element table given to the executor</summary>\n${fence(record.executorTable ?? "")}</details>\n`
+        + (readShotFor.has(path) ? figure(readShotFor.get(path)!.path, `Window screenshot taken by this read (${record.purpose}); ${readShotFor.get(path)!.note}.`) : ""));
     } else if (record.schema?.includes("step")) {
       const answers = Object.entries(record.answers ?? {}).map(([question, answer]: [string, any]) => `${question}=${answer.choice} (${Number(answer.confidence).toFixed(2)})`).join(", ");
       const decision = record.decision ?? {};
       add(at, `### ${clock(at)} executor: step \`${record.stepId}\`, attempt ${record.attempt}\n\n`
         + `- Asked: ${JSON.stringify(record.request?.state?.step ?? "")}\n- Answers: ${answers || "none"}\n`
         + `- Decision: ${decision.kind}${decision.operation ? ` ${decision.operation}` : ""}${decision.element ? ` ${JSON.stringify(decision.element)}` : ""}${decision.reason ? ` (${decision.reason})` : ""}${decision.detail ? `: ${decision.detail}` : ""}\n`
-        + `- Round trip: ${Math.round(record.roundTripMs ?? 0)} ms\n`);
+        + `- Round trip: ${Math.round(record.roundTripMs ?? 0)} ms\n`
+        + ["before", "after"].map(phase => {
+          const picture = run.pictures.find(candidate => !usedPictures.has(candidate) && candidate.includes(`/runs/${record.runId}/pictures/`)
+            && basename(candidate) === `${record.stepId}-${record.attempt}-${phase}.png`);
+          if (!picture) return "";
+          usedPictures.add(picture);
+          return figure(picture, `Target window ${phase} the action of step ${record.stepId}, attempt ${record.attempt} (harness step picture).`);
+        }).join(""));
     } else if (record.schema?.includes("plan")) {
       const steps = (record.steps ?? []).map((step: Json) => `  - \`${step.id}\`: ${step.result}${step.action ? `, ${step.action} ${JSON.stringify(step.element ?? "")}` : ""}${step.detail ? ` (${step.detail})` : ""}`).join("\n");
       add(at, `### ${clock(at)} harness: plan \`${record.runId}\` ended: ${record.outcome}\n\n${steps}\n${record.escalation ? `\n- Escalation: step \`${record.escalation.stepId}\`, ${record.escalation.reason}: ${record.escalation.detail}\n` : ""}`);
@@ -173,15 +227,42 @@ for (const run of runs) {
     if (run.check.exit !== 0) fail("Pi exited with an error", `${run.check.name}: exit ${run.check.exit}`);
   }
 
+  // Step pictures not matched to an executor record go with their plan.
+  for (const picture of run.pictures.filter(candidate => !usedPictures.has(candidate))) {
+    const plan = join(dirname(dirname(picture)), "plan.json");
+    add(existsSync(plan) ? time(readJson(plan).recordedAt) - 1 : NaN, figure(picture, `Target window, ${basename(picture, ".png")} (harness step picture).`));
+  }
+  // Whole-display screenshots from the relay, placed by their capture time. A package shared by
+  // several Pi runs contributes only the relay commands whose before-to-after span overlaps this run.
+  const times = events.map(event => event.at).filter(Number.isFinite);
+  const [from, to] = [Math.min(...times), Math.max(...times)];
+  const shared = run.package !== undefined;
+  let displayed = 0;
+  const shots = run.packages.flatMap(displayShots);
+  const spans = new Map<string, [number, number]>();
+  for (const shot of shots) {
+    const span = spans.get(shot.execution) ?? [Infinity, -Infinity];
+    spans.set(shot.execution, [Math.min(span[0], shot.at), Math.max(span[1], shot.at)]);
+  }
+  for (const shot of shots.filter(candidate => !shared || (spans.get(candidate.execution)![0] <= to && spans.get(candidate.execution)![1] >= from))) {
+    displayed++;
+    add(shot.at, `### ${clock(shot.at)} relay: display ${shot.phase}\n${figure(shot.path, shot.caption)}`);
+  }
+
   events.sort((a, b) => (Number.isFinite(a.at) ? a.at : Infinity) - (Number.isFinite(b.at) ? b.at : Infinity) || a.order - b.order);
   const header = [`# Run ${run.id}: ${run.task || "(no prompt)"}`, "",
     `- Started: ${run.when}`, `- Source: \`${run.source}\``, ...(run.package ? [`- Relay package: \`relay-evidence/${run.package}/\` (open its index.html for the screenshots)`] : []),
     ...run.conversations.map(conversation => `- ${conversation.label} transcript: \`${conversation.source}\``),
     `- Harness records: ${run.records.length}`,
+    `- Figures: ${run.pictures.length} step pictures, ${readShotFor.size} window screenshots from reads, ${displayed} whole-display screenshots from the relay`,
     ...(run.check ? [`- Code check by the batch script: ${run.check.done ? "passed" : "FAILED"} (${run.check.check}); ${Math.round(run.check.seconds)} s`] : []),
     `- Failures found: ${failures.filter(failure => failure.run === run.id).length}`, "",
-    "Times are UTC. Thinking is the model's own reasoning text as recorded.", ""];
-  writeFileSync(join(out, file), `${header.join("\n")}\n${events.map(event => event.body).join("\n")}\n`);
+    "Times are UTC. Thinking is the model's own reasoning text as recorded.",
+    "Figures: a step picture shows the target window before or after one action; a read screenshot shows the window at one read; a display screenshot shows the whole VM screen before or after one relay command. In the 2026-09-23 runs Pi itself ran as one relay command, so the display screenshots there bracket the whole Pi run, not single steps.", ""];
+  let figures = 0;
+  const body = events.map(event => event.body).join("\n").replace(/!\[Figure \u0000FIGURE\u0000\]([^\n]*)\n\n\*Figure \u0000FIGURE\u0000\./g,
+    (_match, link: string) => { figures++; return `![Figure ${figures}]${link}\n\n*Figure ${figures}.`; });
+  writeFileSync(join(out, file), `${header.join("\n")}\n${body}\n`);
 }
 
 // Relay runs that failed or were uncertain, from each package's own event log.
@@ -203,7 +284,7 @@ const byKind = new Map<string, number>();
 for (const failure of failures) byKind.set(failure.kind, (byKind.get(failure.kind) ?? 0) + 1);
 const index = [
   "# Computer-use failure trajectories", "",
-  `Generated ${new Date().toISOString()} by \`scripts/computer-use/extract-trajectories.ts\` at revision of the working tree. Each run has a trajectory file under \`runs/\`.`, "",
+  `Generated ${new Date().toISOString()} by \`scripts/computer-use/extract-trajectories.ts\` at revision of the working tree. Each run has a trajectory file under \`runs/\`, with screenshots as figures.`, "",
   `- Runs found: ${runs.length} (${runs.filter(run => run.conversations.length > 0).length} with a model, ${runs.filter(run => run.conversations.length === 0).length} scripted).`,
   `- Duplicate copies skipped: ${duplicates.length}.`,
   `- Runs with at least one failure: ${new Set(failures.map(failure => failure.run)).size}.`,
