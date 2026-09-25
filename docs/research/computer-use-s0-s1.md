@@ -760,3 +760,25 @@ An independent reviewer read the code on 2026-09-26 and judged the control-name 
 - The executor's choice of control is already limited to a list built from a fresh read before each step.
 
 The owner decided on 2026-09-26 to remove the check and to build plans from the controls the observation offers ([decisions PS-D3 and PS-D4](../decisions.md)).
+
+### 16.4 Calculator after the plan checks were narrowed
+
+The Calculator task of [Section 16.2](#162-calculator-with-thinking-off) ran again through Pi on 2026-09-25 at 23:50 UTC, at revision `3e8fb97`. The plan check no longer rejects a plan on a guess ([decision PS-D3](../decisions.md)). The script, the task, the model, the executor, the relay image and `thinking: off` were the same.
+
+| Quantity | Run of 2026-09-25, 22:41 | Run of 2026-09-25, 23:50 |
+| --- | --- | --- |
+| Plans rejected | 3 | 0 |
+| Plans run | 1 | 1 |
+| Steps verified by code | 1 of 4 | 4 of 4 |
+| Output tokens of the child's model replies | 1,526 | 402 |
+| Model wait time: the sum of the times from each user message or tool result to the next assistant message | 27.1 s | 8.6 s |
+| Tool time: the sum of the times from each assistant message to its tool result | 97.0 s | 103.5 s |
+| Run wall time: from sending the prompt to stopping Pi | 183 s | 173 s |
+| Result | 10, correct | 10, correct |
+
+- The planner's first plan ran. Its checks were that the display text ends with "7", ends with "7+", contains "3", and ends with "10", and code verified each one after its step.
+- The child made one `computer_observe` call and one `computer_run_plan` call.
+
+**Evidence:** `test-results/e2e/computer-use-delegation/2026-09-25T23-50-46-723Z-5c21edf8/`. It is not versioned.
+
+**Verification limits:** One run of one task. The check "contains 3" after pressing 3 would also hold for a display such as "3+", so a stricter check would have been `endsWith "7+3"`.

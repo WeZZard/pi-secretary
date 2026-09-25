@@ -17,6 +17,11 @@ export const planStepSchema = Type.Object({
   keys: Type.Optional(Type.String({ maxLength: 60, description: "A key combination for key_combo, for example cmd+shift+n or cmd+w." })),
   postcondition: Type.Unknown({ description: "One predicate object: {exists:{name,role?}}, {absent:{name,role?}}, {value:{name,equals}}, {selected:{name}}, {window:{titleContains}}, {text:{contains}}, {text:{endsWith}}, {changed:true}, {all:[...]}, or {any:[...]}. Only on-screen elements count. It must be false before the step and true after it. exists and absent check controls by name, and role is an accessibility role such as Button; selected checks that a named element is selected; text checks only text the window shows, such as a display or a document." }),
   max_attempts: Type.Optional(Type.Integer({ minimum: 1, maximum: 5, description: "How often the step may act. Above 1 only with idempotent: true or a scroll operation; otherwise an action that changed the screen but missed its postcondition is not repeated. A scroll step acts up to 3 times by default." })),
+  control: Type.Optional(Type.Object({
+    name: Type.String({ minLength: 1, maxLength: 200, description: "The control's name exactly as the observation lists it." }),
+    role: Type.Optional(Type.String({ maxLength: 60, description: "The role the observation lists, for example Button." })),
+    region: Type.Optional(Type.String({ maxLength: 60, description: "The region heading the observation lists it under, for example content or toolbar." })),
+  }, { additionalProperties: false, description: "The control this step acts on, copied from a line of the observation, for example {region:\"content\", role:\"Button\", name:\"3\"}. The harness confirms it in the window before acting. Omit it for a key combination." })),
   idempotent: Type.Optional(Type.Boolean({ description: "True only when doing the step again changes nothing, such as turning a checkbox on. Only then is the step skipped when its postcondition already holds; otherwise the plan stops with already_satisfied." })),
 }, { additionalProperties: false });
 

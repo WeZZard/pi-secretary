@@ -266,3 +266,52 @@ test("with step pictures off, no picture or review page is written", async (t) =
   assert.equal(result.steps[0]!.pictures, undefined);
   assert.ok(!readdirSync(join(root, "runs", "run-1")).includes("review.md"));
 });
+
+test("a step that names its control acts only when the control is in the window and the executor chose it (decision PS-D4)", async (t) => {
+  const submit = { id: "submit", intent: "Submit the form", control: { region: "window", role: "Button", name: "Submit" }, postcondition: { exists: { name: "Done" } } };
+  const agreed = setup(t, [form, submitted]);
+  const done = await runPlan(agreed.deps(executor(() => ({ element: "Submit", operation: "press" }))), plan([submit]));
+  assert.equal(done.outcome, "completed");
+
+  const missing = setup(t, [form]);
+  const exec = executor(() => ({ element: "Submit", operation: "press" }));
+  const notFound = await runPlan(missing.deps(exec), plan([{ ...submit, control: { name: "Send" } }]));
+  assert.equal(notFound.escalation!.reason, "target_not_found");
+  assert.match(notFound.escalation!.detail, /the control the step names, "Send", is not in the window; no action was taken/);
+  assert.equal(exec.bodies.length, 0, "The executor is not asked about a control that is not there");
+
+  const disagreed = setup(t, [form]);
+  const other = await runPlan(disagreed.deps(executor(() => ({ element: "Cancel", operation: "press" }))), plan([submit]));
+  assert.equal(other.escalation!.reason, "uncertain");
+  assert.match(other.escalation!.detail, /the executor chose "Cancel" in window, not the control the step names, Button "Submit" in window/);
+  assert.equal(disagreed.backend.actions.length, 0);
+});
+
+test("a named control matches by name and role, and the region only chooses among matches", async (t) => {
+  // Group names change with window size, so a region that does not match is not a reason to stop.
+  const { deps } = setup(t, [form, submitted]);
+  const result = await runPlan(deps(executor(() => ({ element: "Submit", operation: "press" }))),
+    plan([{ id: "s", intent: "Submit", control: { region: "content", role: "AXButton", name: " submit " }, postcondition: { exists: { name: "Done" } } }]));
+  assert.equal(result.outcome, "completed");
+  const wrongRole = setup(t, [form]);
+  const stopped = await runPlan(wrongRole.deps(executor(() => ({ element: "Submit", operation: "press" }))),
+    plan([{ id: "s", intent: "Submit", control: { role: "TextField", name: "Submit" }, postcondition: { exists: { name: "Done" } } }]));
+  assert.equal(stopped.escalation!.reason, "target_not_found");
+});
+
+test("a control that appears only after an earlier step is found in that step's fresh read", async (t) => {
+  const menu = window([{ name: "File" }]);
+  const opened = window([{ name: "File" }, { role: "AXMenuItem", name: "Save" }]);
+  const { deps } = setup(t, [menu, opened, submitted]);
+  const result = await runPlan(deps(executor(body => String((body.state as { elements: string }).elements).includes("Save") ? { element: "Save", operation: "press" } : { element: "File", operation: "press" })),
+    plan([{ id: "open", intent: "Open File", control: { name: "File" }, postcondition: { exists: { name: "Save" } } },
+      { id: "save", intent: "Save", control: { role: "MenuItem", name: "Save" }, postcondition: { exists: { name: "Done" } } }]));
+  assert.equal(result.outcome, "completed");
+});
+
+test("a control reference that cannot match anything is rejected before the plan runs", () => {
+  const step = { id: "a", intent: "i", postcondition: { changed: true as const } };
+  assert.equal(validatePlan(plan([{ ...step, control: { name: " " } }]), 50)?.rule, "control");
+  assert.match(validatePlan(plan([{ ...step, control: { name: "Save", role: "selected" } }]), 50)?.message ?? "", /control role "selected" is not an accessibility role/);
+  assert.equal(validatePlan(plan([{ ...step, control: { name: "Save", role: "MenuItem", region: "anything" } }]), 50), undefined);
+});

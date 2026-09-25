@@ -3,11 +3,11 @@ import { BackendError, type ExecutionBackend, type WindowRead, type WindowTarget
 import type { ComputerUseConfiguration } from "./configuration.ts";
 import { ExecutorError, type DecisionRequestBody, type DecisionResponse } from "./executor-client.ts";
 import { ActionHistory, type ActionRecord } from "./history.ts";
-import { observe, renderPlannerTable, type Observation, type ObservationFailure } from "./observer.ts";
+import { observe, renderPlannerTable, type ObservedElement, type Observation, type ObservationFailure } from "./observer.ts";
 import { decide, type Decision, type EscalationReason, type Prior } from "./policy.ts";
 import { buildDecisionRequest, type StepSpec } from "./request-builder.ts";
 import type { Picture, Telemetry } from "./telemetry.ts";
-import { evaluatePostcondition, isWeakPostcondition, validatePostcondition, visibleSignature, type Postcondition } from "./verifier.ts";
+import { ROLE, evaluatePostcondition, isWeakPostcondition, normalize, validatePostcondition, visibleSignature, type Postcondition } from "./verifier.ts";
 
 /** The step harness (design docs/arch/computer-use.md §9 and §10). */
 
@@ -16,7 +16,26 @@ import { evaluatePostcondition, isWeakPostcondition, validatePostcondition, visi
  * checkbox on. Only such a step may be skipped when its postcondition holds before it runs
  * (fix plan F-1): a stale Calculator display made every step of a plan look done (observed 2026-09-23).
  */
-export interface PlanStep extends StepSpec { postcondition: Postcondition; maxAttempts?: number; idempotent?: boolean }
+export interface PlanStep extends StepSpec { postcondition: Postcondition; maxAttempts?: number; idempotent?: boolean; control?: ControlRef }
+
+/** The control a step acts on, copied from a line of the observation (design §5.2, decision PS-D4). */
+export interface ControlRef { name: string; role?: string; region?: string }
+
+const describeControl = (control: ControlRef) =>
+  `${control.role ? `${control.role.replace(/^AX/, "")} ` : ""}${JSON.stringify(control.name)}${control.region ? ` in ${control.region}` : ""}`;
+
+/**
+ * The elements of an observation that a step's control names (design §9, control check). Name and
+ * role must match. The region only chooses among matches, because group names change with the
+ * window's size: a small window is one group named "window", and a large one splits into several.
+ */
+export function controlMatches(observation: Observation, control: ControlRef): ObservedElement[] {
+  const wanted = normalize(control.name);
+  const found = observation.groups.flatMap(group => group.elements).filter(element => normalize(element.name) === wanted
+    && (control.role === undefined || element.role === control.role || element.role === `AX${control.role}`));
+  const inRegion = control.region === undefined ? [] : found.filter(element => normalize(element.group) === normalize(control.region!));
+  return inRegion.length ? inRegion : found;
+}
 export interface Plan { target: WindowTarget; goal: string; steps: PlanStep[]; allowDestructive: string[] }
 
 export interface StepOutcome {
@@ -105,6 +124,10 @@ export function validatePlan(plan: Plan, maxSteps: number): PlanProblem | undefi
       return problem("unsafe_repeat", `step ${step.id}: max_attempts above 1 needs idempotent: true or a scroll operation, because repeating an action that took effect could act twice`);
     }
     if (step.idempotent !== undefined && typeof step.idempotent !== "boolean") return problem("idempotent", `step ${step.id}: idempotent must be true or false`);
+    if (step.control !== undefined) {
+      if (!step.control.name.trim()) return problem("control", `step ${step.id}: control needs a name`);
+      if (step.control.role !== undefined && !ROLE.test(step.control.role)) return problem("control", `step ${step.id}: control role ${JSON.stringify(step.control.role)} is not an accessibility role such as Button or TextField`);
+    }
   }
   for (const id of plan.allowDestructive) if (!ids.has(id)) return problem("unknown_destructive_step", `allowDestructive names unknown step ${JSON.stringify(id)}`);
   return undefined;
@@ -179,6 +202,9 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
       for (;;) {
         if (actions >= config.maxActionsPerPlan) escalate(step.id, "budget_exhausted", `the plan used its ${config.maxActionsPerPlan} actions`);
         const observation = current.observation;
+        // Control check (design §9): the named control must be in this read before the executor is asked.
+        const named = step.control ? controlMatches(observation, step.control) : undefined;
+        if (step.control && !named!.length) escalate(step.id, "target_not_found", `the control the step names, ${describeControl(step.control)}, is not in the window; no action was taken`);
         const build = (recent: ReturnType<typeof history.recent>) =>
           buildDecisionRequest({ goal: plan.goal, step, observation, recent, answerReserveTokens: config.answerReserveTokens });
         let built = build(history.recent());
@@ -210,6 +236,10 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
         }
         if (decision.kind === "escalate") escalate(step.id, decision.reason, decision.detail, decision.prior);
         if (decision.kind !== "act") break;
+        // The named control cross-checks the executor's choice (decision PS-D4).
+        if (named && decision.element && !named.some(element => element.index === decision.element!.index)) {
+          escalate(step.id, "uncertain", `the executor chose ${JSON.stringify(decision.element.name)} in ${decision.element.group}, not the control the step names, ${describeControl(step.control!)}; no action was taken`, decision.prior);
+        }
 
         let backendActions;
         try { backendActions = actionsFor(decision.request); }

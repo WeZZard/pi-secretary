@@ -23,8 +23,9 @@ export interface Evaluation { holds: boolean; detail: string }
 
 const MAX_DEPTH = 8;
 /** An accessibility role, with or without the AX prefix. */
-const ROLE = /^(AX)?[A-Z][A-Za-z]*$/;
-const normalize = (text: string) => text.replace(BIDI_MARKS, "").replace(/\s+/g, " ").trim().toLowerCase();
+export const ROLE = /^(AX)?[A-Z][A-Za-z]*$/;
+/** Names compare ignoring case, extra whitespace and Unicode bidirectional marks (design §5.3). */
+export const normalize = (text: string) => text.replace(BIDI_MARKS, "").replace(/\s+/g, " ").trim().toLowerCase();
 
 /**
  * The elements a person could see: a frame larger than 1 point, and a center inside the window

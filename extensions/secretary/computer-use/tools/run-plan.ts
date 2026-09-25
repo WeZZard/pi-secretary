@@ -34,6 +34,7 @@ export function toPlan(params: Static<typeof runPlanSchema>, basedOn?: Observati
       ...(step.operation ? { operation: step.operation as Operation } : {}), ...(step.text !== undefined ? { text: step.text } : {}),
       ...(step.keys !== undefined ? { keys: step.keys } : {}), ...(step.max_attempts !== undefined ? { maxAttempts: step.max_attempts } : {}),
       ...(step.idempotent !== undefined ? { idempotent: step.idempotent } : {}),
+      ...(step.control !== undefined ? { control: step.control } : {}),
       ...(step.position !== undefined ? { position: step.position } : {}) })),
   };
 }
