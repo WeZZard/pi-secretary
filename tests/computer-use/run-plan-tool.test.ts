@@ -92,3 +92,26 @@ test("the result lists what code verified, separately from steps that only chang
   assert.match(text, /Verified by code after the step \(report only these facts as checked\):\n- a: \{"text":\{"contains":"10"\}\} held/);
   assert.match(text, /Not verified \(only a change on screen was seen\):\n- b$/);
 });
+
+test("a plan whose window changed since based_on stops with window_changed before any executor request (design §9)", async (t) => {
+  const { context: ctx } = context(t);
+  const changed = { ...form, elements: form.elements.filter(element => element.label !== "Submit") };
+  ctx.deps.backend = new FakeBackend({ Form: [changed] });
+  let asked = 0;
+  ctx.deps.executor = { decide: async () => { asked++; throw new Error("not reached"); } };
+  const result = await executeRunPlan(ctx, { ...params, based_on: "obs-1" });
+  assert.equal(result.details.escalation, "window_changed");
+  assert.match((result.content[0] as { text: string }).text, /window changed since the observation the plan was based on: 1 control\(s\) are gone: AXButton "Submit"\. No action was taken/);
+  assert.equal(asked, 0);
+});
+
+test("the start check accepts the window our previous plan left, when that plan ran after based_on", async (t) => {
+  const { context: ctx } = context(t);
+  const done: typeof form = { ...form, elements: [form.elements[0]!, { ...form.elements[1]!, label: "Done" }] };
+  ctx.deps.backend = new FakeBackend({ Form: [done] });
+  const doneObservation = observe({ ...done, readMs: 0 }, { id: "run-1-003", maxElements: 240, maxNameLength: 48 }) as Observation;
+  const stopped = await executeRunPlan(ctx, { ...params, based_on: "obs-1" });
+  assert.equal(stopped.details.escalation, "window_changed", "without a later plan read, the change is unexplained");
+  const accepted = await executeRunPlan({ ...ctx, deps: { ...ctx.deps, backend: new FakeBackend({ Form: [done] }) }, previousPlanRead: () => doneObservation }, { ...params, based_on: "obs-1" });
+  assert.notEqual(accepted.details.escalation, "window_changed");
+});

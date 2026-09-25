@@ -76,3 +76,26 @@ test("computer_run_plan is registered only when the executor is configured", asy
   await h.emit("session_start");
   assert.deepEqual(h.tools.map(tool => tool.name), ["computer_observe", "computer_run_plan"]);
 });
+
+test("the start check accepts our previous plan's last read only when that plan ran after the based_on observation", async (t) => {
+  const read = (label: string) => ({ window: { pid: 1, windowId: 1, app: "Form", title: "Form" }, appActive: true, truncated: false, elements: [
+    { element_index: 0, role: "AXWindow", label: "Form", depth: 0, frame: { x: 0, y: 0, w: 800, h: 600 } },
+    { element_index: 1, role: "AXButton", label, parent_index: 0, depth: 1, frame: { x: 100, y: 50, w: 80, h: 20 } }] });
+  // Reads in order: observe A; plan 1 before and after its press; plan 2 before and after; observe B; plan 3's first read.
+  const backend = new FakeBackend({ Form: [read("Submit"), read("Submit"), read("Done"), read("Done"), read("Submit"), read("Submit"), read("Done")] });
+  const h = host(t, { computerUse: { backend: "local", allowLocalDesktop: true, executorUrl: "http://jev.home.arpa", settleMs: 0 } });
+  installComputerUse(h.pi, { root: h.root, agentDir: () => h.agentDir, backendFactory: () => backend,
+    executorFactory: () => ({ decide: async () => ({ roundTripMs: 1, answers: { element_1: { choice: "A", confidence: 0.99 }, operation: { choice: "press", confidence: 0.99 }, risk: { choice: "safe", confidence: 0.99 } } }) }) });
+  await h.emit("session_start");
+  const [observeTool, runPlanTool] = h.tools;
+  const observation = async () => /Observation: (\S+)/.exec((await observeTool.execute("o", { app: "Form" }, undefined, undefined, h.ctx)).content[0].text)![1]!;
+  const run = (basedOn: string, postcondition: unknown) => runPlanTool.execute("r", { app: "Form", goal: "g", based_on: basedOn,
+    steps: [{ id: "s", intent: "Press the button", postcondition }] }, undefined);
+  const a = await observation();
+  assert.equal((await run(a, { exists: { name: "Done" } })).details.outcome, "completed");
+  const second = await run(a, { absent: { name: "Done" } });
+  assert.notEqual(second.details.escalation, "window_changed", "plan 1 ran after A, so its last read explains the change");
+  const b = await observation();
+  const third = await run(b, { absent: { name: "Done" } });
+  assert.equal(third.details.escalation, "window_changed", "plan 1 ran before B, so it does not explain the change");
+});

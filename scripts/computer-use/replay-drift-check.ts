@@ -17,6 +17,9 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import { defaultComputerUseConfiguration } from "../../extensions/secretary/computer-use/configuration.ts";
+import { observe } from "../../extensions/secretary/computer-use/observer.ts";
+import { compareWindows, type WindowComparison } from "../../extensions/secretary/computer-use/window-check.ts";
 
 const repository = resolve(import.meta.dirname, "../..");
 const out = join(repository, "test-results/computer-use", `drift-replay-${new Date().toISOString().replace(/[:.]/g, "-")}`);
@@ -115,8 +118,29 @@ function basedOnByPlanTime(session: string): { at: number; basedOn?: string }[] 
   return results;
 }
 
-interface Row { matchedPrevious?: string; baselineKind: string; runId: string; session: string; app: string; task: string; outcome: string; baseline: Read; first: Read; verdict: Verdict; planMs: number; gapMs: number; escalation?: string }
+interface Row { runtime?: boolean; matchedPrevious?: string; baselineKind: string; runId: string; session: string; app: string; task: string; outcome: string; baseline: Read; first: Read; verdict: Verdict; planMs: number; gapMs: number; escalation?: string }
 const rows: Row[] = [];
+/**
+ * The runtime check on the same reads: the current observer reduces the recorded tree, and
+ * `compareWindows` judges it, as `computer_run_plan` does at plan start (design §9). Disagreements
+ * with this script's own check are counted in the report.
+ */
+const defaults = defaultComputerUseConfiguration();
+function runtimeComparison(path: string): WindowComparison | undefined {
+  const record = readJson(path);
+  const result = observe({ window: record.window, snapshotId: record.snapshotId, appActive: record.appActive, truncated: record.truncated, readMs: record.readMs ?? 0,
+    elements: parse(record.tree) ?? [], ...(record.descendantText ? { descendantText: parse(record.descendantText) } : {}) },
+    { id: basename(path, ".json"), maxElements: defaults.maxElements, maxNameLength: defaults.maxNameLength });
+  return result.status === "ready" ? result.comparison : undefined;
+}
+function runtimeStop(baseline: Read, first: Read, previous: Read | undefined): boolean | undefined {
+  const [b, f] = [runtimeComparison(baseline.path), runtimeComparison(first.path)];
+  if (!b || !f) return undefined;
+  if (!compareWindows(b, f).stop) return false;
+  const p = previous && runtimeComparison(previous.path);
+  return !(p && !compareWindows(p, f).stop);
+}
+
 const seenPlans = new Set<string>();
 const runTimes = new Map<string, number>();
 let comparisons = 0;
@@ -156,9 +180,10 @@ for (const session of [...sessions].sort()) {
       if (!again.stop) { verdict = again; matchedPrevious = `${previous.purpose} (\`${basename(previous.path)}\`)`; }
     }
     const used = process.cpuUsage(started);
+    const runtime = runtimeStop(baseline, first, previous);
     cpu += used.user + used.system;
     comparisons++;
-    rows.push({ ...(matchedPrevious ? { matchedPrevious } : {}), baselineKind, runId: plan.runId, session: relative(repository, session), app: plan.plan?.target?.app ?? first.title, task: plan.plan?.goal ?? "",
+    rows.push({ runtime, ...(matchedPrevious ? { matchedPrevious } : {}), baselineKind, runId: plan.runId, session: relative(repository, session), app: plan.plan?.target?.app ?? first.title, task: plan.plan?.goal ?? "",
       outcome: plan.outcome, baseline, first, verdict, planMs: Date.parse(plan.recordedAt) - first.startedAt, gapMs: first.at - baseline.at,
       ...(plan.escalation ? { escalation: `${plan.escalation.reason} at ${plan.escalation.stepId}` } : {}) });
   }
@@ -178,6 +203,7 @@ const report = [
   `- The check would have stopped: ${stops.length}. It would have let through: ${rows.length - stops.length}.`,
   `- Let through with controls added: ${rows.filter(row => !row.verdict.stop && row.verdict.added.length).length}.`,
   `- Let through only because the plan's first read matched the last read of an earlier plan of ours: ${rows.filter(row => row.matchedPrevious).length}.`,
+  `- The runtime check (the current observer and \`compareWindows\` on the same recorded reads) agreed on ${rows.filter(row => row.runtime === row.verdict.stop).length} of ${rows.length} plans; disagreed on ${rows.filter(row => row.runtime !== undefined && row.runtime !== row.verdict.stop).map(row => row.runId).join(", ") || "none"}; could not judge ${rows.filter(row => row.runtime === undefined).length}.`,
   `- Baseline used: ${[...new Set(rows.map(row => row.baselineKind.replace(/^based_on .*/, "based_on observation")))].map(kind => `${kind} ${rows.filter(row => row.baselineKind.replace(/^based_on .*/, "based_on observation") === kind).length}`).join(", ")}.`, "",
   "## Time", "",
   "| Quantity (formula in the script header) | Value |", "| --- | --- |",
@@ -199,5 +225,6 @@ const report = [
   "- A plan rejected before its first read has no first read and is not counted.",
   "", ];
 writeFileSync(join(out, "report.md"), report.join("\n"));
+console.log(`Plans: ${rows.length}. Would stop: ${stops.length}. Runtime check disagreed: ${rows.filter(row => row.runtime !== undefined && row.runtime !== row.verdict.stop).length}, could not judge: ${rows.filter(row => row.runtime === undefined).length}.`);
 console.log(`Plans: ${rows.length}. Would stop: ${stops.length}. Check cost: ${(cpu / Math.max(1, comparisons) / 1000).toFixed(3)} ms CPU per comparison.`);
 console.log(`Output: ${relative(repository, out)}/report.md`);

@@ -50,6 +50,10 @@ export function installComputerUse(pi: ExtensionAPI, options: ComputerUseInstall
   let executor: Executor | undefined;
   let escalationsUsed = 0;
   const observations = new Map<string, Observation>();
+  // Order of observations and plan reads, so a plan's start check accepts only a later plan read (design §9).
+  let sequence = 0;
+  const observedAt = new Map<string, number>();
+  let lastPlanRead: { observation: Observation; at: number } | undefined;
   const diagnostic = (message: string) => { if (ctx?.hasUI) ctx.ui.notify(message, "error"); };
 
   pi.on("session_start", async (_event, context) => {
@@ -69,6 +73,8 @@ export function installComputerUse(pi: ExtensionAPI, options: ComputerUseInstall
     const session = createHash("sha256").update(context.sessionManager.getSessionId()).digest("hex");
     telemetry = new Telemetry(join(options.root, "computer-use", session));
     observations.clear();
+    observedAt.clear();
+    lastPlanRead = undefined;
     escalationsUsed = 0;
     executor = planExecutionAvailable(config)
       ? (options.executorFactory ?? (c => new ExecutorClient({ baseUrl: c.executorUrl!, timeoutMs: c.executorTimeoutMs })))(config) : undefined;
@@ -89,7 +95,8 @@ export function installComputerUse(pi: ExtensionAPI, options: ComputerUseInstall
         const acceptsImages = toolCtx.model?.input.includes("image") ?? false;
         return executeObserve({ backend, config, telemetry, remember: observation => {
           observations.set(observation.id, observation);
-          while (observations.size > REMEMBERED_OBSERVATIONS) observations.delete(observations.keys().next().value!);
+          observedAt.set(observation.id, ++sequence);
+          while (observations.size > REMEMBERED_OBSERVATIONS) { const oldest = observations.keys().next().value!; observations.delete(oldest); observedAt.delete(oldest); }
         } }, params, acceptsImages, signal);
       },
     }));
@@ -105,6 +112,8 @@ export function installComputerUse(pi: ExtensionAPI, options: ComputerUseInstall
         if (!backend || !config || !telemetry || !executor) throw new Error("Computer use plan execution is not configured for this session.");
         const limit = config.maxEscalationsPerRun;
         return executeRunPlan({ deps: { backend, executor, telemetry, config }, observation: id => observations.get(id),
+          previousPlanRead: id => lastPlanRead && lastPlanRead.at > (observedAt.get(id) ?? Infinity) ? lastPlanRead.observation : undefined,
+          recordPlanRead: observation => { lastPlanRead = { observation, at: ++sequence }; },
           escalations: { used: escalationsUsed, limit, record: () => { escalationsUsed++; } } }, params, signal);
       },
     }));
@@ -115,5 +124,7 @@ export function installComputerUse(pi: ExtensionAPI, options: ComputerUseInstall
     catch (error) { diagnostic(`Secretary computer use: ${error instanceof Error ? error.message : String(error)}`); }
     backend = undefined;
     observations.clear();
+    observedAt.clear();
+    lastPlanRead = undefined;
   });
 }

@@ -14,6 +14,13 @@ export interface RunPlanContext {
   deps: HarnessDependencies;
   /** The remembered observation with this id; the plan acts on its window. */
   observation(id: string): Observation | undefined;
+  /**
+   * The last read of the previous plan in this session, when that plan ran after the observation
+   * `basedOn` names; the start check accepts it as a change this harness made itself (design §9).
+   */
+  previousPlanRead?(basedOn: string): Observation | undefined;
+  /** Remembers a plan's last read for the next plan's start check. */
+  recordPlanRead?(observation: Observation): void;
   /** Escalations already returned in this session, and the configured limit. */
   escalations: { used: number; limit: number; record(): void };
 }
@@ -83,10 +90,12 @@ export async function executeRunPlan(context: RunPlanContext, params: Static<typ
   if (params.based_on !== undefined && !basedOn) {
     return rejected(context, params, "unknown_observation", `observation ${JSON.stringify(params.based_on)} is unknown or expired; call computer_observe and plan against the new observation.`);
   }
-  const plan = toPlan(params, basedOn);
+  const previous = basedOn ? context.previousPlanRead?.(basedOn.id) : undefined;
+  const plan = { ...toPlan(params, basedOn), ...(basedOn ? { basedOn: basedOn.comparison } : {}), ...(previous ? { previous: previous.comparison } : {}) };
   const problem = validatePlan(plan, 50);
   if (problem) return rejected(context, params, problem.rule, problem.message);
   const result = await runPlan(context.deps, plan, signal);
+  if (result.last) context.recordPlanRead?.(result.last);
   if (result.outcome === "escalated") context.escalations.record();
   return { content: [{ type: "text", text: formatResult(result, plan) }],
     details: { outcome: result.outcome, decisions: result.decisions, actions: result.actions, ...(result.escalation ? { escalation: result.escalation.reason } : {}) } };

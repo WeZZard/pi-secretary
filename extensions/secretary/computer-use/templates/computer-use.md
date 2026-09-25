@@ -58,6 +58,8 @@ The result names a reason and shows the current window. Replan from that window.
 - `target_not_found` or `uncertain`: the named control is not in the window, or the executor could not
   choose it. Check the returned window, and make the step or its `control` more specific.
 - `window_unclear`: name the window with `window_title`.
+- `window_changed`: the window changed after you observed it, and nothing was done. Plan again from the
+  returned window.
 - `approval_required`: stop unless the task authorizes the step.
 - `executor_unavailable`, `backend_failed` or `budget_exhausted`: stop and report. Do not do the steps another way.
 

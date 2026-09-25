@@ -7,6 +7,7 @@ import { observe, renderPlannerTable, type ObservedElement, type Observation, ty
 import { decide, type Decision, type EscalationReason, type Prior } from "./policy.ts";
 import { buildDecisionRequest, type StepSpec } from "./request-builder.ts";
 import type { Picture, Telemetry } from "./telemetry.ts";
+import { compareWindows, type WindowComparison } from "./window-check.ts";
 import { ROLE, evaluatePostcondition, isWeakPostcondition, normalize, validatePostcondition, visibleSignature, type Postcondition } from "./verifier.ts";
 
 /** The step harness (design docs/arch/computer-use.md §9 and §10). */
@@ -36,7 +37,13 @@ export function controlMatches(observation: Observation, control: ControlRef): O
   const inRegion = control.region === undefined ? [] : found.filter(element => normalize(element.group) === normalize(control.region!));
   return inRegion.length ? inRegion : found;
 }
-export interface Plan { target: WindowTarget; goal: string; steps: PlanStep[]; allowDestructive: string[] }
+export interface Plan {
+  target: WindowTarget; goal: string; steps: PlanStep[]; allowDestructive: string[];
+  /** The `based_on` observation, which the first read must still match (design §9, start check). */
+  basedOn?: WindowComparison;
+  /** The last read of the previous plan, when it ran after `basedOn`: a change this harness made itself. */
+  previous?: WindowComparison;
+}
 
 export interface StepOutcome {
   id: string;
@@ -57,6 +64,8 @@ export interface PlanResult {
   /** Executor decisions kept out of the planner (design §12.2): requests whose answer was acted on or escalated. */
   decisions: number;
   actions: number;
+  /** The last read of the plan, which a later plan's start check may accept. */
+  last?: Observation;
 }
 
 export interface Executor { decide(body: DecisionRequestBody, signal?: AbortSignal): Promise<DecisionResponse> }
@@ -183,6 +192,13 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
 
   try {
     current = await look(plan.steps[0]!.id, "initial");
+    // Start check (design §9): the window must still be the one the plan was written against.
+    if (plan.basedOn) {
+      const verdict = compareWindows(plan.basedOn, current.observation.comparison);
+      if (verdict.stop && !(plan.previous && !compareWindows(plan.previous, current.observation.comparison).stop)) {
+        escalate(plan.steps[0]!.id, "window_changed", `the window changed since the observation the plan was based on: ${verdict.reasons.join("; ")}. No action was taken`);
+      }
+    }
     for (const [index, step] of plan.steps.entries()) {
       const outcome = outcomes[index]!;
       // Precheck (design §9, fix plan F-1): a postcondition that already holds cannot show that the
@@ -297,18 +313,18 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
     }
     await telemetry.recordPlan({ runId, outcome: "completed", steps: outcomes, decisions, actions, redact: config.redactTypedText, plan });
     await review("completed");
-    return { outcome: "completed", steps: outcomes, decisions, actions };
+    return { outcome: "completed", steps: outcomes, decisions, actions, ...(current ? { last: current.observation } : {}) };
   } catch (error) {
     if (!(error instanceof Stop)) throw error;
     if (error.cancelled) {
       await telemetry.recordPlan({ runId, outcome: "cancelled", steps: outcomes, decisions, actions, redact: config.redactTypedText, plan });
       await review("cancelled");
-      return { outcome: "cancelled", steps: outcomes, decisions, actions };
+      return { outcome: "cancelled", steps: outcomes, decisions, actions, ...(current ? { last: current.observation } : {}) };
     }
     const escalation = { ...error.escalation!, ...(plannerView() ? { observation: plannerView() } : {}) };
     await telemetry.recordPlan({ runId, outcome: "escalated", steps: outcomes, decisions, actions, escalation, redact: config.redactTypedText, plan });
     await review(`escalated at ${escalation.stepId}: ${escalation.reason}`);
-    return { outcome: "escalated", steps: outcomes, escalation, decisions, actions };
+    return { outcome: "escalated", steps: outcomes, escalation, decisions, actions, ...(current ? { last: current.observation } : {}) };
   }
 
   /** Fix plan F-4: the review page is written only when pictures were taken. */

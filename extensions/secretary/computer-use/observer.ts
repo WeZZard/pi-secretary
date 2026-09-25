@@ -1,4 +1,5 @@
 import type { Frame, RawElement, WindowRead, WindowRef } from "./backend/backend.ts";
+import { BLOCKING_ROLES, MENU_BAR_ROLES, type WindowComparison } from "./window-check.ts";
 
 /**
  * Observation pipeline (design docs/arch/computer-use.md §6): from cua-driver's structured
@@ -56,6 +57,8 @@ export interface Observation {
   texts?: string[];
   discards: Discard[];
   rawCount: number;
+  /** What the plan-start window check compares (design §9). */
+  comparison: WindowComparison;
 }
 
 export interface ObservationFailure {
@@ -202,14 +205,24 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
     frame: entry.element.frame!, group, letter: letterAt(position),
   });
 
+  const ready = (groups: ObservedGroup[]): Observation => {
+    const controls = groups.flatMap(group => group.elements).filter(element => !MENU_BAR_ROLES.test(element.role))
+      .map(element => `${element.role} ${JSON.stringify(element.name)}`).sort();
+    // The menu bar's own menus are always in the tree of an active application; only a menu outside
+    // the menu bar, such as a context menu, is open over the window (observed 2026-09-25 in the replay).
+    const blocking = read.elements.filter(element => BLOCKING_ROLES.test(element.role) && !underMenuBar(element))
+      .map(element => `${element.role} ${JSON.stringify(element.label ?? "")}`);
+    return { status: "ready", id: options.id, window: read.window, snapshotId: read.snapshotId, groups, discards, rawCount: read.elements.length, ...shownTexts(),
+      comparison: { windowId: read.window.windowId, title: read.window.title ?? "", controls, blocking } };
+  };
+
   const hiddenTotal = () => { const total = [...hiddenBy.values()].reduce((sum, count) => sum + count, 0); return total ? { hidden: total } : {}; };
   // Rule 5: a small window is one group, so the request needs no routing question.
   const ordered = [...candidates].sort((a, b) => readingOrder({ frame: a.element.frame! }, { frame: b.element.frame! }));
   if (ordered.length <= MAX_GROUP_ELEMENTS) {
     const name = "window";
-    return { status: "ready", id: options.id, window: read.window, snapshotId: read.snapshotId, discards, rawCount: read.elements.length, ...shownTexts(),
-      groups: ordered.length === 0 ? [] : [{ name, elements: ordered.map((entry, position) => toElement(entry, name, position)), ...(windowFrame ? { frame: windowFrame } : {}),
-        ...hiddenTotal() }] };
+    return ready(ordered.length === 0 ? [] : [{ name, elements: ordered.map((entry, position) => toElement(entry, name, position)), ...(windowFrame ? { frame: windowFrame } : {}),
+      ...hiddenTotal() }]);
   }
 
   // Rules 2 and 3: group by the nearest landmark container instance. Groups follow the reading
@@ -262,7 +275,7 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
   if (groups.length > MAX_ALTERNATIVES) {
     return { status: "state_too_large", ...base, detail: `the window splits into ${groups.length} groups; the executor can route among at most ${MAX_ALTERNATIVES}.` };
   }
-  return { status: "ready", id: options.id, window: read.window, snapshotId: read.snapshotId, groups, discards, rawCount: read.elements.length, ...shownTexts() };
+  return ready(groups);
 }
 
 /** The executor's view: group headings and name-only lines (design §6.2, research §4.8 format). */

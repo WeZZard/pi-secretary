@@ -6,7 +6,7 @@ import type { QuestionMap, StepSpec } from "./request-builder.ts";
 /** Decision policy (design §8): rules applied in order after each executor response. */
 
 export type EscalationReason = "needs_text" | "state_too_large" | "uncertain" | "already_satisfied" | "target_not_found" | "postcondition_failed" | "no_progress"
-  | "approval_required" | "budget_exhausted" | "executor_unavailable" | "backend_failed" | "window_unclear";
+  | "approval_required" | "budget_exhausted" | "executor_unavailable" | "backend_failed" | "window_unclear" | "window_changed";
 
 export interface Prior { region?: string; element?: string; operation?: string; confidences: Record<string, number> }
 
