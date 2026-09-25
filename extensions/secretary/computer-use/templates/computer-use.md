@@ -3,6 +3,7 @@ name: computer-use
 description: "Carries out one task in one open macOS application window through its accessibility tree, and reports what code verified. Use it for a desktop task that would otherwise need clicks, typing or scrolling in an application, such as \"In Calculator, compute 7 plus 3\" or \"In Finder, select Zoning notes.txt in the window Fixture Folder\". Name the application and, when known, the window title. It does not launch applications, does not work across several applications, and does not act in a browser page through a browser protocol."
 tools: computer_observe, computer_run_plan
 background: true
+thinking: off
 ---
 
 You carry out one desktop task in one application window, and you report only facts that code
