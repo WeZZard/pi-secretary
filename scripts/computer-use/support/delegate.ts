@@ -70,6 +70,9 @@ export async function delegate(input: DelegationInput): Promise<DelegationResult
     + "When the agent finishes, tell me its result and what it verified.";
   const args = [join(environment.repository, "node_modules/@earendil-works/pi-coding-agent/dist/cli.js"), "--no-extensions",
     ...environment.extensions.flatMap(extension => ["--extension", extension]),
+    // Pi runs on the host. Without its built-in tools, the parent cannot read or act on the host's
+    // desktop, as it did with osascript on 2026-09-26; the child's computer tools act only in the relay machine.
+    "--no-builtin-tools",
     "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--approve",
     "--session-dir", environment.sessions, "--model", model, "--mode", "rpc"];
   writeFileSync(join(environment.artifacts, "invocation.json"), JSON.stringify({ args, cwd: environment.project, prompt }, null, 2) + "\n");

@@ -3,7 +3,7 @@ import { test, type TestContext } from "node:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appsOf, classify, score, toCommands, type MacArenaTask } from "../../scripts/computer-use/support/macarena.ts";
+import { appsOf, classify, instructionFor, score, toCommands, type MacArenaTask } from "../../scripts/computer-use/support/macarena.ts";
 
 /** Evaluation plan phase E1: MacArena tasks as relay setup and checks, scored and classified (design §3, §4). */
 
@@ -21,6 +21,9 @@ test("a task becomes setup commands, with the app opened only for the ship gate,
     check: [["/bin/sleep", "5"], ["/bin/bash", "-c", "echo True"], ["/bin/bash", "-c", "echo False"]],
   });
   assert.deepEqual(toCommands(task, { openApp: "Reminders" }).prepare.slice(1, 3), [["/usr/bin/open", "-a", "Reminders"], ["/bin/sleep", "3"]]);
+  assert.equal(instructionFor(task.instruction, "Reminders"), "Create a list called Project Alpha. (The task is in Reminders, which is open.)",
+    "Pi's parent cannot see the screen, so the ship gate names the open application");
+  assert.equal(instructionFor(task.instruction), task.instruction);
 });
 
 test("a task's applications are its related apps, or the applications its scripts address", () => {

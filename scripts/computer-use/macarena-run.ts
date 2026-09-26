@@ -12,7 +12,7 @@
  */
 import { appendFileSync, mkdirSync } from "node:fs";
 import { basename, join } from "node:path";
-import { appsOf, classify, loadTask, score, toCommands } from "./support/macarena.ts";
+import { appsOf, classify, instructionFor, loadTask, score, toCommands } from "./support/macarena.ts";
 import { delegate } from "./support/delegate.ts";
 
 const flags = new Map(process.argv.slice(2).filter(arg => arg.startsWith("--")).map(arg => { const [key, value] = arg.slice(2).split("="); return [key!, value ?? "true"]; }));
@@ -31,7 +31,7 @@ for (const file of taskFiles) {
   const { prepare, check } = toCommands(task, { ...(openApp ? { openApp } : {}) });
   for (let run = 1; run <= runsPerTask; run++) {
     const started = new Date().toISOString();
-    const result = await delegate({ name: `macarena-${task.id.slice(0, 8)}`, task: task.instruction, prepare, check,
+    const result = await delegate({ name: `macarena-${task.id.slice(0, 8)}`, task: instructionFor(task.instruction, openApp), prepare, check,
       modelId: flags.get("model") ?? "qwen3.8-27b", executorUrl: flags.get("executor") ?? "http://jev.home.arpa", timeoutMs: 25 * 60_000 });
     const taskScore = score(task, result.checks);
     const cause = classify({ score: taskScore, checks: result.checks, state: join(result.artifacts, "extension-state") });

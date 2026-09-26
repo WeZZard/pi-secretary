@@ -66,6 +66,15 @@ export function toCommands(task: MacArenaTask, options: { openApp?: string }): {
 }
 
 /**
+ * The task as delegated. A MacArena agent sees the screen with the application open; Pi's parent
+ * does not, so the ship gate's variant names the open application in one added sentence. The
+ * instruction itself is unchanged.
+ */
+export function instructionFor(instruction: string, openApp?: string): string {
+  return openApp ? `${instruction} (The task is in ${openApp}, which is open.)` : instruction;
+}
+
+/**
  * MacArena's rule: evaluators are tried in order, the first that prints "true" scores 1, one that
  * prints anything else lets the next one try, and one that does not run ends grading with 0.
  * Undefined when the checks never ran.
