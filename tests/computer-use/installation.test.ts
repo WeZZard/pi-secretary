@@ -85,7 +85,7 @@ test("the start check accepts our previous plan's last read only when that plan 
   const backend = new FakeBackend({ Form: [read("Submit"), read("Submit"), read("Done"), read("Done"), read("Submit"), read("Submit"), read("Done")] });
   const h = host(t, { computerUse: { backend: "local", allowLocalDesktop: true, executorUrl: "http://jev.home.arpa", settleMs: 0 } });
   installComputerUse(h.pi, { root: h.root, agentDir: () => h.agentDir, backendFactory: () => backend,
-    executorFactory: () => ({ decide: async () => ({ roundTripMs: 1, answers: { element_1: { choice: "A", confidence: 0.99 }, operation: { choice: "press", confidence: 0.99 }, risk: { choice: "safe", confidence: 0.99 } } }) }) });
+    executorFactory: () => ({ decide: async () => ({ roundTripMs: 1, answers: { element_1: { choice: "A", confidence: 0.99 }, operation: { choice: "click", confidence: 0.99 }, risk: { choice: "safe", confidence: 0.99 } } }) }) });
   await h.emit("session_start");
   const [observeTool, runPlanTool] = h.tools;
   const observation = async () => /Observation: (\S+)/.exec((await observeTool.execute("o", { app: "Form" }, undefined, undefined, h.ctx)).content[0].text)![1]!;

@@ -7,21 +7,21 @@ import { LocalDriverBackend, pngWidth, type DriverRunner } from "../../extension
 const frame = { x: 100, y: 200, w: 40, h: 20 };
 
 test("operations become real-input actions at the frame center", () => {
-  assert.deepEqual(actionsFor({ operation: "press", frame }), [{ kind: "click", point: { x: 120, y: 210 }, button: "left", count: 1 }]);
-  assert.equal((actionsFor({ operation: "double_press", frame })[0] as { count: number }).count, 2);
-  assert.equal((actionsFor({ operation: "context_press", frame })[0] as { button: string }).button, "right");
+  assert.deepEqual(actionsFor({ operation: "click", frame }), [{ kind: "click", point: { x: 120, y: 210 }, button: "left", count: 1 }]);
+  assert.equal((actionsFor({ operation: "double_click", frame })[0] as { count: number }).count, 2);
+  assert.equal((actionsFor({ operation: "right_click", frame })[0] as { button: string }).button, "right");
   assert.deepEqual(actionsFor({ operation: "scroll_down", frame }), [{ kind: "scroll", point: { x: 120, y: 210 }, direction: "down", by: "page", extent: frame.h }]);
-  assert.deepEqual(actionsFor({ operation: "key_combo", keys: "Cmd+Shift+N" }), [{ kind: "key", key: "n", modifiers: ["cmd", "shift"] }]);
+  assert.deepEqual(actionsFor({ operation: "key", keys: "Cmd+Shift+N" }), [{ kind: "key", key: "n", modifiers: ["cmd", "shift"] }]);
 });
 
 test("text entry clicks the field and presses one key per character", () => {
-  const actions = actionsFor({ operation: "enter_text", frame, text: "Hi 2\n" });
+  const actions = actionsFor({ operation: "type", frame, text: "Hi 2\n" });
   assert.deepEqual(actions.map(action => action.kind === "key" ? `${action.modifiers.join("+")}${action.modifiers.length ? "+" : ""}${action.key}` : action.kind),
     ["click", "shift+h", "i", "space", "2", "return"]);
 });
 
 test("untypeable characters and malformed key combinations are refused before any input", () => {
-  assert.throws(() => actionsFor({ operation: "enter_text", frame, text: "a.b" }), (error: ActuatorError) => error.code === "untypeable_text");
+  assert.throws(() => actionsFor({ operation: "type", frame, text: "a.b" }), (error: ActuatorError) => error.code === "untypeable_text");
   assert.throws(() => keystrokesFor("é"), /cannot be typed/);
   for (const keys of ["cmd+", "hyper+n", "cmd+shift+plus", ""]) assert.throws(() => parseKeyCombo(keys), (error: ActuatorError) => error.code === "invalid_keys");
   assert.deepEqual(parseKeyCombo("escape"), { kind: "key", key: "escape", modifiers: [] });
@@ -61,7 +61,7 @@ test("the backend converts screen points to window-local screenshot pixels with 
 
 test("text entry places the insertion point with fixed keys after the click when a position is given", () => {
   const frame = { x: 0, y: 0, w: 100, h: 40 };
-  const kinds = (position?: "end" | "start" | "replace") => actionsFor({ operation: "enter_text", frame, text: "ab", ...(position ? { position } : {}) })
+  const kinds = (position?: "end" | "start" | "replace") => actionsFor({ operation: "type", frame, text: "ab", ...(position ? { position } : {}) })
     .map(action => action.kind === "key" ? `${action.modifiers.join("+")}${action.modifiers.length ? "+" : ""}${action.key}` : action.kind);
   assert.deepEqual(kinds("end"), ["click", "cmd+down", "a", "b"]);
   assert.deepEqual(kinds("start"), ["click", "cmd+up", "a", "b"]);

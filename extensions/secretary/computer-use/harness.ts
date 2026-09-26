@@ -1,3 +1,4 @@
+import { isScroll } from "./actions.ts";
 import { ActuatorError, actionsFor, parseKeyCombo } from "./actuator.ts";
 import { BackendError, type ExecutionBackend, type WindowRead, type WindowTarget } from "./backend/backend.ts";
 import type { ComputerUseConfiguration } from "./configuration.ts";
@@ -105,7 +106,6 @@ const DEFAULT_IDEMPOTENT_ATTEMPTS = 2;
  * fixture's target took two pages.
  */
 const DEFAULT_SCROLL_ATTEMPTS = 3;
-const isScroll = (operation: string | undefined) => operation === "scroll_up" || operation === "scroll_down";
 
 /** A rejected plan and the rule that rejected it, recorded per rule (design §12.1). */
 export interface PlanProblem { rule: string; message: string }
@@ -125,15 +125,15 @@ export function validatePlan(plan: Plan, maxSteps: number): PlanProblem | undefi
     ids.add(step.id);
     const invalid = validatePostcondition(step.postcondition);
     if (invalid) return problem("postcondition", `step ${step.id}: ${invalid}`);
-    if (step.operation === "enter_text" && step.text === undefined) return problem("needs_text", `step ${step.id}: enter_text needs text`);
-    if (step.operation === "key_combo" && step.keys === undefined) return problem("needs_keys", `step ${step.id}: key_combo needs keys`);
+    if (step.action === "type" && step.text === undefined) return problem("needs_text", `step ${step.id}: type needs text`);
+    if (step.action === "key" && step.keys === undefined) return problem("needs_keys", `step ${step.id}: key needs keys`);
     if (step.text !== undefined && step.keys !== undefined) return problem("text_and_keys", `step ${step.id}: a step has text or keys, not both; split it into two steps`);
     if (step.keys !== undefined) {
       try { parseKeyCombo(step.keys); }
       catch (error) { return problem("keys", `step ${step.id}: ${(error as Error).message}`); }
     }
     if (step.maxAttempts !== undefined && (!Number.isInteger(step.maxAttempts) || step.maxAttempts < 1 || step.maxAttempts > 5)) return problem("max_attempts", `step ${step.id}: maxAttempts must be 1 to 5`);
-    if ((step.maxAttempts ?? 1) > 1 && step.idempotent !== true && !isScroll(step.operation)) {
+    if ((step.maxAttempts ?? 1) > 1 && step.idempotent !== true && !isScroll(step.action)) {
       return problem("unsafe_repeat", `step ${step.id}: max_attempts above 1 needs idempotent: true or a scroll operation, because repeating an action that took effect could act twice`);
     }
     if (step.idempotent !== undefined && typeof step.idempotent !== "boolean") return problem("idempotent", `step ${step.id}: idempotent must be true or false`);
@@ -313,7 +313,7 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
         if (unchanged >= NO_CHANGE_LIMIT) {
           escalate(step.id, "no_progress", `${described} changed nothing on screen; it was not repeated${isScroll(decision.operation) ? ", because the view has reached its end" : ", because a repeat could act twice"}`
             // Advice moved from a removed plan rule (design §5.2).
-            + (decision.operation === "key_combo" && isNavigationKey(step.keys) ? `. ${step.keys} only moves the insertion point, which the accessibility tree does not show; set position on the enter_text step instead` : ""), decision.prior);
+            + (decision.operation === "key" && isNavigationKey(step.keys) ? `. ${step.keys} only moves the insertion point, which the accessibility tree does not show; set position on the type step instead` : ""), decision.prior);
         }
         const repeatable = step.idempotent === true || isScroll(decision.operation);
         const limit = repeatable ? step.maxAttempts ?? (isScroll(decision.operation) ? DEFAULT_SCROLL_ATTEMPTS : DEFAULT_IDEMPOTENT_ATTEMPTS) : DEFAULT_ATTEMPTS;
@@ -361,7 +361,7 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
   function escalateAfter(stepId: string, reason: EscalationReason, detail: string): never { return escalate(stepId, reason, detail); }
 }
 
-/** True when a postcondition checks text content somewhere, as an enter_text step must (fix plan F-3). */
+/** True when a postcondition checks text content somewhere, as a type step must (fix plan F-3). */
 function checksText(condition: Postcondition): boolean {
   if ("all" in condition) return condition.all.some(checksText);
   if ("any" in condition) return condition.any.every(checksText);

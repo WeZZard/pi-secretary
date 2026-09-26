@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { DEFINITIONS } from "../../extensions/secretary/computer-use/actions.ts";
 import { ExecutorClient, ExecutorError, type DecisionResponse, type Fetch } from "../../extensions/secretary/computer-use/executor-client.ts";
 import { observe, type Observation } from "../../extensions/secretary/computer-use/observer.ts";
 import { decide } from "../../extensions/secretary/computer-use/policy.ts";
@@ -9,7 +10,7 @@ import { finderRead, textEditRead } from "./fixtures/trees.ts";
 const finder = () => observe({ ...finderRead(), readMs: 0 }, { id: "o", maxElements: 240, maxNameLength: 48 }) as Observation;
 const textEdit = () => observe({ ...textEditRead(), readMs: 0 }, { id: "o", maxElements: 240, maxNameLength: 48 }) as Observation;
 const ready = (built: BuiltRequest) => { assert.equal(built.status, "ready"); return built as Extract<BuiltRequest, { status: "ready" }>; };
-const recent = Array.from({ length: 5 }, (_, i) => ({ intent: `step ${i}`, action: "press", element: `Item ${i}`, outcome: "verified" as const }));
+const recent = Array.from({ length: 5 }, (_, i) => ({ intent: `step ${i}`, action: "click", element: `Item ${i}`, outcome: "verified" as const }));
 
 test("a grouped window gets a routing question, one element question per group, operation and risk, in one stage", () => {
   const built = ready(buildDecisionRequest({ goal: "Find a file", step: { id: "s1", intent: "Search this folder" }, observation: finder(), recent }));
@@ -17,7 +18,8 @@ test("a grouped window gets a routing question, one element question per group, 
   assert.deepEqual(Object.keys(built.body.questions.region!.criteria), ["toolbar", "outline", "list"]);
   assert.equal(built.body.samples, 1);
   assert.ok(Object.values(built.body.questions).every(question => !("depends_on" in question) && !("alone" in question)));
-  assert.deepEqual(Object.keys(built.body.questions.operation!.criteria), ["press", "double_press", "context_press", "scroll_up", "scroll_down", "reobserve", "abstain"]);
+  assert.deepEqual(Object.keys(built.body.questions.operation!.criteria), ["click", "double_click", "right_click", "scroll_up", "scroll_down", "reobserve", "abstain"]);
+  assert.equal(built.body.questions.operation!.criteria.double_click, DEFINITIONS.double_click, "the executor reads the planner's definition");
   assert.match(String((built.body.state as { elements: string }).elements), /^TOOLBAR\n {2}A Button "Back"\n/);
   assert.equal(built.historyUsed, 5);
 });
@@ -32,13 +34,13 @@ test("no question exceeds the executor's 26 alternatives, even with none added t
 test("a small window has no routing question, and the step's literal or operation decides the only operation offered", () => {
   const built = ready(buildDecisionRequest({ goal: "g", step: { id: "s", intent: "Type the greeting", text: "Hello" }, observation: textEdit(), recent: [] }));
   assert.equal(built.questions.region, undefined);
-  assert.deepEqual(built.offered, ["enter_text"]);
+  assert.deepEqual(built.offered, ["type"]);
   const offered = (step: Omit<StepSpec, "id" | "intent">) => ready(buildDecisionRequest({ goal: "g", step: { id: "s", intent: "i", ...step }, observation: textEdit(), recent: [] })).offered;
-  assert.deepEqual(offered({ keys: "delete" }), ["key_combo"], "A step with keys can no longer be answered with a click");
+  assert.deepEqual(offered({ keys: "delete" }), ["key"], "A step with keys can no longer be answered with a click");
   assert.equal(built.body.questions.operation, undefined, "A fixed operation is not asked, so the executor cannot abstain on it");
-  assert.equal(built.questions.fixedOperation, "enter_text");
-  assert.deepEqual(offered({ operation: "press" }), ["press"]);
-  assert.ok(offered({}).includes("press") && !offered({}).includes("enter_text") && !offered({}).includes("key_combo"));
+  assert.equal(built.questions.fixedOperation, "type");
+  assert.deepEqual(offered({ action: "click" }), ["click"]);
+  assert.ok(offered({}).includes("click") && !offered({}).includes("type") && !offered({}).includes("key"));
   assert.deepEqual(Object.keys(built.body.questions.element_1!.criteria), ["A", "none"], "Every element question offers none");
 });
 
@@ -59,20 +61,20 @@ function response(answers: Record<string, [string, number]>): DecisionResponse {
 
 test("a step that fixes its operation acts without an operation answer, and the confidence gate skips the unasked question", () => {
   const observation = finder();
-  const step = { id: "s", intent: "Search this folder", operation: "press" as const };
+  const step = { id: "s", intent: "Search this folder", action: "click" as const };
   const built = ready(buildDecisionRequest({ goal: "g", step, observation, recent: [] }));
   assert.equal(built.body.questions.operation, undefined);
   const decision = decide({ observation, step, questions: built.questions, allowDestructive: false, confidenceGate: 0.4,
     response: response({ region: ["toolbar", 0.9], element_1: ["F", 0.8], risk: ["safe", 0.9] }) });
   assert.equal(decision.kind, "act");
-  assert.equal((decision as { operation: string }).operation, "press");
+  assert.equal((decision as { operation: string }).operation, "click");
 });
 
 test("the policy routes on the region answer and never uses a confident answer from an unchosen group", () => {
   const observation = finder();
   const built = ready(buildDecisionRequest({ goal: "g", step: { id: "s", intent: "Search this folder" }, observation, recent: [] }));
   const decision = decide({ observation, step: { id: "s", intent: "Search" }, questions: built.questions, allowDestructive: false, confidenceGate: 0.4,
-    response: response({ region: ["toolbar", 0.9], element_1: ["F", 0.8], element_2: ["A", 0.99], element_3: ["B", 0.99], operation: ["press", 0.9], risk: ["safe", 0.9] }) });
+    response: response({ region: ["toolbar", 0.9], element_1: ["F", 0.8], element_2: ["A", 0.99], element_3: ["B", 0.99], operation: ["click", 0.9], risk: ["safe", 0.9] }) });
   assert.equal(decision.kind, "act");
   assert.equal((decision as { element: { name: string } }).element.name, "Search");
 });
@@ -83,15 +85,15 @@ test("each policy rule produces its outcome", () => {
   const { questions } = ready(buildDecisionRequest({ goal: "g", step, observation, recent: [] }));
   const run = (answers: Record<string, [string, number]>, extra: Partial<Parameters<typeof decide>[0]> = {}) =>
     decide({ observation, step, questions, allowDestructive: false, confidenceGate: 0.4, response: response(answers), ...extra });
-  const base = { region: ["toolbar", 0.9], element_1: ["A", 0.9], operation: ["press", 0.9], risk: ["safe", 0.9] } as Record<string, [string, number]>;
+  const base = { region: ["toolbar", 0.9], element_1: ["A", 0.9], operation: ["click", 0.9], risk: ["safe", 0.9] } as Record<string, [string, number]>;
   assert.equal(run({ ...base, operation: ["reobserve", 0.9] }).kind, "reobserve");
   assert.equal((run({ ...base, operation: ["abstain", 0.9] }) as { reason: string }).reason, "target_not_found");
   assert.equal((run({ ...base, risk: ["destructive", 0.6] }) as { reason: string }).reason, "approval_required");
   assert.equal(run({ ...base, risk: ["destructive", 0.6] }, { allowDestructive: true }).kind, "act");
   const low = run({ ...base, element_1: ["A", 0.3] });
   assert.deepEqual([low.kind, (low as { reason: string }).reason, low.prior.element], ["escalate", "uncertain", "Back"], "A low-confidence answer is returned as a prior");
-  const text = decide({ observation, step: { id: "s", intent: "i", text: "x" }, questions, allowDestructive: false, confidenceGate: 0.4, response: response({ ...base, operation: ["enter_text", 0.9] }) });
-  assert.match((text as { detail: string }).detail, /enter_text does not fit Button "Back"/);
+  const text = decide({ observation, step: { id: "s", intent: "i", text: "x" }, questions, allowDestructive: false, confidenceGate: 0.4, response: response({ ...base, operation: ["type", 0.9] }) });
+  assert.match((text as { detail: string }).detail, /type does not fit Button "Back"/);
   const scroll = run({ ...base, region: ["list", 0.9], operation: ["scroll_down", 0.9], element_3: ["A", 0.1] });
   assert.equal(scroll.kind, "act", "A scroll ignores the element answer, including its confidence");
   assert.deepEqual((scroll as { request: unknown }).request, { operation: "scroll_down", frame: { x: 200, y: 80, w: 1000, h: 1500 } });

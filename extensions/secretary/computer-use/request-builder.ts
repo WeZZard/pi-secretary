@@ -1,3 +1,4 @@
+import { DEFINITIONS } from "./actions.ts";
 import type { Operation } from "./actuator.ts";
 import type { ChoiceQuestion, DecisionRequestBody } from "./executor-client.ts";
 import { formatRecord, type ActionRecord } from "./history.ts";
@@ -10,7 +11,7 @@ import type { Observation } from "./observer.ts";
 
 /** `position` places the insertion point before text entry with fixed keys (fix plan F-3). */
 export type TextPosition = "end" | "start" | "replace";
-export interface StepSpec { id: string; intent: string; operation?: Operation; text?: string; keys?: string; position?: TextPosition }
+export interface StepSpec { id: string; intent: string; action?: Operation; text?: string; keys?: string; position?: TextPosition }
 
 export interface QuestionMap {
   region?: string;
@@ -38,15 +39,6 @@ export const EXECUTOR_MODEL_LENGTH = 4096;
  */
 export const ANSWER_RESERVE_TOKENS = 128;
 
-const OPERATION_TEXT: Record<Operation, string> = {
-  press: "Click the chosen element once.",
-  double_press: "Double-click the chosen element.",
-  context_press: "Right-click the chosen element to open its context menu.",
-  enter_text: "Click the chosen text field and type the step's text.",
-  key_combo: "Press the step's key combination; no element is needed.",
-  scroll_up: "Scroll the chosen region up by one page.",
-  scroll_down: "Scroll the chosen region down by one page, to reveal controls below the visible part.",
-};
 const hiddenNote = (group: { hidden?: number }) => group.hidden ? `; ${group.hidden} more items are hidden beyond the visible area and need scrolling` : "";
 const REOBSERVE = "The window is still changing or loading, so look again before acting.";
 const ABSTAIN = "No listed control can carry out the step.";
@@ -58,18 +50,18 @@ const ABSTAIN = "No listed control can carry out the step.";
 export const estimateTokens = (body: DecisionRequestBody): number => Math.ceil(JSON.stringify(body).length / 3);
 
 /**
- * The planner decides the operation whenever the step says it: `keys` means key_combo, `text` means
- * enter_text, and a named operation is the only one offered. The executor then chooses only the
- * element and the risk. Through Pi, a step with keys was answered with press, which clicked the
+ * The planner decides the operation whenever the step says it: `keys` means key, `text` means
+ * type, and a named action is the only one offered. The executor then chooses only the
+ * element and the risk. Through Pi, a step with keys was answered with a click, which clicked the
  * text area instead of pressing the key (observed 2026-09-23).
  */
 export function offeredOperations(step: StepSpec, observation: Observation): Operation[] {
   const hasElements = observation.groups.some(group => group.elements.length > 0);
   const scrollable = observation.groups.some(group => group.frame);
-  if (step.keys !== undefined) return ["key_combo"];
-  if (step.text !== undefined) return hasElements ? ["enter_text"] : [];
-  const available: Operation[] = [...(hasElements ? ["press", "double_press", "context_press"] as const : []), ...(scrollable ? ["scroll_up", "scroll_down"] as const : [])];
-  return step.operation ? available.filter(operation => operation === step.operation) : available;
+  if (step.keys !== undefined) return ["key"];
+  if (step.text !== undefined) return hasElements ? ["type"] : [];
+  const available: Operation[] = [...(hasElements ? ["click", "double_click", "right_click"] as const : []), ...(scrollable ? ["scroll_up", "scroll_down"] as const : [])];
+  return step.action ? available.filter(operation => operation === step.action) : available;
 }
 
 /**
@@ -133,9 +125,9 @@ export function buildDecisionRequest(input: {
   const multi = observation.groups.length > 1;
   const questions: Record<string, ChoiceQuestion> = {};
   // When the step fixes the operation there is nothing to ask: through Pi, the executor answered
-  // abstain to a one-option operation question for a clear enter_text step (observed 2026-09-23).
+  // abstain to a one-option operation question for a clear text-entry step (observed 2026-09-23).
   // A missing target is still reported through each element question's "none".
-  const fixed = offered.length === 1 && (step.keys !== undefined || step.text !== undefined || step.operation !== undefined) ? offered[0] : undefined;
+  const fixed = offered.length === 1 && (step.keys !== undefined || step.text !== undefined || step.action !== undefined) ? offered[0] : undefined;
   const map: QuestionMap = { elements: [], risk: "risk", ...(fixed ? { fixedOperation: fixed } : { operation: "operation" }) };
 
   if (multi) {
@@ -158,8 +150,8 @@ export function buildDecisionRequest(input: {
   for (const id of map.elements) {
     if (input.noneOption !== false || Object.keys(questions[id]!.criteria).length < 2) questions[id]!.criteria["none"] = "None of these controls carries out the step.";
   }
-  if (!fixed) questions.operation = { type: "choice", instructions: `Which action carries out the current step?${step.operation ? ` The planner expects ${step.operation}.` : ""}`,
-    criteria: { ...Object.fromEntries(offered.map(operation => [operation, OPERATION_TEXT[operation]])), reobserve: REOBSERVE, abstain: ABSTAIN } };
+  if (!fixed) questions.operation = { type: "choice", instructions: `Which action carries out the current step?${step.action ? ` The planner expects ${step.action}.` : ""}`,
+    criteria: { ...Object.fromEntries(offered.map(operation => [operation, DEFINITIONS[operation]])), reobserve: REOBSERVE, abstain: ABSTAIN } };
   questions.risk = { type: "choice", instructions: "How risky is carrying out the current step?", criteria: {
     safe: "It only reads, selects, navigates or types, and changes nothing lasting.",
     reversible: "It changes something that can be undone, such as editing text or moving an item.",

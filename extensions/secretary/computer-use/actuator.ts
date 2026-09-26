@@ -1,15 +1,16 @@
+import type { Action } from "./actions.ts";
 import type { BackendAction, Frame } from "./backend/backend.ts";
 
 /**
- * Operations (design docs/arch/computer-use.md §7.2) expanded into real-input backend actions.
+ * Allowlist actions (design docs/arch/computer-use.md §7.2) expanded into real-input backend actions.
  * Targets are frames from the latest snapshot; an element index is never sent to the driver.
  */
-export type Operation = "press" | "double_press" | "context_press" | "enter_text" | "key_combo" | "scroll_up" | "scroll_down";
+export type Operation = Action;
 
 export type ActuatorRequest =
-  | { operation: "press" | "double_press" | "context_press" | "scroll_up" | "scroll_down"; frame: Frame }
-  | { operation: "enter_text"; frame: Frame; text: string; position?: "end" | "start" | "replace" }
-  | { operation: "key_combo"; keys: string };
+  | { operation: "click" | "double_click" | "right_click" | "scroll_up" | "scroll_down"; frame: Frame }
+  | { operation: "type"; frame: Frame; text: string; position?: "end" | "start" | "replace" }
+  | { operation: "key"; keys: string };
 
 export class ActuatorError extends Error {
   readonly code: "untypeable_text" | "invalid_keys";
@@ -54,14 +55,14 @@ export function parseKeyCombo(keys: string): BackendAction {
 
 export function actionsFor(request: ActuatorRequest): BackendAction[] {
   switch (request.operation) {
-    case "press": return [{ kind: "click", point: center(request.frame), button: "left", count: 1 }];
-    case "double_press": return [{ kind: "click", point: center(request.frame), button: "left", count: 2 }];
-    case "context_press": return [{ kind: "click", point: center(request.frame), button: "right", count: 1 }];
+    case "click": return [{ kind: "click", point: center(request.frame), button: "left", count: 1 }];
+    case "double_click": return [{ kind: "click", point: center(request.frame), button: "left", count: 2 }];
+    case "right_click": return [{ kind: "click", point: center(request.frame), button: "right", count: 1 }];
     case "scroll_up": case "scroll_down":
       return [{ kind: "scroll", point: center(request.frame), direction: request.operation === "scroll_up" ? "up" : "down", by: "page",
         extent: request.frame.h }];
-    case "key_combo": return [parseKeyCombo(request.keys)];
-    case "enter_text": {
+    case "key": return [parseKeyCombo(request.keys)];
+    case "type": {
       // Validate the whole literal before any input, so a refused character never leaves partial text.
       const keys = keystrokesFor(request.text);
       // Fix plan F-3: a click cannot be relied on to place the insertion point, and its effect is

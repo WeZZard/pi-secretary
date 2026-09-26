@@ -22,11 +22,11 @@ function calculator(controls: string[]): Omit<WindowRead, "readMs"> {
   return { window: { pid: 3, windowId: 9, app: "Calculator", title: "Calculator" }, appActive: true, truncated: false, elements };
 }
 
-/** Answers every element question with the control named "All Clear", and chooses press. */
+/** Answers every element question with the control named "All Clear", and chooses click. */
 const executor = { decide: async (body: DecisionRequestBody): Promise<DecisionResponse> => {
   const table = String((body.state as { elements: string }).elements);
   const letter = table.split("\n").find(line => line.includes("All Clear"))?.trim()[0] ?? "none";
-  const answers: DecisionResponse["answers"] = { operation: { choice: "press", confidence: 0.9 }, risk: { choice: "safe", confidence: 0.9 } };
+  const answers: DecisionResponse["answers"] = { operation: { choice: "click", confidence: 0.9 }, risk: { choice: "safe", confidence: 0.9 } };
   for (const id of Object.keys(body.questions)) if (id.startsWith("element")) answers[id] = { choice: letter, confidence: 0.9 };
   return { roundTripMs: 1, answers };
 } };

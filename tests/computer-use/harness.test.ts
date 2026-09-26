@@ -48,12 +48,12 @@ const form = window([{ name: "Submit" }, { name: "Cancel" }]);
 
 test("a plan completes: one request per step, a real click at the element center, and a verified postcondition", async (t) => {
   const { backend, deps } = setup(t, [form, submitted]);
-  const exec = executor(() => ({ element: "Submit", operation: "press" }));
+  const exec = executor(() => ({ element: "Submit", operation: "click" }));
   const result = await runPlan(deps(exec), plan([{ id: "submit", intent: "Submit the form", postcondition: { exists: { name: "Done" } } }]));
   assert.equal(result.outcome, "completed");
-  assert.deepEqual(result.steps, [{ id: "submit", result: "verified", action: "press", element: "Submit", detail: "\"Done\" is on screen" }]);
+  assert.deepEqual(result.steps, [{ id: "submit", result: "verified", action: "click", element: "Submit", detail: "\"Done\" is on screen" }]);
   assert.deepEqual([result.decisions, result.actions], [1, 1]);
-  assert.deepEqual(backend.actions.map(entry => entry.action), [{ kind: "click", point: { x: 140, y: 60 }, button: "left", count: 1, label: 'run-1 submit: press "Submit"' }]);
+  assert.deepEqual(backend.actions.map(entry => entry.action), [{ kind: "click", point: { x: 140, y: 60 }, button: "left", count: 1, label: 'run-1 submit: click "Submit"' }]);
   assert.ok(!("depends_on" in exec.bodies[0]!.questions.operation!));
 });
 
@@ -63,7 +63,7 @@ test("each step records the relay steps of its reads and action and the driver's
   const labels: (string | undefined)[] = [];
   const read = backend.readWindow.bind(backend);
   backend.readWindow = (target, options) => { labels.push(options.label); return read(target, options); };
-  const result = await runPlan(deps(executor(() => ({ element: "Submit", operation: "press" }))),
+  const result = await runPlan(deps(executor(() => ({ element: "Submit", operation: "click" }))),
     plan([{ id: "submit", intent: "Submit the form", postcondition: { exists: { name: "Done" } } }]));
   assert.equal(result.outcome, "completed");
   assert.deepEqual([result.steps[0]!.evidence, result.steps[0]!.inputPaths], [["cu-0001", "cu-0002", "cu-0003"], ["cgevent_hid"]],
@@ -73,10 +73,10 @@ test("each step records the relay steps of its reads and action and the driver's
 
 test("the first read refuses to guess among several windows, and every later read uses the same window", async (t) => {
   const { backend, deps } = setup(t, [form, submitted]);
-  await runPlan(deps(executor(() => ({ element: "Submit", operation: "press" }))), plan([{ id: "submit", intent: "Submit the form", postcondition: { exists: { name: "Done" } } }]));
+  await runPlan(deps(executor(() => ({ element: "Submit", operation: "click" }))), plan([{ id: "submit", intent: "Submit the form", postcondition: { exists: { name: "Done" } } }]));
   assert.deepEqual(backend.reads, [{ app: "Form", single: true }, { app: "Form", windowId: form.window.windowId }]);
   const lost = setup(t, [new BackendError("window_ambiguous", "2 Form windows match")]);
-  const result = await runPlan(lost.deps(executor(() => ({ element: "Submit", operation: "press" }))), plan([{ id: "submit", intent: "Submit", postcondition: { exists: { name: "Done" } } }]));
+  const result = await runPlan(lost.deps(executor(() => ({ element: "Submit", operation: "click" }))), plan([{ id: "submit", intent: "Submit", postcondition: { exists: { name: "Done" } } }]));
   assert.equal(result.escalation?.reason, "window_unclear");
   assert.equal(lost.backend.actions.length, 0);
 });
@@ -100,11 +100,11 @@ test("an idempotent step whose postcondition already holds is skipped without an
 test("an action that took effect but missed its postcondition is not repeated, unless the step is idempotent", async (t) => {
   const reads = () => [form, window([{ name: "Submit" }, { name: "Cancel" }, { name: "Error" }]), window([{ name: "Submit" }, { name: "Cancel" }, { name: "Error 2" }])];
   const once = setup(t, reads());
-  const single = await runPlan(once.deps(executor(() => ({ element: "Submit", operation: "press" }))), plan([{ id: "s", intent: "Submit", postcondition: { exists: { name: "Done" } } }]));
+  const single = await runPlan(once.deps(executor(() => ({ element: "Submit", operation: "click" }))), plan([{ id: "s", intent: "Submit", postcondition: { exists: { name: "Done" } } }]));
   assert.deepEqual([single.escalation!.reason, single.actions], ["postcondition_failed", 1]);
   assert.match(single.escalation!.detail, /changed the screen, so it was not repeated/);
   const { deps } = setup(t, reads());
-  const result = await runPlan(deps(executor(() => ({ element: "Submit", operation: "press" }))), plan([{ id: "s", intent: "Submit", idempotent: true, postcondition: { exists: { name: "Done" } } }]));
+  const result = await runPlan(deps(executor(() => ({ element: "Submit", operation: "click" }))), plan([{ id: "s", intent: "Submit", idempotent: true, postcondition: { exists: { name: "Done" } } }]));
   assert.equal(result.outcome, "escalated");
   assert.deepEqual([result.escalation!.reason, result.actions], ["postcondition_failed", 2]);
   assert.match(result.escalation!.observation!, /A Button "Submit"/, "An escalation carries a fresh observation for replanning");
@@ -112,7 +112,7 @@ test("an action that took effect but missed its postcondition is not repeated, u
 
 test("a scroll only moves the view, so it repeats up to 3 times by default and stops when the view stops moving", async (t) => {
   const pages = () => [form, window([{ name: "Page 2" }]), window([{ name: "Page 3" }]), window([{ name: "Page 4" }]), window([{ name: "Page 5" }])];
-  const scroll = { id: "s", intent: "Scroll to Zoning", operation: "scroll_down" as const, postcondition: { exists: { name: "Zoning" } } };
+  const scroll = { id: "s", intent: "Scroll to Zoning", action: "scroll_down" as const, postcondition: { exists: { name: "Zoning" } } };
   const { deps } = setup(t, pages());
   const result = await runPlan(deps(executor(() => ({ operation: "scroll_down" }))), plan([scroll]));
   assert.deepEqual([result.escalation!.reason, result.actions], ["postcondition_failed", 3]);
@@ -126,7 +126,7 @@ test("a scroll only moves the view, so it repeats up to 3 times by default and s
 test("an action that changes nothing on screen is not repeated and escalates no_progress", async (t) => {
   // Observed through Pi on 2026-09-23: invisible clicks and keys were each sent twice.
   const { backend, deps } = setup(t, [form]);
-  const result = await runPlan(deps(executor(() => ({ element: "Submit", operation: "press" }))),
+  const result = await runPlan(deps(executor(() => ({ element: "Submit", operation: "click" }))),
     plan([{ id: "s", intent: "Submit", maxAttempts: 5, idempotent: true, postcondition: { exists: { name: "Done" } } }]));
   assert.deepEqual([result.escalation!.reason, result.actions, backend.actions.length], ["no_progress", 1, 1]);
   assert.match(result.escalation!.detail, /changed nothing on screen; it was not repeated/);
@@ -137,11 +137,11 @@ test("policy escalations stop the plan with their reason and prior", async (t) =
   const notFound = await runPlan(abstain.deps(executor(() => ({ operation: "abstain" }))), plan([{ id: "s", intent: "Open settings", postcondition: { exists: { name: "Settings" } } }]));
   assert.equal(notFound.escalation!.reason, "target_not_found");
   const risky = setup(t, [form]);
-  const approval = await runPlan(risky.deps(executor(() => ({ element: "Submit", operation: "press", risk: "destructive" }))),
+  const approval = await runPlan(risky.deps(executor(() => ({ element: "Submit", operation: "click", risk: "destructive" }))),
     plan([{ id: "s", intent: "Submit", postcondition: { exists: { name: "Done" } } }]));
   assert.deepEqual([approval.escalation!.reason, approval.escalation!.prior?.element, risky.backend.actions.length], ["approval_required", "Submit", 0]);
   const allowed = setup(t, [form, submitted]);
-  const done = await runPlan(allowed.deps(executor(() => ({ element: "Submit", operation: "press", risk: "destructive" }))),
+  const done = await runPlan(allowed.deps(executor(() => ({ element: "Submit", operation: "click", risk: "destructive" }))),
     plan([{ id: "s", intent: "Submit", postcondition: { exists: { name: "Done" } } }], ["s"]));
   assert.equal(done.outcome, "completed", "allowDestructive authorizes the named step");
 });
@@ -158,13 +158,13 @@ test("executor failure, untypeable text and backend failure escalate without rep
   assert.deepEqual([oversize.escalation!.reason, oversize.decisions], ["state_too_large", 0], "Without history, the executor's length rejection is final");
 
   const text = setup(t, [window([{ role: "AXTextField", name: "Email" }])]);
-  const needsText = await runPlan(text.deps(executor(() => ({ element: "Email", operation: "enter_text" }))),
+  const needsText = await runPlan(text.deps(executor(() => ({ element: "Email", operation: "type" }))),
     plan([{ id: "s", intent: "Enter the email", text: "a@b.c", postcondition: { value: { name: "Email", equals: "a@b.c" } } }]));
   assert.deepEqual([needsText.escalation!.reason, text.backend.actions.length], ["needs_text", 0], "A refused literal sends no partial input");
 
   const broken = setup(t, [form, submitted]);
   broken.backend.actionFailures.push(new BackendError("driver_failed", "cua-driver click failed"));
-  const failed = await runPlan(broken.deps(executor(() => ({ element: "Submit", operation: "press" }))), plan([{ id: "s", intent: "Submit", postcondition: { exists: { name: "Done" } } }]));
+  const failed = await runPlan(broken.deps(executor(() => ({ element: "Submit", operation: "click" }))), plan([{ id: "s", intent: "Submit", postcondition: { exists: { name: "Done" } } }]));
   assert.deepEqual([failed.escalation!.reason, failed.actions, broken.backend.actions.length], ["backend_failed", 0, 0]);
 });
 
@@ -172,7 +172,7 @@ test("a request the executor finds too long is built again from the next trim st
   const next = window([{ name: "Next" }]);
   const { deps } = setup(t, [form, next, window([{ name: "Finished" }])]);
   const exec = executor((body, call) => call === 2 ? new ExecutorError("too_large", "the request does not fit the executor's model length")
-    : { element: call === 1 ? "Submit" : "Next", operation: "press" });
+    : { element: call === 1 ? "Submit" : "Next", operation: "click" });
   const result = await runPlan(deps(exec), plan([
     { id: "a", intent: "Submit", postcondition: { exists: { name: "Next" } } },
     { id: "b", intent: "Continue", postcondition: { exists: { name: "Finished" } } }]));
@@ -185,14 +185,14 @@ test("a request the executor finds too long is built again from the next trim st
 test("cancellation stops before the next request or action", async (t) => {
   const { backend, deps } = setup(t, [form, submitted]);
   const controller = new AbortController();
-  const result = await runPlan(deps(executor(() => { controller.abort(); return { element: "Submit", operation: "press" }; })),
+  const result = await runPlan(deps(executor(() => { controller.abort(); return { element: "Submit", operation: "click" }; })),
     plan([{ id: "s", intent: "Submit", postcondition: { exists: { name: "Done" } } }]), controller.signal);
   assert.deepEqual([result.outcome, backend.actions.length], ["cancelled", 0]);
 });
 
 test("the action budget ends a plan with budget_exhausted", async (t) => {
   const { deps } = setup(t, [form, window([{ name: "Next" }]), window([{ name: "Next" }])], { maxActionsPerPlan: 1 });
-  const result = await runPlan(deps(executor((_body, call) => ({ element: call === 1 ? "Submit" : "Next", operation: "press" }))), plan([
+  const result = await runPlan(deps(executor((_body, call) => ({ element: call === 1 ? "Submit" : "Next", operation: "click" }))), plan([
     { id: "a", intent: "Submit", postcondition: { exists: { name: "Next" } } },
     { id: "b", intent: "Continue", postcondition: { exists: { name: "Finished" } } }]));
   assert.deepEqual([result.escalation!.reason, result.escalation!.stepId, result.steps[0]!.result], ["budget_exhausted", "b", "verified"]);
@@ -200,10 +200,10 @@ test("the action budget ends a plan with budget_exhausted", async (t) => {
 
 test("a key combination needs no element, and the plan record redacts typed text", async (t) => {
   const { backend, root, deps } = setup(t, [form, submitted]);
-  const result = await runPlan(deps(executor(() => ({ operation: "key_combo" }))),
+  const result = await runPlan(deps(executor(() => ({ operation: "key" }))),
     plan([{ id: "s", intent: "Submit with the keyboard", keys: "cmd+return", text: "secret words", postcondition: { exists: { name: "Done" } } }]));
   assert.equal(result.outcome, "completed");
-  assert.deepEqual(backend.actions[0]!.action, { kind: "key", key: "return", modifiers: ["cmd"], label: "run-1 s: key_combo" });
+  assert.deepEqual(backend.actions[0]!.action, { kind: "key", key: "return", modifiers: ["cmd"], label: "run-1 s: key" });
   const record = JSON.parse(readFileSync(join(root, "runs", "run-1", "plan.json"), "utf8"));
   assert.equal(record.plan.steps[0].text, "<12 characters>");
   assert.ok(readdirSync(join(root, "runs", "run-1")).some(file => file.startsWith("step-s-1-")));
@@ -218,8 +218,8 @@ test("a plan that cannot run is rejected before any observation or action, and t
   assert.equal(rule(plan([step, { ...step, id: "b" }]), 1), "too_many_steps");
   assert.equal(rule(plan([step, step])), "repeated_step_id");
   assert.equal(rule(plan([{ ...step, postcondition: { focused: { name: "x" } } as never }])), "postcondition");
-  assert.equal(rule(plan([{ ...step, operation: "enter_text" }])), "needs_text");
-  assert.equal(rule(plan([{ ...step, operation: "key_combo" }])), "needs_keys");
+  assert.equal(rule(plan([{ ...step, action: "type" }])), "needs_text");
+  assert.equal(rule(plan([{ ...step, action: "key" }])), "needs_keys");
   assert.equal(rule(plan([{ id: "b", intent: "Both", text: "a", keys: "cmd+a", postcondition: { text: { contains: "a" } } }])), "text_and_keys");
   assert.match(validatePlan(plan([{ id: "k", intent: "Erase", keys: "Hyper+x", postcondition: { changed: true } }]), 50)?.message ?? "", /step k: "Hyper\+x" is not a key combination/);
   assert.equal(rule(plan([step], ["b"])), "unknown_destructive_step");
@@ -229,15 +229,15 @@ test("a plan that cannot run is rejected before any observation or action, and t
 test("no plan is rejected on a guess about what it meant or what the window will show (decision PS-D3)", () => {
   // Each of these was rejected before 2026-09-26 although it can run.
   assert.equal(validatePlan(plan([{ id: "p7", intent: "Press 7", postcondition: { text: { endsWith: "7" } } }]), 50), undefined, "a digit the display will show, also a button name");
-  assert.equal(validatePlan(plan([{ id: "t", intent: "Type", operation: "enter_text", text: "Hello", postcondition: { changed: true } }]), 50), undefined, "typed text with a weak check");
-  assert.equal(validatePlan(plan([{ id: "k", intent: "End", operation: "key_combo", keys: "cmd+Down", postcondition: { changed: true } }]), 50), undefined, "a navigation key with a weak check");
+  assert.equal(validatePlan(plan([{ id: "t", intent: "Type", action: "type", text: "Hello", postcondition: { changed: true } }]), 50), undefined, "typed text with a weak check");
+  assert.equal(validatePlan(plan([{ id: "k", intent: "End", action: "key", keys: "cmd+Down", postcondition: { changed: true } }]), 50), undefined, "a navigation key with a weak check");
 });
 
 test("a text check for a digit that is also a button name verifies Calculator's display", async (t) => {
   // Through Pi on 2026-09-25, "the display shows 7" was rejected three times because a button is named 7.
   const calculator = (display: string) => { const read = window([{ name: "7" }, { name: "Add" }]); read.descendantText = { 0: `\u200e${display}` }; return read; };
   const { deps } = setup(t, [calculator("0"), calculator("7")]);
-  const result = await runPlan(deps(executor(() => ({ element: "7", operation: "press" }))),
+  const result = await runPlan(deps(executor(() => ({ element: "7", operation: "click" }))),
     plan([{ id: "press7", intent: "Press 7", postcondition: { text: { endsWith: "7" } } }]));
   assert.equal(result.outcome, "completed");
   assert.equal(result.steps[0]!.result, "verified");
@@ -246,21 +246,21 @@ test("a text check for a digit that is also a button name verifies Calculator's 
 test("advice from the removed plan rules arrives after the step runs", async (t) => {
   const field = (value: string) => window([{ role: "AXTextField", name: "Name", value }]);
   const typed = setup(t, [field(""), field("Hello")]);
-  const result = await runPlan(typed.deps(executor(() => ({ element: "Name", operation: "enter_text" }))),
-    plan([{ id: "t", intent: "Type the name", operation: "enter_text", text: "Hello", postcondition: { changed: true } }]));
+  const result = await runPlan(typed.deps(executor(() => ({ element: "Name", operation: "type" }))),
+    plan([{ id: "t", intent: "Type the name", action: "type", text: "Hello", postcondition: { changed: true } }]));
   assert.equal(result.steps[0]!.result, "weakly_verified");
   assert.match(result.steps[0]!.detail ?? "", /typed text itself was not checked, which only a \{text\} or \{value\} postcondition does/);
   const moved = setup(t, [form, form]);
-  const stopped = await runPlan(moved.deps(executor(() => ({ operation: "key_combo" }))),
-    plan([{ id: "k", intent: "Go to the end", operation: "key_combo", keys: "cmd+down", postcondition: { changed: true } }]));
+  const stopped = await runPlan(moved.deps(executor(() => ({ operation: "key" }))),
+    plan([{ id: "k", intent: "Go to the end", action: "key", keys: "cmd+down", postcondition: { changed: true } }]));
   assert.equal(stopped.escalation!.reason, "no_progress");
-  assert.match(stopped.escalation!.detail, /cmd\+down only moves the insertion point.*set position on the enter_text step/);
+  assert.match(stopped.escalation!.detail, /cmd\+down only moves the insertion point.*set position on the type step/);
 });
 
 test("with step pictures on, each action gets a hashed picture before and after, and a review page lists them", async (t) => {
   const picture = (text: string) => ({ data: Buffer.from(text).toString("base64"), mimeType: "image/png" });
   const { root, deps } = setup(t, [{ ...form, screenshot: picture("before") }, { ...submitted, screenshot: picture("after") }], { stepPictures: true });
-  const result = await runPlan(deps(executor(() => ({ element: "Submit", operation: "press" }))),
+  const result = await runPlan(deps(executor(() => ({ element: "Submit", operation: "click" }))),
     plan([{ id: "submit", intent: "Submit the form", postcondition: { exists: { name: "Done" } } }]));
   const pictures = result.steps[0]!.pictures!;
   assert.equal(pictures.length, 1);
@@ -275,7 +275,7 @@ test("with step pictures on, each action gets a hashed picture before and after,
 
 test("with step pictures off, no picture or review page is written", async (t) => {
   const { root, deps } = setup(t, [form, submitted]);
-  const result = await runPlan(deps(executor(() => ({ element: "Submit", operation: "press" }))),
+  const result = await runPlan(deps(executor(() => ({ element: "Submit", operation: "click" }))),
     plan([{ id: "submit", intent: "Submit the form", postcondition: { exists: { name: "Done" } } }]));
   assert.equal(result.steps[0]!.pictures, undefined);
   assert.ok(!readdirSync(join(root, "runs", "run-1")).includes("review.md"));
@@ -284,18 +284,18 @@ test("with step pictures off, no picture or review page is written", async (t) =
 test("a step that names its control acts only when the control is in the window and the executor chose it (decision PS-D4)", async (t) => {
   const submit = { id: "submit", intent: "Submit the form", control: { region: "window", role: "Button", name: "Submit" }, postcondition: { exists: { name: "Done" } } };
   const agreed = setup(t, [form, submitted]);
-  const done = await runPlan(agreed.deps(executor(() => ({ element: "Submit", operation: "press" }))), plan([submit]));
+  const done = await runPlan(agreed.deps(executor(() => ({ element: "Submit", operation: "click" }))), plan([submit]));
   assert.equal(done.outcome, "completed");
 
   const missing = setup(t, [form]);
-  const exec = executor(() => ({ element: "Submit", operation: "press" }));
+  const exec = executor(() => ({ element: "Submit", operation: "click" }));
   const notFound = await runPlan(missing.deps(exec), plan([{ ...submit, control: { name: "Send" } }]));
   assert.equal(notFound.escalation!.reason, "target_not_found");
   assert.match(notFound.escalation!.detail, /the control the step names, "Send", is not in the window; no action was taken/);
   assert.equal(exec.bodies.length, 0, "The executor is not asked about a control that is not there");
 
   const disagreed = setup(t, [form]);
-  const other = await runPlan(disagreed.deps(executor(() => ({ element: "Cancel", operation: "press" }))), plan([submit]));
+  const other = await runPlan(disagreed.deps(executor(() => ({ element: "Cancel", operation: "click" }))), plan([submit]));
   assert.equal(other.escalation!.reason, "uncertain");
   assert.match(other.escalation!.detail, /the executor chose "Cancel" in window, not the control the step names, Button "Submit" in window/);
   assert.equal(disagreed.backend.actions.length, 0);
@@ -304,11 +304,11 @@ test("a step that names its control acts only when the control is in the window 
 test("a named control matches by name and role, and the region only chooses among matches", async (t) => {
   // Group names change with window size, so a region that does not match is not a reason to stop.
   const { deps } = setup(t, [form, submitted]);
-  const result = await runPlan(deps(executor(() => ({ element: "Submit", operation: "press" }))),
+  const result = await runPlan(deps(executor(() => ({ element: "Submit", operation: "click" }))),
     plan([{ id: "s", intent: "Submit", control: { region: "content", role: "AXButton", name: " submit " }, postcondition: { exists: { name: "Done" } } }]));
   assert.equal(result.outcome, "completed");
   const wrongRole = setup(t, [form]);
-  const stopped = await runPlan(wrongRole.deps(executor(() => ({ element: "Submit", operation: "press" }))),
+  const stopped = await runPlan(wrongRole.deps(executor(() => ({ element: "Submit", operation: "click" }))),
     plan([{ id: "s", intent: "Submit", control: { role: "TextField", name: "Submit" }, postcondition: { exists: { name: "Done" } } }]));
   assert.equal(stopped.escalation!.reason, "target_not_found");
 });
@@ -317,7 +317,7 @@ test("a control that appears only after an earlier step is found in that step's 
   const menu = window([{ name: "File" }]);
   const opened = window([{ name: "File" }, { role: "AXMenuItem", name: "Save" }]);
   const { deps } = setup(t, [menu, opened, submitted]);
-  const result = await runPlan(deps(executor(body => String((body.state as { elements: string }).elements).includes("Save") ? { element: "Save", operation: "press" } : { element: "File", operation: "press" })),
+  const result = await runPlan(deps(executor(body => String((body.state as { elements: string }).elements).includes("Save") ? { element: "Save", operation: "click" } : { element: "File", operation: "click" })),
     plan([{ id: "open", intent: "Open File", control: { name: "File" }, postcondition: { exists: { name: "Save" } } },
       { id: "save", intent: "Save", control: { role: "MenuItem", name: "Save" }, postcondition: { exists: { name: "Done" } } }]));
   assert.equal(result.outcome, "completed");

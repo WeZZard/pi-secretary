@@ -1,20 +1,24 @@
 import { Type } from "typebox";
+import { ACTION_ALIASES, ACTION_NAMES, MACOS_ACTIONS } from "../actions.ts";
 
 export const observeSchema = Type.Object({
   app: Type.String({ minLength: 1, maxLength: 200, description: "Application name as shown in the menu bar, for example TextEdit or Finder. The application must already be open." }),
   window_title: Type.Optional(Type.String({ minLength: 1, maxLength: 300, description: "Optional case-insensitive substring of the window title. Omit to use the frontmost titled window of the application." })),
 }, { additionalProperties: false });
 
-const OPERATIONS = ["press", "double_press", "context_press", "enter_text", "key_combo", "scroll_up", "scroll_down"] as const;
+/** The planner reads each action's definition here, the same text the executor reads (design §7.2). */
+const ACTION_DESCRIPTION = `The action, when known. ${MACOS_ACTIONS.map(entry => `${entry.name}: ${entry.definition}`).join(" ")}`;
 
 /** Postconditions are validated in code (verifier.ts) so the error names the exact problem. */
 export const planStepSchema = Type.Object({
   id: Type.String({ minLength: 1, maxLength: 40, pattern: "^[A-Za-z0-9_-]+$" }),
   intent: Type.String({ minLength: 1, maxLength: 300, description: "One sentence saying what the step achieves, for example \"Open the File menu.\"" }),
-  operation: Type.Optional(Type.Union(OPERATIONS.map(value => Type.Literal(value)), { description: "The expected operation, when known." })),
-  text: Type.Optional(Type.String({ maxLength: 2000, description: "Complete literal text for enter_text. Only letters, digits, space, newline and tab can be typed." })),
-  position: Type.Optional(Type.Union([Type.Literal("end"), Type.Literal("start"), Type.Literal("replace")], { description: "For enter_text: where the text goes. end and start move the insertion point with Cmd+Down or Cmd+Up after the click; replace selects all first. Omit to type at the click point, which is unreliable." })),
-  keys: Type.Optional(Type.String({ maxLength: 60, description: "A key combination for key_combo, for example cmd+shift+n or cmd+w." })),
+  action: Type.Optional(Type.Union(ACTION_NAMES.map(value => Type.Literal(value)), { description: ACTION_DESCRIPTION })),
+  /** The field's name before the allowlist; recorded plans and older planners still send it. */
+  operation: Type.Optional(Type.Union([...ACTION_NAMES, ...Object.keys(ACTION_ALIASES)].map(value => Type.Literal(value)), { description: "Older name for action. Use action." })),
+  text: Type.Optional(Type.String({ maxLength: 2000, description: "Complete literal text for type. Only letters, digits, space, newline and tab can be typed." })),
+  position: Type.Optional(Type.Union([Type.Literal("end"), Type.Literal("start"), Type.Literal("replace")], { description: "For type: where the text goes. end and start move the insertion point with Cmd+Down or Cmd+Up after the click; replace selects all first. Omit to type at the click point, which is unreliable." })),
+  keys: Type.Optional(Type.String({ maxLength: 60, description: "A key or key combination for key, for example cmd+shift+n or cmd+w." })),
   postcondition: Type.Unknown({ description: "One predicate object: {exists:{name,role?}}, {absent:{name,role?}}, {value:{name,equals}}, {selected:{name}}, {window:{titleContains}}, {text:{contains}}, {text:{endsWith}}, {changed:true}, {all:[...]}, or {any:[...]}. Only on-screen elements count. It must be false before the step and true after it. exists and absent check controls by name, and role is an accessibility role such as Button; selected checks that a named element is selected; text checks only text the window shows, such as a display or a document." }),
   max_attempts: Type.Optional(Type.Integer({ minimum: 1, maximum: 5, description: "How often the step may act. Above 1 only with idempotent: true or a scroll operation; otherwise an action that changed the screen but missed its postcondition is not repeated. A scroll step acts up to 3 times by default." })),
   control: Type.Optional(Type.Object({

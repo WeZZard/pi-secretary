@@ -6,11 +6,12 @@
  *   node --experimental-strip-types scripts/computer-use/scripted-plan.ts <plan.json>
  *
  * plan.json: { "app": "TextEdit", "windowTitle": "scratch.txt", "steps": [
- *   { "id": "select", "operation": "key_combo", "keys": "cmd+a", "postcondition": { "changed": true } },
- *   { "id": "type", "operation": "enter_text", "target": "Text", "text": "Hello", "postcondition": { "value": { "name": "Hello", "equals": "Hello" } } } ] }
+ *   { "id": "select", "operation": "key", "keys": "cmd+a", "postcondition": { "changed": true } },
+ *   { "id": "type", "operation": "type", "target": "Text", "text": "Hello", "postcondition": { "value": { "name": "Hello", "equals": "Hello" } } } ] }
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { toAction } from "../../extensions/secretary/computer-use/actions.ts";
 import { actionsFor, type ActuatorRequest, type Operation } from "../../extensions/secretary/computer-use/actuator.ts";
 import { cuaDriverRunner, LocalDriverBackend, lsappinfoFrontmost } from "../../extensions/secretary/computer-use/backend/local-backend.ts";
 import type { WindowRead } from "../../extensions/secretary/computer-use/backend/backend.ts";
@@ -55,7 +56,7 @@ for (const step of plan.steps) {
       : before.observation.groups.find(candidate => candidate.name.toLowerCase().startsWith(step.targetGroup!.toLowerCase()));
     if (step.targetGroup !== undefined && !group?.frame) throw new Error(`no scrollable group named ${JSON.stringify(step.targetGroup)}`);
     const frame = element?.frame ?? group?.frame;
-    const request = { operation: step.operation, ...(frame ? { frame } : {}), ...(step.text !== undefined ? { text: step.text } : {}),
+    const request = { operation: toAction(step.operation) ?? step.operation, ...(frame ? { frame } : {}), ...(step.text !== undefined ? { text: step.text } : {}),
       ...(step.keys !== undefined ? { keys: step.keys } : {}) } as ActuatorRequest;
     const outcomes = [];
     for (const action of actionsFor(request)) outcomes.push((await backend.act(before.read.window, action)).kind);

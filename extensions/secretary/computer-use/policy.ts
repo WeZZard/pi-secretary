@@ -51,7 +51,7 @@ export function decide(input: {
     if (groupIndex < 0) return { kind: "escalate", reason: "executor_unavailable", detail: "the executor gave no usable region answer", prior };
   }
   const group = observation.groups[groupIndex]!;
-  const needsElement = operation !== "key_combo" && operation !== "scroll_up" && operation !== "scroll_down";
+  const needsElement = operation !== "key" && operation !== "scroll_up" && operation !== "scroll_down";
   let element: ObservedElement | undefined;
   if (needsElement) {
     const elementAnswer = answer(questions.elements[groupIndex]);
@@ -62,8 +62,8 @@ export function decide(input: {
   }
 
   // Rule 5: compatibility.
-  if (operation === "enter_text" && (step.text === undefined || !TEXT_ROLES.has(element!.role))) {
-    return { kind: "escalate", reason: "uncertain", detail: `enter_text does not fit ${element!.role.replace(/^AX/, "")} ${JSON.stringify(element!.name)}`, prior };
+  if (operation === "type" && (step.text === undefined || !TEXT_ROLES.has(element!.role))) {
+    return { kind: "escalate", reason: "uncertain", detail: `type does not fit ${element!.role.replace(/^AX/, "")} ${JSON.stringify(element!.name)}`, prior };
   }
   if ((operation === "scroll_up" || operation === "scroll_down") && !group.frame) {
     return { kind: "escalate", reason: "uncertain", detail: `the ${group.name} region cannot be scrolled`, prior };
@@ -84,9 +84,9 @@ export function decide(input: {
   }
 
   // Rule 8.
-  const request: ActuatorRequest = operation === "key_combo" ? { operation, keys: step.keys! }
+  const request: ActuatorRequest = operation === "key" ? { operation, keys: step.keys! }
     : operation === "scroll_up" || operation === "scroll_down" ? { operation, frame: group.frame! }
-    : operation === "enter_text" ? { operation, frame: element!.frame, text: step.text!, ...(step.position ? { position: step.position } : {}) }
+    : operation === "type" ? { operation, frame: element!.frame, text: step.text!, ...(step.position ? { position: step.position } : {}) }
     : { operation, frame: element!.frame };
   return { kind: "act", request, operation, group, ...(element ? { element } : {}), risk: risk?.choice ?? "unknown", prior };
 }

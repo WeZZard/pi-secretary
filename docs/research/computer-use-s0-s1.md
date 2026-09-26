@@ -901,12 +901,26 @@ The relay client pinned `@wezzard/mcp-vm-relay@0.4.0` from 2026-09-24. Pi's own 
 | 2 | `cmd+down` | `no_progress`: moving the insertion point changes nothing in the accessibility tree. |
 | 3 | completed | The step "Press Return" used the operation `press`, which is a click. The click landed in the text area, and the next step typed at the end without a line break. |
 | 4 | `cmd+a` | `no_progress`: a selection changes nothing in the accessibility tree either. |
-| 5 | typing the whole document | `needs_text`: the text held "-", and real key presses cover only letters, digits, space, Return and Tab ([design Section 7.2](../arch/computer-use.md#72-operations)). |
+| 5 | typing the whole document | `needs_text`: the text held "-", and real key presses cover only letters, digits, space, Return and Tab ([design Section 7.2](../arch/computer-use.md#72-actions)). |
 | 6 | clicking the Edit menu | `backend_failed`: pixel clicks are positioned in the window's screenshot, and the menu bar lies outside the window. |
 
 - Plans 1 to 5 also had 3 rejections for a `text` check written with both or neither of `contains` and `endsWith`, or with `endsWith` at the top level.
 
 **Evidence:** `test-results/e2e/computer-use-delegation-textedit/2026-09-26T01-46-07-508Z-cedc8369/`. It is not versioned.
+
+**The allowlist names, replayed.** After the executor's operation options were renamed to the macOS allowlist of [design Section 7.2](../arch/computer-use.md#72-actions), with the allowlist's definitions as the option text, the `roles` variant was replayed on the same 28 intents for seeds 1 to 10 on 2026-09-26 at 08:15 UTC, at revision `d21023b` with the uncommitted rename.
+
+| Measure | Before the rename | After the rename |
+| --- | --- | --- |
+| Correct actions | 201 of 280 | 208 of 280 |
+| Judgment misses, of 220 decisions whose element was in the table | 5 | 7 |
+| Wrong actions on unlisted targets | 18 of 60 | 15 of 60 |
+
+- Every action chosen was `click` (220) or `type` (10), as the intents expect. No decision chose a wrong action.
+- The judgment misses are the same case as before: for Calculator's "Compute the result", the executor clicked "Byte Flip" (6) or "Shift Left" (1) instead of "=".
+- The differences are small, and there is no repeat run to tell them apart from run-to-run variation. The rename did not make any decision choose a wrong action.
+
+**Evidence:** `test-results/computer-use/eval-actions-2026-09-26T08-15-35Z/`. It is not versioned.
 
 **Verification limits:** The labelled intents cover 8 windows. None needs the content of priorities 2 to 4 to be answered, because the executor can only choose a listed control: an intent such as "make the text bold" is the planner's to split into opening a menu and choosing an item. The live check is one run of one task.
 

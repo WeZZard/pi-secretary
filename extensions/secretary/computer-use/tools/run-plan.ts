@@ -1,6 +1,6 @@
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import type { Static } from "typebox";
-import type { Operation } from "../actuator.ts";
+import { toAction } from "../actions.ts";
 import { runPlan, validatePlan, type HarnessDependencies, type Plan, type PlanResult } from "../harness.ts";
 import type { Observation } from "../observer.ts";
 import type { Postcondition } from "../verifier.ts";
@@ -38,7 +38,7 @@ export function toPlan(params: Static<typeof runPlanSchema>, basedOn?: Observati
     goal: params.goal,
     allowDestructive: params.allow_destructive ?? [],
     steps: params.steps.map(step => ({ id: step.id, intent: step.intent, postcondition: step.postcondition as Postcondition,
-      ...(step.operation ? { operation: step.operation as Operation } : {}), ...(step.text !== undefined ? { text: step.text } : {}),
+      ...(toAction(step.action ?? step.operation) ? { action: toAction(step.action ?? step.operation)! } : {}), ...(step.text !== undefined ? { text: step.text } : {}),
       ...(step.keys !== undefined ? { keys: step.keys } : {}), ...(step.max_attempts !== undefined ? { maxAttempts: step.max_attempts } : {}),
       ...(step.idempotent !== undefined ? { idempotent: step.idempotent } : {}),
       ...(step.control !== undefined ? { control: step.control } : {}),

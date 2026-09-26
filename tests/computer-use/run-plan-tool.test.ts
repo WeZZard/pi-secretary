@@ -73,9 +73,9 @@ test("a plan based on an observation acts on that observation's window", async (
 
 test("a completed result lists each step compactly", () => {
   assert.equal(formatResult({ outcome: "completed", decisions: 1, actions: 1, steps: [
-    { id: "a", result: "verified", action: "press", element: "Submit", detail: "\"Done\" is on screen" },
+    { id: "a", result: "verified", action: "click", element: "Submit", detail: "\"Done\" is on screen" },
     { id: "b", result: "skipped", detail: "the postcondition already held" }] }),
-  "Outcome: completed. Executor decisions: 1. Actions: 1.\n- a: verified, press \"Submit\" (\"Done\" is on screen)\n- b: skipped (the postcondition already held)");
+  "Outcome: completed. Executor decisions: 1. Actions: 1.\n- a: verified, click \"Submit\" (\"Done\" is on screen)\n- b: skipped (the postcondition already held)");
 });
 
 test("a text check for a string that is also a control's name reaches the runtime (decision PS-D3)", async (t) => {
@@ -88,7 +88,7 @@ test("the result lists what code verified, separately from steps that only chang
   const plan = { target: { app: "Form" }, goal: "g", allowDestructive: [], steps: [
     { id: "a", intent: "i", postcondition: { text: { contains: "10" } } }, { id: "b", intent: "i", postcondition: { changed: true as const } }] };
   const text = formatResult({ outcome: "completed", decisions: 2, actions: 2, steps: [
-    { id: "a", result: "verified", action: "press" }, { id: "b", result: "weakly_verified", action: "press" }] }, plan);
+    { id: "a", result: "verified", action: "click" }, { id: "b", result: "weakly_verified", action: "click" }] }, plan);
   assert.match(text, /Verified by code after the step \(report only these facts as checked\):\n- a: \{"text":\{"contains":"10"\}\} held/);
   assert.match(text, /Not verified \(only a change on screen was seen\):\n- b$/);
 });
