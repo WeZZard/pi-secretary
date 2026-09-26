@@ -783,9 +783,31 @@ The Calculator task of [Section 16.2](#162-calculator-with-thinking-off) ran aga
 
 **Verification limits:** One run of one task. The check "contains 3" after pressing 3 would also hold for a display such as "3+", so a stricter check would have been `endsWith "7+3"`.
 
-### 16.5 Relay 0.6.1
+### 16.5 Named controls, the start check and three tasks, on relay 0.4.0
 
-The relay client pinned `@wezzard/mcp-vm-relay@0.4.0` from 2026-09-24. Pi's own installed copy was 0.6.1, published on 2026-09-25. Every live check through 2026-09-26 at 00:09 UTC, including [Sections 16.2 and 16.4](#162-calculator-with-thinking-off), ran on 0.4.0.
+Pi delegated each task to the computer-use agent through the relay client, with `litellm/qwen3.8-27b`, the executor at `jev.home.arpa`, `thinking: off` and relay 0.4.0. The script is `scripts/computer-use/pi-delegation-live.ts` with the task as its third argument. Each task ran once, and each result below comes from the harness's plan records.
+
+| Task | Started (UTC) | Revision | Plans run | Plans rejected | Outcome | Steps verified by code |
+| --- | --- | --- | --- | --- | --- | --- |
+| Calculator, 7 plus 3 | 2026-09-25 23:54 | `831184d`, named controls | 1 | 0 | completed, 10 | 4 of 4 |
+| Calculator, 7 plus 3 | 2026-09-25 23:59 | `f58915c`, start check | 1 | 0 | completed, 10 | 3 of 4 |
+| TextEdit, add a last line | 2026-09-26 00:01 | `f58915c` | 5 | 3 | stopped at the escalation limit | 0 |
+| Finder, select a file | 2026-09-26 00:02 | `f58915c` | 1 | 0 | stopped, `backend_failed` | 0 |
+| Finder, select a file | 2026-09-26 00:08 | `5f1add0`, title limit | 1 | 0 | completed | 2 of 2 |
+
+- In both Calculator runs, the planner named each button in `control` exactly as the observation listed it, and the executor chose the same button every time. In the second run the planner chose `{changed:true}` for Add itself; no rule forced it.
+- The start check ran in every plan that named `based_on`, and it stopped none of them.
+- In TextEdit, the executor chose the menu bar item "Apple", at confidence 0.45, for a step that named the document's text area. The control check stopped the step twice before any click. The executor's element list has names without roles, and the text area's name is the start of the document, "Disposable document for the computer-use batch.…". The planner's list shows the role `TextArea`.
+- In TextEdit, two plans stopped with `already_satisfied`, because their first checks were true before the step, and one stopped with `no_progress` after `cmd+down`. Its detail named the `position` field, as the removed rule had. One plan was rejected for a malformed `text` check, and two were rejected after the escalation limit.
+- The first Finder run failed before any read, because the relay refused a preparation title of 740 characters (Section 16.6). Each failed start acquired and released a new machine, five in all. After the fix, the planner scrolled the list until "Zoning notes.txt" was on screen, named the file's control and selected it.
+
+**Evidence:** the run directories under `test-results/e2e/computer-use-delegation/`, `test-results/e2e/computer-use-delegation-textedit/` and `test-results/e2e/computer-use-delegation-finder/`. They are not versioned.
+
+**Verification limits:** One run per row. Nothing reads the window after Pi stops, so each outcome rests on the harness's own postconditions and the agent's report.
+
+### 16.6 Relay 0.6.1
+
+The relay client pinned `@wezzard/mcp-vm-relay@0.4.0` from 2026-09-24. Pi's own installed copy was 0.6.1, published on 2026-09-25. Every live check through 2026-09-26 at 00:09 UTC, including [Sections 16.2, 16.4 and 16.5](#162-calculator-with-thinking-off), ran on 0.4.0.
 
 - Relay 0.6 replaced the single `relay` tool with one tool per operation: `relay_acquire`, `relay_stage`, `relay_exec`, `relay_code`, `relay_run`, `relay_image`, `relay_finish` and `relay_release`, among 19.
 - `relay_run` sends one tool call to an MCP server inside the machine. For the `cua` target that is the guest's `cua-driver` server, so a click is `relay_run` with the driver's `click` tool.
