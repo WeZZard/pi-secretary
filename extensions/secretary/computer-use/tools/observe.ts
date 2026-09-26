@@ -3,7 +3,7 @@ import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
 import { BackendError, type ExecutionBackend, type WindowRead } from "../backend/backend.ts";
 import type { ComputerUseConfiguration } from "../configuration.ts";
-import { discardSummary, observe, renderPlannerTable, type Observation, type ObservationFailure } from "../observer.ts";
+import { IOS_GROUP, SIMULATOR_APP, discardSummary, observe, renderPlannerTable, type Observation, type ObservationFailure } from "../observer.ts";
 import type { Telemetry } from "../telemetry.ts";
 
 /** `computer_observe` (design docs/arch/computer-use.md §5.1). */
@@ -54,13 +54,18 @@ export async function executeObserve(
   let result: Observation | ObservationFailure | undefined;
   let recordPath: string | undefined;
   let attempts = 0;
+  let rereadForScreen = false;
   try {
     for (attempts = 1; attempts <= MAX_READ_ATTEMPTS; attempts++) {
       read = await deps.backend.readWindow({ app: params.app, ...(params.window_title ? { windowTitle: params.window_title } : {}) },
         { screenshot: modelAcceptsImages, signal });
       result = observe(read, { id: attempts === 1 ? observationId : `${observationId}-${attempts}`, maxElements: deps.config.maxElements, maxNameLength: deps.config.maxNameLength });
       recordPath = await deps.telemetry.recordObservation(read, result, { attempt: attempts, purpose: "computer_observe" });
-      if (result.status !== "window_missing" || attempts === MAX_READ_ATTEMPTS) break;
+      // Design §6.5: the first read of a Simulator window has shown only its macOS controls, so a
+      // Simulator window without an iOS screen is read once more.
+      const screenMissing = result.status === "ready" && read.window.app === SIMULATOR_APP && !result.groups.some(group => group.platform === "ios") && !rereadForScreen;
+      if (screenMissing) rereadForScreen = true;
+      if ((result.status !== "window_missing" && !screenMissing) || attempts === MAX_READ_ATTEMPTS) break;
       await sleep(deps.config.settleMs, signal);
     }
   } catch (error) {
@@ -87,6 +92,7 @@ export async function executeObserve(
   const discarded = Object.entries(summary).filter(([, count]) => count > 0).map(([reason, count]) => `${reason} ${count}`).join(", ");
   const text = [...header,
     `Elements: ${elementCount} in ${final.groups.length} group${final.groups.length === 1 ? "" : "s"}. Discarded: ${discarded || "none"}.`,
+    ...(final.groups.some(group => group.platform === "ios") ? [`The ${IOS_GROUP} group is the Simulator's device screen. iOS targets are not supported yet, so a plan cannot act on its elements.`] : []),
     note, "", elementCount === 0 ? "No actionable named elements are visible." : renderPlannerTable(final)].join("\n");
   const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
   if (screenshot === "included") content.push({ type: "image", data: finalRead.screenshot!.data, mimeType: finalRead.screenshot!.mimeType });

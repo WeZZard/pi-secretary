@@ -439,11 +439,15 @@ With this record, a wrong answer can be classified as a retrieval failure, when 
 
 - An element of an ordinary macOS application window is `macos`.
 - The iOS Simulator's window holds two platforms. Its menu bar, toolbar and hardware buttons are macOS elements, and the device screen is an iOS guest whose elements the tree reports with the same roles, such as `AXButton "General"` ([research Section 16.8](../research/computer-use-s0-s1.md#168-driver-input-probes-and-the-ios-simulator)).
-- For a window of the application with bundle identifier `com.apple.iphonesimulator`, the device screen is the rectangle spanned by the elements that are not menu, toolbar or hardware-button elements. An element whose centre lies inside that rectangle is `ios`, and every other element is `macos`.
-- The platform appears in the planner's table next to each element, and each group has the platform of its elements. A group never mixes platforms, so the observer splits a group whose elements have two platforms.
+- For a window of the application named `Simulator`, an element is `macos` when it is in a menu or the toolbar, when its centre is in the band at the top of the window down to the toolbar's bottom edge, which holds the title-bar buttons and the title, or when it touches the window's left or right side within 2 points, as the hardware buttons do. Every other element of the window is `ios`. The read gives the application's name, not its bundle identifier, and the tree lists all of these elements flat under the window, so position is the only sign.
+- Each group has the platform of its elements, and a group never mixes platforms. The iOS elements form one group named `iOS screen`, so the planner's table shows the platform in the group heading, and the planner copies that name as a `region`. A window with elements of two platforms is always split into groups, even when it is small enough for one.
 - The executor's element question for a step offers only elements of the step's platform. The step's platform is the platform of its `control`, or the platform of the window's content when no control is named. In the Dark Mode task through Pi, the executor chose the Simulator's macOS search field for a step on the iOS search field. A per-platform question would not have offered it.
-- The first read of a Simulator window showed only macOS elements, so a Simulator window with no iOS element is read once more before the observation is returned.
-- Until the iOS actions of [Section 7.2](#72-actions) are built, a plan whose step targets an `ios` element is rejected with a message that iOS targets are not supported yet.
+- The first read of a Simulator window showed only macOS elements, so `computer_observe` reads a Simulator window with no iOS element once more before it returns the observation. The harness does not, because a plan runs after an observation.
+- Until the iOS actions of [Section 7.2](#72-actions) are built:
+  - A plan whose step's `control` matches only `ios` elements of the `based_on` observation is rejected with the rule `ios_target`.
+  - At run time, a step whose `control` matches only `ios` elements stops with `target_not_found` before the executor is asked.
+  - The executor is offered only `macos` groups, so every step's platform is macOS.
+  - `computer_observe` tells the planner that the `iOS screen` group cannot be acted on yet.
 
 ## 7. Executor request
 

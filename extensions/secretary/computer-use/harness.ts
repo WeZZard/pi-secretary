@@ -4,7 +4,7 @@ import { BackendError, type ExecutionBackend, type WindowRead, type WindowTarget
 import type { ComputerUseConfiguration } from "./configuration.ts";
 import { ExecutorError, type DecisionRequestBody, type DecisionResponse } from "./executor-client.ts";
 import { ActionHistory, type ActionRecord } from "./history.ts";
-import { observe, renderPlannerTable, type ObservedElement, type Observation, type ObservationFailure } from "./observer.ts";
+import { observe, platformView, renderPlannerTable, type ObservedElement, type Observation, type ObservationFailure } from "./observer.ts";
 import { decide, type Decision, type EscalationReason, type Prior } from "./policy.ts";
 import { buildDecisionRequest, type StepSpec } from "./request-builder.ts";
 import type { Picture, Telemetry } from "./telemetry.ts";
@@ -227,9 +227,15 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
         // Control check (design §9): the named control must be in this read before the executor is asked.
         const named = step.control ? controlMatches(observation, step.control) : undefined;
         if (step.control && !named!.length) escalate(step.id, "target_not_found", `the control the step names, ${describeControl(step.control)}, is not in the window; no action was taken`);
+        // Design §6.5 and §7.2: iOS actions are not built yet, so a step names only a macOS control,
+        // and the executor is offered only macOS elements.
+        if (named?.length && named.every(element => element.platform === "ios")) {
+          escalate(step.id, "target_not_found", `the control the step names, ${describeControl(step.control!)}, is on the iOS screen, and iOS targets are not supported yet; no action was taken`);
+        }
+        const offeredView = platformView(observation, "macos");
         const recent = history.recent();
         const build = (fromTrimStep: number) =>
-          buildDecisionRequest({ goal: plan.goal, step, observation, recent, answerReserveTokens: config.answerReserveTokens, fromTrimStep });
+          buildDecisionRequest({ goal: plan.goal, step, observation: offeredView, recent, answerReserveTokens: config.answerReserveTokens, fromTrimStep });
         let built = build(0);
         let response: DecisionResponse | undefined;
         // The executor counts tokens exactly and the estimate does not. A request it finds too long
@@ -247,7 +253,7 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
           }
         }
         decisions++;
-        const decision: Decision = decide({ response, questions: built.questions, observation: current.observation, step,
+        const decision: Decision = decide({ response, questions: built.questions, observation: offeredView, step,
           allowDestructive: plan.allowDestructive.includes(step.id), confidenceGate: config.confidenceGate });
         await telemetry.recordStep({ runId, stepId: step.id, attempt: attempts + 1, estimatedTokens: built.estimatedTokens,
           inputTokens: response.inputTokens, outputTokens: response.outputTokens, historyUsed: built.historyUsed, roundTripMs: response.roundTripMs, request: built.body, answers: response.answers, decision: summarize(decision) });

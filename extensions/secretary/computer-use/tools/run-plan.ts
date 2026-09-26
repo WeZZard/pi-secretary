@@ -1,7 +1,7 @@
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import type { Static } from "typebox";
 import { toAction } from "../actions.ts";
-import { runPlan, validatePlan, type HarnessDependencies, type Plan, type PlanResult } from "../harness.ts";
+import { controlMatches, runPlan, validatePlan, type HarnessDependencies, type Plan, type PlanResult } from "../harness.ts";
 import type { Observation } from "../observer.ts";
 import type { Postcondition } from "../verifier.ts";
 import type { runPlanSchema } from "./schemas.ts";
@@ -94,6 +94,14 @@ export async function executeRunPlan(context: RunPlanContext, params: Static<typ
   const plan = { ...toPlan(params, basedOn), ...(basedOn ? { basedOn: basedOn.comparison } : {}), ...(previous ? { previous: previous.comparison } : {}) };
   const problem = validatePlan(plan, 50);
   if (problem) return rejected(context, params, problem.rule, problem.message);
+  // Design §6.5: until the iOS actions of §7.2 are built, a step may not target the Simulator's device screen.
+  const iosStep = basedOn && plan.steps.find(step => {
+    const matches = step.control ? controlMatches(basedOn, step.control) : [];
+    return matches.length > 0 && matches.every(element => element.platform === "ios");
+  });
+  if (iosStep) {
+    return rejected(context, params, "ios_target", `step ${iosStep.id}: ${JSON.stringify(iosStep.control!.name)} is on the iOS screen of the Simulator, and iOS targets are not supported yet. Report this instead of acting another way.`);
+  }
   const result = await runPlan(context.deps, plan, signal);
   if (result.last) context.recordPlanRead?.(result.last);
   if (result.outcome === "escalated") context.escalations.record();

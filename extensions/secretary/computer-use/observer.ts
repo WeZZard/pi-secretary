@@ -23,6 +23,15 @@ export type DiscardReason =
 
 export interface Discard { index: number; role: string; label?: string; reason: DiscardReason }
 
+/** The platform an element belongs to, which decides the actions allowed on it (design §6.5, decision PS-D6). */
+export type Platform = "macos" | "ios";
+/** The application name of the iOS Simulator, whose window holds a device screen of iOS elements. */
+export const SIMULATOR_APP = "Simulator";
+/** The group of the Simulator's device screen. Its name says the platform, and the planner copies it as a region. */
+export const IOS_GROUP = "iOS screen";
+/** Points within which an element touches the window's side, as the Simulator's hardware buttons do. */
+const BEZEL_TOLERANCE = 2;
+
 export interface ObservedElement {
   /** cua-driver element_index, valid only for this observation's snapshot. */
   index: number;
@@ -36,6 +45,7 @@ export interface ObservedElement {
   selected?: boolean;
   frame: Frame;
   group: string;
+  platform: Platform;
   /** Single letter, unique within its group. */
   letter: string;
 }
@@ -44,7 +54,7 @@ export interface ObservedElement {
  * `frame` is the group's container, or the window for the single-group and content cases; scrolling targets it.
  * `hidden` counts named elements of the group's container that lie outside the window, such as rows below the visible part of a list.
  */
-export interface ObservedGroup { name: string; elements: ObservedElement[]; frame?: Frame; hidden?: number }
+export interface ObservedGroup { name: string; elements: ObservedElement[]; frame?: Frame; hidden?: number; platform: Platform }
 
 export interface Observation {
   status: "ready";
@@ -164,6 +174,19 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
   const insideWindow = (frame: Frame) => !windowFrame || (frame.x + frame.w / 2 >= windowFrame.x && frame.x + frame.w / 2 <= windowFrame.x + windowFrame.w
     && frame.y + frame.h / 2 >= windowFrame.y && frame.y + frame.h / 2 <= windowFrame.y + windowFrame.h);
 
+  // Design §6.5: the Simulator's window holds its own macOS controls and the device screen, and the
+  // tree lists both flat under the window with the same roles. The macOS ones are the menus, the
+  // toolbar band at the top, and the hardware buttons, which touch the window's left or right side.
+  const toolbarBottom = Math.max(windowFrame?.y ?? 0, ...read.elements.filter(element => element.role === "AXToolbar" && element.frame)
+    .map(element => element.frame!.y + element.frame!.h));
+  const platformOf = (element: RawElement): Platform => {
+    if (read.window.app !== SIMULATOR_APP || !windowFrame || !element.frame || underMenu(element)) return "macos";
+    if (ancestors(element).some(ancestor => ancestor.role === "AXToolbar")) return "macos";
+    const frame = element.frame;
+    if (Math.abs(frame.x - windowFrame.x) <= BEZEL_TOLERANCE || Math.abs(frame.x + frame.w - windowFrame.x - windowFrame.w) <= BEZEL_TOLERANCE) return "macos";
+    return frame.y + frame.h / 2 > toolbarBottom ? "ios" : "macos";
+  };
+
   // Fix plan F-6: descendant text of containers is content the window shows, such as a display.
   // Container text is never a control's name, so it is listed even when it equals one: Calculator's
   // display read "0" while a button was named "0" (observed through Pi, 2026-09-23).
@@ -214,7 +237,7 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
   };
 
   const hiddenBy = new Map<number | "content", number>();
-  const kept: { element: RawElement; name: string; landmark?: RawElement }[] = [];
+  const kept: { element: RawElement; name: string; landmark?: RawElement; platform: Platform }[] = [];
   for (const element of read.elements) {
     if (CONTAINER_ROLES.has(element.role)) { discard(element, "container"); continue; }
     if (!element.frame) { discard(element, "no_frame"); continue; }
@@ -232,7 +255,7 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
     const name = cleanName(element.label, options.maxNameLength) ?? cleanName(element.value, options.maxNameLength)
       ?? cleanName(read.descendantText?.[element.element_index], options.maxNameLength);
     if (!name) { discard(element, "unnamed"); describeInactive(element, "unnamed"); continue; }
-    kept.push({ element, name, landmark: landmarkOf(element) });
+    kept.push({ element, name, landmark: landmarkOf(element), platform: platformOf(element) });
   }
 
   // Rule 1: an open sheet is the only group.
@@ -256,7 +279,7 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
       ? { value: cleanName(entry.element.value, options.maxNameLength) } : {}),
     ...(entry.element.selected ? { selected: true } : {}),
     ...(TEXT_ROLES.has(entry.element.role) && entry.element.value ? { contentEnd: entry.element.value.replace(BIDI_MARKS, "").slice(-CONTENT_END_LENGTH) } : {}),
-    frame: entry.element.frame!, group, letter: letterAt(position),
+    frame: entry.element.frame!, group, platform: entry.platform, letter: letterAt(position),
   });
 
   const ready = (groups: ObservedGroup[]): Observation => {
@@ -272,24 +295,33 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
   };
 
   const hiddenTotal = () => { const total = [...hiddenBy.values()].reduce((sum, count) => sum + count, 0); return total ? { hidden: total } : {}; };
-  // Rule 5: a small window is one group, so the request needs no routing question.
+  // Rule 5: a small window is one group, so the request needs no routing question. A group never
+  // mixes platforms (design §6.5), so a window with two platforms is grouped.
   const ordered = [...candidates].sort((a, b) => readingOrder({ frame: a.element.frame! }, { frame: b.element.frame! }));
-  if (ordered.length <= MAX_GROUP_ELEMENTS) {
+  const mixed = new Set(ordered.map(entry => entry.platform)).size > 1;
+  if (ordered.length <= MAX_GROUP_ELEMENTS && !mixed) {
     const name = "window";
     return ready(ordered.length === 0 ? [] : [{ name, elements: ordered.map((entry, position) => toElement(entry, name, position)), ...(windowFrame ? { frame: windowFrame } : {}),
-      ...hiddenTotal() }]);
+      ...hiddenTotal(), platform: ordered[0]!.platform }]);
   }
 
   // Rules 2 and 3: group by the nearest landmark container instance. Groups follow the reading
   // order of their containers' frames; ungrouped content comes last.
-  const unsorted = new Map<number | "content", typeof kept>();
+  const unsorted = new Map<number | "content" | "ios", typeof kept>();
   for (const entry of ordered) {
-    const key = entry.landmark?.element_index ?? "content";
+    const key = entry.platform === "ios" ? "ios" : entry.landmark?.element_index ?? "content";
     const bucket = unsorted.get(key) ?? [];
     bucket.push(entry);
     unsorted.set(key, bucket);
   }
-  const containerFrame = (key: number | "content"): Frame | undefined => key === "content" ? undefined : byIndex.get(key)?.frame;
+  // The device screen's frame spans its elements, so a scroll there stays on the screen.
+  const iosFrame = (): Frame | undefined => {
+    const frames = (unsorted.get("ios") ?? []).map(entry => entry.element.frame!);
+    if (!frames.length) return undefined;
+    const x = Math.min(...frames.map(frame => frame.x)), y = Math.min(...frames.map(frame => frame.y));
+    return { x, y, w: Math.max(...frames.map(frame => frame.x + frame.w)) - x, h: Math.max(...frames.map(frame => frame.y + frame.h)) - y };
+  };
+  const containerFrame = (key: number | "content" | "ios"): Frame | undefined => key === "content" ? undefined : key === "ios" ? iosFrame() : byIndex.get(key)?.frame;
   // A scroll container's frame spans its whole content, which can extend past the window: Finder's
   // icon-view list did, so its center was outside the window (observed 2026-09-23). Scrolling
   // targets the visible part, so a group's frame is clipped to the window.
@@ -302,17 +334,19 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
   };
   const buckets = new Map([...unsorted].sort(([a, first], [b, second]) => {
     if (a === "content" || b === "content") return a === "content" ? (b === "content" ? 0 : 1) : -1;
+    if (a === "ios" || b === "ios") return a === "ios" ? 1 : -1;
     return readingOrder({ frame: containerFrame(a) ?? first[0]!.element.frame! }, { frame: containerFrame(b) ?? second[0]!.element.frame! });
   }));
   const kindCount = new Map<string, number>();
   const kindTotal = new Map<string, number>();
+  const kindOf = (key: number | "content" | "ios") => key === "content" ? "content" : key === "ios" ? IOS_GROUP : LANDMARKS[byIndex.get(key)!.role]!;
   for (const key of buckets.keys()) {
-    const kind = key === "content" ? "content" : LANDMARKS[byIndex.get(key)!.role]!;
+    const kind = kindOf(key);
     kindTotal.set(kind, (kindTotal.get(kind) ?? 0) + 1);
   }
   const groups: ObservedGroup[] = [];
   for (const [key, entries] of buckets) {
-    const kind = key === "content" ? "content" : LANDMARKS[byIndex.get(key)!.role]!;
+    const kind = kindOf(key);
     const occurrence = (kindCount.get(kind) ?? 0) + 1;
     kindCount.set(kind, occurrence);
     const baseName = kindTotal.get(kind)! > 1 ? `${kind} ${occurrence}` : kind;
@@ -322,8 +356,9 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
       const name = parts > 1 ? `${baseName} part ${part + 1}` : baseName;
       const slice = entries.slice(part * MAX_GROUP_ELEMENTS, (part + 1) * MAX_GROUP_ELEMENTS);
       const frame = visiblePart(containerFrame(key) ?? windowFrame);
-      const hidden = part === parts - 1 ? hiddenBy.get(key) ?? 0 : 0;
-      groups.push({ name, elements: slice.map((entry, position) => toElement(entry, name, position)), ...(frame ? { frame } : {}), ...(hidden ? { hidden } : {}) });
+      const hidden = part === parts - 1 && key !== "ios" ? hiddenBy.get(key) ?? 0 : 0;
+      groups.push({ name, elements: slice.map((entry, position) => toElement(entry, name, position)), ...(frame ? { frame } : {}), ...(hidden ? { hidden } : {}),
+        platform: key === "ios" ? "ios" : "macos" });
     }
   }
   // The routing question has one option per group, and the executor accepts at most 26 (research §2.4).
@@ -331,6 +366,16 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
     return { status: "state_too_large", ...base, detail: `the window splits into ${groups.length} groups; the executor can route among at most ${MAX_ALTERNATIVES}.` };
   }
   return ready(groups);
+}
+
+/**
+ * The observation with only one platform's groups, which is all the executor is offered for a step
+ * (design §6.5). Through Pi, the executor chose the Simulator's macOS search field for a step on the
+ * iOS search field (2026-09-26).
+ */
+export function platformView(observation: Observation, platform: Platform): Observation {
+  if (observation.groups.every(group => group.platform === platform)) return observation;
+  return { ...observation, groups: observation.groups.filter(group => group.platform === platform) };
 }
 
 /** The planner's view includes role, state, and the text the window shows (design §5.1, fix plan F-6). */
