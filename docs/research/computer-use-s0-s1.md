@@ -990,3 +990,22 @@ Three probes on 2026-09-26 ran `cua-driver` calls directly through the relay, wi
 - None of it is versioned.
 
 **Verification limits:** Every probe ran once. The scroll succeeded once. No person reviewed the screenshots.
+
+### 16.9 Screen-coordinate input and run reports through Pi
+
+The Calculator, TextEdit and Finder tasks of [Section 14](#14-pi-task-batch-2026-09-23) ran once each through Pi on 2026-09-26, starting at 08:31 UTC, at revision `f10eb63`. Each ran in its own relay machine with `qwen3.8-27b` as the planner and the executor at `jev.home.arpa`. This revision sends clicks and scrolls in screen coordinates after bringing the window to the front, stops a plan on an accessibility input path, and writes `report.html` ([design Sections 11.4 and 12.1](../arch/computer-use.md#114-input-mode)).
+
+| Task | Outcome | Plans | Input paths |
+| --- | --- | --- | --- |
+| Calculator: compute 7 + 3 | Completed. The display ended with "10", checked by code. | 1 | 4 × `cgevent_hid` |
+| TextEdit: add a new last line "Hello from Pi" | Completed. The document ended `…Second line of the document.\nHello from Pi`. | 3 | `key_events` for keys, and `cgevent_hid` for the click before typing |
+| Finder: select "Zoning notes.txt" below the visible list | Completed. The file was selected, checked by code. | 1 | 3 × `hid` for the scrolls, then `cgevent_hid` |
+
+- No action reported the path `ax`, so no plan stopped with `input_mode`.
+- Every step's relay steps were found in the evidence package. The reports hold 26, 48 and 26 screenshots. The after-screenshot of the Finder click shows "Zoning notes.txt" selected.
+- In the TextEdit run, plan 1 stopped with `already_satisfied` and plan 2 stopped with `no_progress` on `cmd+down`, which moves only the insertion point. This is the case that phase 2 of the plan addresses. In [Section 16.7](#167-element-detail-for-the-executor), the same task put the text on the existing last line; this time it was on a new line.
+- A scroll reports the path `hid`, which is not in the table of [Section 16.8](#168-driver-input-probes-and-the-ios-simulator).
+
+**Evidence:** each run's `report.html` in `test-results/e2e/computer-use-delegation/2026-09-26T08-31-37-332Z-a9a63302/`, `test-results/e2e/computer-use-delegation-textedit/2026-09-26T08-36-01-480Z-26f1c4b6/` and `test-results/e2e/computer-use-delegation-finder/2026-09-26T08-43-06-087Z-9a9b66f5/`. None of it is versioned.
+
+**Verification limits:** Each task ran once. No task used a double click, a right click or the menu bar, so screen-coordinate `count: 2` and `button: "right"` are untested. No person reviewed the reports; one screenshot was looked at.
