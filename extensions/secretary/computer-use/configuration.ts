@@ -42,7 +42,7 @@ export interface ComputerUseConfiguration {
  * kept npx retrying past the client's 60-second start limit in 3 of 3 starts, and with the flag
  * 3 of 3 starts connected (observed 2026-09-24).
  */
-export const DEFAULT_RELAY_COMMAND = ["npx", "-y", "--prefer-offline", "@wezzard/mcp-vm-relay@0.4.0"];
+export const DEFAULT_RELAY_COMMAND = ["npx", "-y", "--prefer-offline", "@wezzard/mcp-vm-relay@0.6.1"];
 
 export const defaultComputerUseConfiguration = (): ComputerUseConfiguration => ({
   backend: "none",

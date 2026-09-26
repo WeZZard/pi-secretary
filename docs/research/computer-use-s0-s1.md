@@ -782,3 +782,16 @@ The Calculator task of [Section 16.2](#162-calculator-with-thinking-off) ran aga
 **Evidence:** `test-results/e2e/computer-use-delegation/2026-09-25T23-50-46-723Z-5c21edf8/`. It is not versioned.
 
 **Verification limits:** One run of one task. The check "contains 3" after pressing 3 would also hold for a display such as "3+", so a stricter check would have been `endsWith "7+3"`.
+
+### 16.5 Relay 0.6.1
+
+The relay client pinned `@wezzard/mcp-vm-relay@0.4.0` from 2026-09-24. Pi's own installed copy was 0.6.1, published on 2026-09-25. Every live check through 2026-09-26 at 00:09 UTC, including [Sections 16.2 and 16.4](#162-calculator-with-thinking-off), ran on 0.4.0.
+
+- Relay 0.6 replaced the single `relay` tool with one tool per operation: `relay_acquire`, `relay_stage`, `relay_exec`, `relay_code`, `relay_run`, `relay_image`, `relay_finish` and `relay_release`, among 19.
+- `relay_run` sends one tool call to an MCP server inside the machine. For the `cua` target that is the guest's `cua-driver` server, so a click is `relay_run` with the driver's `click` tool.
+- A probe on 2026-09-26 made one call of each kind in a `macos26` machine with 0.6.1. `relay_exec` and `relay_code` return the same result layout as 0.4.0: a line of image-delivery facts, then the execution. Output over 64 KiB is reported as an `uncertain` outcome with the diagnostic "execution exceeded output bound", without an `outputTruncated` field.
+- A `relay_run` result carries the relay's record in its first text block and the driver's text in a second one. It reports `toolOutcome` apart from the relay's own outcome, and the driver's structured result in `structuredContent`.
+- The guest had Node at `/usr/local/pilot-node/bin/node` on its path, and `RELAY_CUA_DRIVER` named `/Applications/CuaDriver.app/Contents/MacOS/cua-driver`. The working directory of a run was the guest workspace.
+- The relay refuses a step title over 500 characters with the message "Invalid relay input: action is required; run and console-open require nonblank reason", which does not name the field. A Finder preparation command of 740 characters failed this way on 0.4.0 in the live check of 2026-09-26 at 00:02 UTC.
+
+**Evidence:** `test-results/computer-use/relay-061-probe-2026-09-26T00-12-16-774Z/`. It is not versioned.

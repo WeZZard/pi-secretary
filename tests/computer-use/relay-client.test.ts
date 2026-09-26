@@ -9,6 +9,8 @@ import { RelayBackend, readProgram, stdioRelayConnect, type RelayConnection } fr
 /** Plan Phase 7: the relay client's contract with an mcp-vm-relay server (design §11.2). */
 
 const server = resolve(import.meta.dirname, "support/scripted-relay-server.ts");
+/** The relay 0.6 tools that perform a recorded run in the guest. */
+const RUN_TOOLS = new Set(["relay_exec", "relay_code", "relay_run"]);
 
 /**
  * A fake guest cua-driver. Its window tree is larger than the guest's 64 KiB output cap, as one
@@ -68,44 +70,46 @@ test("a relay read is one code run that passes the 64 KiB cap, plus the screensh
   assert.ok(!screenshot.includes("iCCP") && screenshot.includes("IDAT"), "The guest program removed the colour profile the relay refuses");
 
   const log = await calls();
-  assert.deepEqual(log.slice(0, 2).map(call => call.action), ["acquire", "stage"]);
+  assert.deepEqual(log.slice(0, 2).map(call => call.relayTool), ["relay_acquire", "relay_stage"]);
   assert.deepEqual(log[0]!.extractions, [{ path: "computer-use-screenshots", name: "computer-use-screenshots" }]);
   assert.equal(log[0]!.image, "macos26");
   assert.equal(log[0]!.env, "default");
   assert.match(log[0]!.session, /^secretary-computer-use-/, "The client runs its own relay session, apart from the parent's");
   assert.equal(log[0]!.project, root);
-  const runs = log.filter(call => call.action === "run");
-  assert.deepEqual(runs.map(call => call.kind), ["code"], "One run lists the windows, reads the active application, warms up, reads and measures the scale");
+  const runs = log.filter(call => RUN_TOOLS.has(call.relayTool));
+  assert.deepEqual(runs.map(call => call.relayTool), ["relay_code"], "One run lists the windows, reads the active application, warms up, reads and measures the scale");
   assert.equal(runs[0]!.step.inputMode, "ordinary");
   assert.equal(runs[0]!.snapshots.afterIntervalMs, 0, "A read waits for nothing");
   assert.equal(runs[0]!.step.id, "cu-0001");
-  const image = log.find(call => call.action === "image")!;
+  const image = log.find(call => call.relayTool === "relay_image")!;
   assert.deepEqual(image.target, { source: "application", name: "computer-use-screenshots", path: "read-0001.png" });
   await backend.readWindow({ app: "Finder", windowTitle: "Documents" }, { screenshot: false });
-  assert.equal((await calls()).filter(call => call.action === "image").length, 1, "A read without a screenshot fetches no image");
+  assert.equal((await calls()).filter(call => call.relayTool === "relay_image").length, 1, "A read without a screenshot fetches no image");
   assert.deepEqual(await driverCalls(), ["list_windows", "get_window_state", "get_window_state with screenshot", "list_windows", "get_window_state with screenshot"],
     "Only the first read of a window makes the warm-up read");
   await assert.rejects(backend.readWindow({ app: "Safari" }, { screenshot: false }),
     (error: unknown) => error instanceof BackendError && error.code === "app_not_running", "The guest chose the window with the client's own rules");
   const server = Number(await readFile(join(root, "server.pid"), "utf8"));
   await backend.close();
-  assert.equal((await calls()).at(-1)!.action, "finish", "Closing delivers the evidence and releases the machine");
+  assert.equal((await calls()).at(-1)!.relayTool, "relay_finish", "Closing delivers the evidence and releases the machine");
   const alive = () => { try { process.kill(server, 0); return true; } catch { return false; } };
   for (const deadline = Date.now() + 5000; alive() && Date.now() < deadline;) await new Promise(done => setTimeout(done, 50));
   assert.equal(alive(), false, "Closing ends the relay server process");
 });
 
-test("a relay click is one cua run of real pointer input at window pixels", async t => {
+test("a relay click is one relay_run call to the guest's cua-driver, with real pointer input at window pixels", async t => {
   const { backend, calls } = await scripted(t);
   const read = await backend.readWindow({ app: "Finder" }, { screenshot: true });
   await backend.act(read.window, { kind: "click", point: { x: 150, y: 70 }, button: "left", count: 1 });
-  const runs = (await calls()).filter(call => call.action === "run");
-  assert.deepEqual(runs.map(call => call.kind), ["code", "cua"], "The click reuses the read's bounds and scale");
-  const cua = runs.filter(call => call.kind === "cua");
+  const runs = (await calls()).filter(call => RUN_TOOLS.has(call.relayTool));
+  assert.deepEqual(runs.map(call => call.relayTool), ["relay_code", "relay_run"], "The click reuses the read's bounds and scale");
+  const cua = runs.filter(call => call.relayTool === "relay_run");
+  assert.equal(cua[0]!.target, "cua");
   assert.equal(cua[0]!.tool, "click");
   assert.deepEqual({ x: cua[0]!.args.x, y: cua[0]!.args.y, delivery: cua[0]!.args.delivery_mode }, { x: 100, y: 40, delivery: "foreground" }, "Points become pixels at the learned scale of 2");
   assert.equal(cua[0]!.args.element_index, undefined, "No accessibility activation");
-  assert.equal(cua[0]!.snapshots.afterIntervalMs, 300);
+  assert.equal(cua[0]!.afterIntervalMs, 300);
+  assert.match(cua[0]!.reason, /^Secretary computer use: Input with click \(cu-0002\)$/);
 });
 
 test("the read program prints the driver's output compressed", () => {
@@ -116,11 +120,11 @@ test("the read program prints the driver's output compressed", () => {
 
 /** An in-memory relay that answers every run with the given execution. */
 function answering(execution: Record<string, unknown>) {
-  const inputs: Record<string, any>[] = [];
+  const inputs: string[] = [];
   const connection: RelayConnection = {
-    async call(input) {
-      inputs.push(input);
-      if (input.action !== "run") return { text: "{}", isError: false };
+    async call(tool) {
+      inputs.push(tool);
+      if (!RUN_TOOLS.has(tool)) return { text: "{}", isError: false };
       return { text: `${JSON.stringify({ imageDelivery: { status: "attached" }, executionFailed: true })}\n${JSON.stringify(execution)}`, isError: true };
     },
     async close() {},
@@ -133,31 +137,32 @@ test("an uncertain relay outcome is a backend failure and is not sent again", as
   const { backend, inputs } = answering({ outcome: { kind: "uncertain", diagnostic: "receiver error" } });
   await assert.rejects(backend.readWindow({ app: "Finder" }, { screenshot: false }),
     (error: unknown) => error instanceof BackendError && error.code === "driver_failed" && /uncertain: receiver error/.test(error.message));
-  assert.equal(inputs.filter(input => input.action === "run").length, 1);
+  assert.equal(inputs.filter(tool => RUN_TOOLS.has(tool)).length, 1);
 });
 
 test("output cut at the relay's cap is state_too_large", async () => {
-  const { backend } = answering({ outcome: { kind: "uncertain", diagnostic: "execution exceeded output bound" }, stdout: "x", outputTruncated: true });
+  // Relay 0.6 reports only the uncertain outcome, without stdout or an outputTruncated field (probed 2026-09-26).
+  const { backend } = answering({ outcome: { kind: "uncertain", diagnostic: "execution exceeded output bound" }, timeoutMs: 120000 });
   await assert.rejects(backend.readWindow({ app: "Finder" }, { screenshot: false }),
     (error: unknown) => error instanceof BackendError && error.code === "state_too_large");
 });
 
 test("a refused acquisition is reported, and the next call tries again", async () => {
   let attempts = 0;
-  const backend = new RelayBackend({ connect: async () => ({ async call(input) { if (input.action === "acquire") attempts++; return { text: "No capacity", isError: true }; }, async close() {} }),
+  const backend = new RelayBackend({ connect: async () => ({ async call(tool) { if (tool === "relay_acquire") attempts++; return { text: "No capacity", isError: true }; }, async close() {} }),
     image: "macos26", ttlHours: 1, maxTreeNodes: 2000, foregroundDelivery: false, actionIntervalMs: 0 });
-  await assert.rejects(backend.readWindow({ app: "Finder" }, { screenshot: false }), /relay acquire failed: No capacity/);
-  await assert.rejects(backend.readWindow({ app: "Finder" }, { screenshot: false }), /relay acquire failed/);
+  await assert.rejects(backend.readWindow({ app: "Finder" }, { screenshot: false }), /relay_acquire failed: No capacity/);
+  await assert.rejects(backend.readWindow({ app: "Finder" }, { screenshot: false }), /relay_acquire failed/);
   assert.equal(attempts, 2);
 });
 
 test("a failed finish releases the machine and reports that the package was not delivered", async () => {
   const actions: string[] = [];
   const connection: RelayConnection = {
-    async call(input) {
-      actions.push(String(input.action));
-      if (input.action === "finish") return { text: "Guest setup/transfer command failed (1): extraction exceeds 512MiB / 10000 files", isError: true };
-      if (input.action === "run") return { text: `${JSON.stringify({ imageDelivery: { status: "attached" }, executionFailed: false })}\n${JSON.stringify({ outcome: { kind: "completed", exitStatus: { code: 0, signal: null } }, stdout: "" })}`, isError: false };
+    async call(tool) {
+      actions.push(tool);
+      if (tool === "relay_finish") return { text: "Guest setup/transfer command failed (1): extraction exceeds 512MiB / 10000 files", isError: true };
+      if (RUN_TOOLS.has(tool)) return { text: `${JSON.stringify({ imageDelivery: { status: "attached" }, executionFailed: false })}\n${JSON.stringify({ outcome: { kind: "completed", exitStatus: { code: 0, signal: null } }, stdout: "" })}`, isError: false };
       return { text: "{}", isError: false };
     },
     async close() { actions.push("closed"); },
@@ -165,20 +170,20 @@ test("a failed finish releases the machine and reports that the package was not 
   const backend = new RelayBackend({ connect: async () => connection, image: "macos26", ttlHours: 1, maxTreeNodes: 2000, foregroundDelivery: false, actionIntervalMs: 0 });
   await backend.readWindow({ app: "Finder" }, { screenshot: false }).catch(() => undefined);
   await assert.rejects(backend.close(), /evidence package was not delivered: .*512MiB.*The machine was released\./);
-  assert.deepEqual(actions.slice(-3), ["finish", "release", "closed"]);
+  assert.deepEqual(actions.slice(-3), ["relay_finish", "relay_release", "closed"]);
 });
 
 test("preparation runs once after staging, and a failed start releases the machine it acquired", async () => {
   const actions: string[] = [];
   let failPrepare = true;
   const connection: RelayConnection = {
-    async call(input) {
-      actions.push(input.action === "run" ? `run ${input.kind} ${(input.argv as string[] | undefined)?.join(" ") ?? ""}`.trim() : String(input.action));
-      if (input.action === "run" && input.kind === "exec" && failPrepare) {
+    async call(tool, args) {
+      actions.push(RUN_TOOLS.has(tool) ? `${tool} ${(args.argv as string[] | undefined)?.join(" ") ?? ""}`.trim() : tool);
+      if (tool === "relay_exec" && failPrepare) {
         failPrepare = false;
         return { text: `${JSON.stringify({ imageDelivery: { status: "attached" }, executionFailed: true })}\n${JSON.stringify({ outcome: { kind: "completed", exitStatus: { code: 1, signal: null } }, stderr: "no such app" })}`, isError: true };
       }
-      if (input.action === "run") return { text: `${JSON.stringify({ imageDelivery: { status: "attached" }, executionFailed: false })}\n${JSON.stringify({ outcome: { kind: "completed", exitStatus: { code: 0, signal: null } }, stdout: "" })}`, isError: false };
+      if (RUN_TOOLS.has(tool)) return { text: `${JSON.stringify({ imageDelivery: { status: "attached" }, executionFailed: false })}\n${JSON.stringify({ outcome: { kind: "completed", exitStatus: { code: 0, signal: null } }, stdout: "" })}`, isError: false };
       return { text: "{}", isError: false };
     },
     async close() { actions.push("closed"); },
@@ -186,21 +191,21 @@ test("preparation runs once after staging, and a failed start releases the machi
   const backend = new RelayBackend({ connect: async () => connection, image: "macos26", ttlHours: 1, maxTreeNodes: 2000, foregroundDelivery: false, actionIntervalMs: 0,
     prepare: [["/usr/bin/open", "-a", "Calculator"]] });
   await assert.rejects(backend.readWindow({ app: "Calculator" }, { screenshot: false }), /Prepare: \/usr\/bin\/open -a Calculator/);
-  assert.deepEqual(actions, ["acquire", "stage", "run exec /usr/bin/open -a Calculator", "release", "closed"]);
+  assert.deepEqual(actions, ["relay_acquire", "relay_stage", "relay_exec /usr/bin/open -a Calculator", "relay_release", "closed"]);
   actions.length = 0;
   await backend.readWindow({ app: "Calculator" }, { screenshot: false }).catch(() => undefined);
-  assert.deepEqual(actions.slice(0, 4), ["acquire", "stage", "run exec /usr/bin/open -a Calculator", "run code"]);
+  assert.deepEqual(actions.slice(0, 4), ["relay_acquire", "relay_stage", "relay_exec /usr/bin/open -a Calculator", "relay_code"]);
   await backend.readWindow({ app: "Calculator" }, { screenshot: false }).catch(() => undefined);
-  assert.equal(actions.filter(action => action.startsWith("run exec")).length, 1, "Preparation runs once per machine");
+  assert.equal(actions.filter(action => action.startsWith("relay_exec")).length, 1, "Preparation runs once per machine");
 });
 
 test("a long preparation command is sent with a title the relay accepts", async () => {
   // The relay rejects a step title over 500 characters (observed 2026-09-26 with a Finder fixture command).
   const titles: string[] = [];
   const connection: RelayConnection = {
-    async call(input) {
-      if (input.action === "run") titles.push((input.step as { title: string }).title, String(input.reason));
-      return input.action === "run" ? { text: `${JSON.stringify({ imageDelivery: { status: "attached" }, executionFailed: false })}\n${JSON.stringify({ outcome: { kind: "completed", exitStatus: { code: 0, signal: null } }, stdout: "" })}`, isError: false }
+    async call(tool, args) {
+      if (RUN_TOOLS.has(tool)) titles.push((args.step as { title: string }).title, String(args.reason));
+      return RUN_TOOLS.has(tool) ? { text: `${JSON.stringify({ imageDelivery: { status: "attached" }, executionFailed: false })}\n${JSON.stringify({ outcome: { kind: "completed", exitStatus: { code: 0, signal: null } }, stdout: "" })}`, isError: false }
         : { text: "{}", isError: false };
     },
     async close() {},
@@ -217,9 +222,9 @@ test("a long preparation command is sent with a title the relay accepts", async 
 test("a cancelled read is not sent again, and closing still finishes the lease", async () => {
   const actions: string[] = [];
   const connection: RelayConnection = {
-    async call(input, { signal }) {
-      actions.push(input.action === "run" ? `run ${input.kind}` : String(input.action));
-      if (input.action !== "run") return { text: "{}", isError: false };
+    async call(tool, _args, { signal }) {
+      actions.push(tool);
+      if (!RUN_TOOLS.has(tool)) return { text: "{}", isError: false };
       // The run waits until the caller cancels it, as a long relay run would.
       return new Promise((_resolve, reject) => signal?.addEventListener("abort", () => reject(new Error("request cancelled")), { once: true }));
     },
@@ -228,9 +233,26 @@ test("a cancelled read is not sent again, and closing still finishes the lease",
   const backend = new RelayBackend({ connect: async () => connection, image: "macos26", ttlHours: 1, maxTreeNodes: 2000, foregroundDelivery: false, actionIntervalMs: 0 });
   const controller = new AbortController();
   const read = backend.readWindow({ app: "Calculator" }, { screenshot: false, signal: controller.signal });
-  while (!actions.includes("run code")) await new Promise(done => setTimeout(done, 5));
+  while (!actions.includes("relay_code")) await new Promise(done => setTimeout(done, 5));
   controller.abort();
   await assert.rejects(read, (error: unknown) => error instanceof BackendError && error.code === "aborted");
   await backend.close();
-  assert.deepEqual(actions, ["acquire", "stage", "run code", "finish", "closed"], "One run, never repeated, and the lease is finished");
+  assert.deepEqual(actions, ["relay_acquire", "relay_stage", "relay_code", "relay_finish", "closed"], "One run, never repeated, and the lease is finished");
+});
+
+test("a cua-driver tool that fails inside a completed relay_run is a backend failure", async t => {
+  const calls: string[] = [];
+  const connection: RelayConnection = {
+    async call(tool) {
+      calls.push(tool);
+      if (tool === "relay_run") return { text: `${JSON.stringify({ imageDelivery: { status: "attached" } })}\n${JSON.stringify({ outcome: { kind: "completed", exitStatus: { code: 0, signal: null } }, toolOutcome: "tool-error" })}`, isError: false };
+      return { text: "{}", isError: false };
+    },
+    async close() {},
+  };
+  const backend = new RelayBackend({ connect: async () => connection, image: "macos26", ttlHours: 1, maxTreeNodes: 2000, foregroundDelivery: false, actionIntervalMs: 0 });
+  t.after(() => backend.close());
+  await assert.rejects(backend.act({ pid: 1, windowId: 5, app: "Finder", title: "Documents" }, { kind: "key", key: "return", modifiers: [] }),
+    (error: unknown) => error instanceof BackendError && error.code === "driver_failed" && /cua-driver press_key was tool-error/.test(error.message));
+  assert.equal(calls.filter(tool => tool === "relay_run").length, 1, "Not sent again");
 });

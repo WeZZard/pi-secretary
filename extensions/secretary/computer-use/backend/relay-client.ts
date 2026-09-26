@@ -13,9 +13,13 @@ import { LocalDriverBackend, selectWindow, toWindowRead, windowRef, type DriverR
  * driver calls, the active-application source and the screenshot files.
  */
 
-/** One call of the server's `relay` tool: the text block, and whether the server marked it an error. */
+/**
+ * One call of a relay tool, such as `relay_code` (mcp-vm-relay 0.6): the first text block, which
+ * holds the relay's record, and whether the server marked the call an error. A `relay_run` result
+ * has a second text block with the target tool's own text, which the client does not need.
+ */
 export interface RelayConnection {
-  call(input: Record<string, unknown>, options: { timeoutMs: number; signal?: AbortSignal }): Promise<{ text: string; isError: boolean }>;
+  call(tool: string, args: Record<string, unknown>, options: { timeoutMs: number; signal?: AbortSignal }): Promise<{ text: string; isError: boolean }>;
   close(): Promise<void>;
 }
 export type RelayConnect = () => Promise<RelayConnection>;
@@ -34,10 +38,10 @@ export function stdioRelayConnect(options: { command: string[]; cwd: string }): 
     // A first start may download the package, so it gets longer than a request.
     await client.connect(transport, { timeout: 5 * 60_000 });
     return {
-      async call(input, { timeoutMs, signal }) {
-        const result = await client.callTool({ name: "relay", arguments: input }, undefined, { timeout: timeoutMs, signal });
+      async call(tool, args, { timeoutMs, signal }) {
+        const result = await client.callTool({ name: tool, arguments: args }, undefined, { timeout: timeoutMs, signal });
         const blocks = (result.content ?? []) as { type: string; text?: string }[];
-        return { text: blocks.filter(block => block.type === "text").map(block => block.text ?? "").join("\n"), isError: result.isError === true };
+        return { text: blocks.find(block => block.type === "text")?.text ?? "", isError: result.isError === true };
       },
       close: () => client.close(),
     };
@@ -56,6 +60,9 @@ export interface RelayExecution {
   stdout?: string;
   stderr?: string;
   outputTruncated?: boolean;
+  /** `relay_run` only: whether the target tool itself completed, and its structured result. */
+  toolOutcome?: string;
+  structuredContent?: unknown;
 }
 
 /** Step titles are shortened to this length; the relay accepts at most 500 characters. */
@@ -84,15 +91,15 @@ export class RelaySession {
   constructor(connect: RelayConnect, acquire: { image: string; env?: string; ttlHours: number; prepare?: string[][] }) {
     this.#connect = connect;
     this.#prepare = acquire.prepare ?? [];
-    this.#acquire = { action: "acquire", task: "computer-use", image: acquire.image, extractions: [{ path: SCREENSHOT_EXTRACTION, name: SCREENSHOT_EXTRACTION }],
+    this.#acquire = { task: "computer-use", image: acquire.image, extractions: [{ path: SCREENSHOT_EXTRACTION, name: SCREENSHOT_EXTRACTION }],
       ttlHours: acquire.ttlHours, ...(acquire.env ? { env: acquire.env } : {}) };
   }
 
-  async #call(connection: RelayConnection, input: Record<string, unknown>, timeoutMs: number, signal?: AbortSignal) {
-    try { return await connection.call(input, { timeoutMs, signal }); }
+  async #call(connection: RelayConnection, tool: string, args: Record<string, unknown>, timeoutMs: number, signal?: AbortSignal) {
+    try { return await connection.call(tool, args, { timeoutMs, signal }); }
     catch (error) {
-      if (signal?.aborted) throw new BackendError("aborted", `relay ${String(input.action)} was cancelled`);
-      throw new BackendError("driver_failed", `relay ${String(input.action)} failed: ${error instanceof Error ? error.message : String(error)}`);
+      if (signal?.aborted) throw new BackendError("aborted", `${tool} was cancelled`);
+      throw new BackendError("driver_failed", `${tool} failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -102,9 +109,9 @@ export class RelaySession {
       const connection = await this.#connect();
       let acquired = false;
       try {
-        for (const input of [this.#acquire, { action: "stage" }]) {
-          const result = await this.#call(connection, input, 15 * 60_000, signal);
-          if (result.isError) throw new BackendError("driver_failed", `relay ${String(input.action)} failed: ${result.text.slice(0, 500)}`);
+        for (const [tool, args] of [["relay_acquire", this.#acquire], ["relay_stage", {}]] as const) {
+          const result = await this.#call(connection, tool, args, 15 * 60_000, signal);
+          if (result.isError) throw new BackendError("driver_failed", `${tool} failed: ${result.text.slice(0, 500)}`);
           acquired = true;
         }
         // Configured preparation, such as opening the application a task needs, runs once after staging.
@@ -115,7 +122,7 @@ export class RelaySession {
         return connection;
       } catch (error) {
         // The next attempt starts a new server, which would acquire a second machine; this one is released.
-        if (acquired) await connection.call({ action: "release" }, { timeoutMs: 5 * 60_000 }).catch(() => undefined);
+        if (acquired) await connection.call("relay_release", {}, { timeoutMs: 5 * 60_000 }).catch(() => undefined);
         await connection.close().catch(() => undefined);
         throw error;
       }
@@ -139,18 +146,27 @@ export class RelaySession {
     // The relay rejects a step title over 500 characters with a generic input error; a Finder
     // preparation command that wrote 40 fixture files was 740 characters (observed 2026-09-26).
     const title = input.title.length > TITLE_LIMIT ? `${input.title.slice(0, TITLE_LIMIT - 1)}…` : input.title;
-    const result = await this.#call(connection, { action: "run", kind: input.kind, reason: `Secretary computer use: ${title}`,
-      step: { id, title, expected: input.expected, inputMode: "ordinary" }, snapshots: { afterIntervalMs: input.afterIntervalMs },
-      timeoutMs: input.timeoutMs, ...input.body }, input.timeoutMs + RELAY_OVERHEAD_MS, signal);
+    const reason = `Secretary computer use: ${title} (${id})`;
+    // A command or program run records the client's step; a driver tool call sends the call to the
+    // relay's own cua-driver server in the guest, which takes a reason but no step record.
+    const [tool, args] = input.kind === "cua"
+      ? ["relay_run", { target: "cua", tool: input.body.tool, args: input.body.args, reason, expected: input.expected, afterIntervalMs: input.afterIntervalMs, timeoutMs: input.timeoutMs }]
+      : [input.kind === "exec" ? "relay_exec" : "relay_code", { reason, step: { id, title, expected: input.expected, inputMode: "ordinary" },
+        snapshots: { afterIntervalMs: input.afterIntervalMs }, timeoutMs: input.timeoutMs, ...input.body }];
+    const result = await this.#call(connection, tool, args, input.timeoutMs + RELAY_OVERHEAD_MS, signal);
     let execution: RelayExecution | undefined;
     try { execution = await resultBody(result.text) as RelayExecution; }
     catch { execution = undefined; }
-    if (!execution?.outcome) throw new BackendError("driver_failed", `relay run ${id} failed: ${result.text.slice(0, 500)}`);
-    if (execution.outputTruncated) throw new BackendError("state_too_large", `${input.title}: the output passed the relay's 64 KiB limit`);
+    if (!execution?.outcome) throw new BackendError("driver_failed", `${tool} ${id} failed: ${result.text.slice(0, 500)}`);
     const { outcome } = execution;
+    // The guest caps a run's output at 64 KiB; relay 0.6 reports it as an uncertain outcome (probed 2026-09-26).
+    if (execution.outputTruncated || /output bound/.test(outcome.diagnostic ?? "")) throw new BackendError("state_too_large", `${input.title}: the output passed the relay's 64 KiB limit`);
     if (outcome.kind !== "completed" || outcome.exitStatus?.code !== 0) {
       const detail = outcome.kind === "completed" ? `exit ${outcome.exitStatus?.code ?? outcome.exitStatus?.signal}: ${(execution.stderr ?? "").trim().slice(0, 400)}` : outcome.diagnostic ?? "";
-      throw new BackendError("driver_failed", `relay run ${id} (${input.title}) was ${outcome.kind}: ${detail}`.trim());
+      throw new BackendError("driver_failed", `${tool} ${id} (${input.title}) was ${outcome.kind}: ${detail}`.trim());
+    }
+    if (input.kind === "cua" && execution.toolOutcome !== undefined && execution.toolOutcome !== "completed") {
+      throw new BackendError("driver_failed", `${tool} ${id} (${input.title}): cua-driver ${String(input.body.tool)} was ${execution.toolOutcome}`);
     }
     return execution;
   }
@@ -158,7 +174,7 @@ export class RelaySession {
   /** The untouched original of an image in the screenshot extraction, read from this machine. */
   async screenshot(path: string, signal?: AbortSignal): Promise<Buffer> {
     const connection = await this.#connection(signal);
-    const result = await this.#call(connection, { action: "image", target: { source: "application", name: SCREENSHOT_EXTRACTION, path } }, 120_000, signal);
+    const result = await this.#call(connection, "relay_image", { target: { source: "application", name: SCREENSHOT_EXTRACTION, path } }, 120_000, signal);
     const facts = JSON.parse(result.text.split("\n")[0]!) as { imageDelivery?: { status?: string; image?: { originalPath?: string }; diagnostic?: string } };
     const original = facts.imageDelivery?.image?.originalPath;
     if (facts.imageDelivery?.status !== "attached" || !original) {
@@ -169,9 +185,9 @@ export class RelaySession {
 
   /**
    * Delivers the evidence package and releases the machine. A failed `finish` keeps the lease, so
-   * the client then releases it without the package: `finish` pulls the whole guest recording in
-   * one transfer capped at 512 MiB, and two display screenshots per run passed that cap in a
-   * 40-run check (research §15). The failure is still reported.
+   * the client then releases it without the package. With relay 0.4, `finish` pulled the whole
+   * guest recording in one transfer capped at 512 MiB, and two display screenshots per run passed
+   * that cap in a 40-run check (research §15). The failure is still reported.
    */
   async close(): Promise<void> {
     const ready = this.#ready;
@@ -180,9 +196,9 @@ export class RelaySession {
     const connection = await ready.catch(() => undefined);
     if (!connection) return;
     try {
-      const finished = await this.#call(connection, { action: "finish" }, 15 * 60_000);
+      const finished = await this.#call(connection, "relay_finish", {}, 15 * 60_000);
       if (!finished.isError) return;
-      const released = await this.#call(connection, { action: "release" }, 5 * 60_000);
+      const released = await this.#call(connection, "relay_release", {}, 5 * 60_000);
       throw new BackendError("driver_failed", `relay finish failed, so the evidence package was not delivered: ${finished.text.slice(0, 300)}. `
         + (released.isError ? `Release also failed, and the machine remains until its lease expires: ${released.text.slice(0, 300)}` : "The machine was released."));
     } finally {
@@ -317,8 +333,7 @@ export function relayDriverRunner(session: RelaySession, options: { actionInterv
     }
     const execution = await session.run({ kind: "cua", title: `Input with ${tool}`, expected: "The window reacts to the input", afterIntervalMs: options.actionIntervalMs, timeoutMs,
       body: { tool, args } }, signal);
-    try { return JSON.parse(execution.stdout ?? ""); }
-    catch { return {}; }
+    return execution.structuredContent ?? {};
   };
 }
 
