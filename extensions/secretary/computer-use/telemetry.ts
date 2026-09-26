@@ -16,6 +16,15 @@ export class Telemetry {
   readonly root: string;
   constructor(root: string) { this.root = root; }
 
+  /** Evaluation design §3: the results of the relay checks, one record per lease. */
+  async recordCheck(results: { argv: string[]; completed: boolean; stdout: string; error?: string }[]): Promise<string> {
+    const directory = join(this.root, "checks");
+    await mkdir(directory, { recursive: true });
+    const path = join(directory, `check-${Date.now()}.json`);
+    await writeFile(path, `${JSON.stringify({ schema: "secretary.computer-use.check/1", recordedAt: new Date().toISOString(), results }, null, 1)}\n`, { mode: 0o600 });
+    return path;
+  }
+
   async recordObservation(read: WindowRead, result: Observation | ObservationFailure, context: { attempt: number; purpose: string }): Promise<string> {
     const directory = join(this.root, "observations");
     await mkdir(directory, { recursive: true });

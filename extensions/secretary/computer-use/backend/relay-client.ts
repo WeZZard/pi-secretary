@@ -109,18 +109,26 @@ async function resultBody(text: string): Promise<unknown> {
   return JSON.parse(body);
 }
 
+/** One check command's result (evaluation design §3). `stdout` is empty when the command did not complete. */
+export interface CheckResult { argv: string[]; completed: boolean; stdout: string; error?: string }
+
 /** The lease, from acquisition on first use to `finish` on close. */
 export class RelaySession {
   readonly #connect: RelayConnect;
   readonly #acquire: Record<string, unknown>;
   readonly #prepare: string[][];
+  readonly #check: string[][];
+  readonly #onCheck?: (results: CheckResult[]) => Promise<void> | void;
   #ready?: Promise<RelayConnection>;
   #sequence = 0;
   #label?: string;
   #issued: string[] = [];
-  constructor(connect: RelayConnect, acquire: { image: string; env?: string; ttlHours: number; prepare?: string[][] }) {
+  constructor(connect: RelayConnect, acquire: { image: string; env?: string; ttlHours: number; prepare?: string[][]; check?: string[][];
+    onCheck?: (results: CheckResult[]) => Promise<void> | void; }) {
     this.#connect = connect;
     this.#prepare = acquire.prepare ?? [];
+    this.#check = acquire.check ?? [];
+    this.#onCheck = acquire.onCheck;
     this.#acquire = { task: "computer-use", image: acquire.image, extractions: [{ path: SCREENSHOT_EXTRACTION, name: SCREENSHOT_EXTRACTION }],
       ttlHours: acquire.ttlHours, ...(acquire.env ? { env: acquire.env } : {}) };
   }
@@ -240,6 +248,21 @@ export class RelaySession {
     const connection = await ready.catch(() => undefined);
     if (!connection) return;
     try {
+      // Evaluation design §3: the checks read the machine the run left, so they run before the
+      // finish, on a lease that exists. A check that fails is recorded and the others still run.
+      if (this.#check.length) {
+        const results: CheckResult[] = [];
+        for (const argv of this.#check) {
+          try {
+            const execution = await this.#runOn(connection, { kind: "exec", title: `Check: ${argv.join(" ")}`, expected: "The check prints its result",
+              afterIntervalMs: 0, timeoutMs: 180_000, body: { argv } });
+            results.push({ argv, completed: true, stdout: execution.stdout ?? "" });
+          } catch (error) {
+            results.push({ argv, completed: false, stdout: "", error: error instanceof Error ? error.message : String(error) });
+          }
+        }
+        await Promise.resolve(this.#onCheck?.(results)).catch(() => undefined);
+      }
       const finished = await this.#call(connection, "relay_finish", {}, 15 * 60_000);
       if (!finished.isError) return;
       const released = await this.#call(connection, "relay_release", {}, 5 * 60_000);
@@ -435,6 +458,9 @@ export interface RelayBackendOptions {
   timeoutMs?: number;
   /** Commands run in the guest once after staging, such as `open -a Calculator`. */
   prepare?: string[][];
+  /** Commands run in the guest once before the lease is finished, and where their results go (evaluation design §3). */
+  check?: string[][];
+  onCheck?: (results: CheckResult[]) => Promise<void> | void;
   /** The guest's `lsappinfo`; tests replace it. */
   guestLsappinfo?: string;
 }

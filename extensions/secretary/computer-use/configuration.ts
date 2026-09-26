@@ -41,6 +41,11 @@ export interface ComputerUseConfiguration {
   relayTtlHours: number;
   /** Commands run in the relay machine once after staging, because the tools do not launch applications. */
   relayPrepare: string[][];
+  /**
+   * Evaluation design §3: commands run in the relay machine once, after the child run and before
+   * the lease is finished, such as a benchmark task's checking script. Their output is recorded.
+   */
+  relayCheck: string[][];
 }
 
 /**
@@ -70,6 +75,7 @@ export const defaultComputerUseConfiguration = (): ComputerUseConfiguration => (
   relayCommand: DEFAULT_RELAY_COMMAND,
   relayTtlHours: 2,
   relayPrepare: [],
+  relayCheck: [],
 });
 
 type Field = keyof ComputerUseConfiguration;
@@ -97,6 +103,8 @@ const VALIDATORS: Record<Field, { check: (value: unknown) => boolean; expected: 
   relayImage: { check: value => typeof value === "string" && value.trim().length > 0, expected: "a non-empty string" },
   relayEnv: { check: value => typeof value === "string" && value.trim().length > 0, expected: "a non-empty string" },
   relayPrepare: { check: value => Array.isArray(value) && value.every(argv => Array.isArray(argv) && argv.length > 0 && argv.every(part => typeof part === "string" && part.length > 0)),
+    expected: "an array of non-empty command arrays" },
+  relayCheck: { check: value => Array.isArray(value) && value.every(argv => Array.isArray(argv) && argv.length > 0 && argv.every(part => typeof part === "string" && part.length > 0)),
     expected: "an array of non-empty command arrays" },
   relayTtlHours: { check: value => typeof value === "number" && value >= 0.1 && value <= 720, expected: "a number from 0.1 to 720" },
 };

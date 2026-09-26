@@ -4,7 +4,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { BackendError } from "../../extensions/secretary/computer-use/backend/backend.ts";
-import { RelayBackend, desktopScaleOf, readProgram, stdioRelayConnect, type RelayConnection } from "../../extensions/secretary/computer-use/backend/relay-client.ts";
+import { RelayBackend, desktopScaleOf, readProgram, stdioRelayConnect, type CheckResult, type RelayConnection } from "../../extensions/secretary/computer-use/backend/relay-client.ts";
 
 /** Plan Phase 7: the relay client's contract with an mcp-vm-relay server (design §11.2). */
 
@@ -201,6 +201,31 @@ test("a failed finish releases the machine and reports that the package was not 
   await backend.readWindow({ app: "Finder" }, { screenshot: false }).catch(() => undefined);
   await assert.rejects(backend.close(), /evidence package was not delivered: .*512MiB.*The machine was released\./);
   assert.deepEqual(actions.slice(-3), ["relay_finish", "relay_release", "closed"]);
+});
+
+test("checks run on the leased machine before the finish, and a failing check is recorded without stopping the others (evaluation design §3)", async () => {
+  const actions: string[] = [];
+  const connection: RelayConnection = {
+    async call(tool, args) {
+      const argv = (args.argv as string[] | undefined)?.join(" ");
+      actions.push(RUN_TOOLS.has(tool) && argv ? `${tool} ${argv}` : tool);
+      const exit = argv?.includes("fails") ? 1 : 0;
+      if (RUN_TOOLS.has(tool)) return { text: `${JSON.stringify({ imageDelivery: { status: "attached" }, executionFailed: exit !== 0 })}\n${JSON.stringify({ outcome: { kind: "completed", exitStatus: { code: exit, signal: null } }, stdout: argv?.includes("passes") ? "True\n" : "" })}`, isError: exit !== 0 };
+      return { text: "{}", isError: false };
+    },
+    async close() { actions.push("closed"); },
+  };
+  const recorded: CheckResult[][] = [];
+  const backend = new RelayBackend({ connect: async () => connection, image: "macos26", ttlHours: 1, maxTreeNodes: 2000, foregroundDelivery: false, actionIntervalMs: 0,
+    check: [["/bin/zsh", "-c", "fails"], ["/bin/zsh", "-c", "passes"]], onCheck: results => { recorded.push(results); } });
+  await backend.close();
+  assert.deepEqual(actions, [], "A session that never acquired a machine checks nothing");
+  await backend.readWindow({ app: "Reminders" }, { screenshot: false }).catch(() => undefined);
+  await backend.close();
+  assert.deepEqual(actions, ["relay_acquire", "relay_stage", "relay_code", "relay_exec /bin/zsh -c fails", "relay_exec /bin/zsh -c passes", "relay_finish", "closed"]);
+  assert.equal(recorded.length, 1);
+  assert.deepEqual(recorded[0]!.map(result => [result.completed, result.stdout]), [[false, ""], [true, "True\n"]]);
+  assert.match(recorded[0]![0]!.error!, /Check: \/bin\/zsh -c fails/);
 });
 
 test("preparation runs once after staging, and a failed start releases the machine it acquired", async () => {

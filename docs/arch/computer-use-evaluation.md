@@ -38,8 +38,9 @@ A task is an instruction, preparation steps, and a checking script. One task run
 
 1. The relay client acquires a machine and runs the task's preparation in the guest with the existing `computerUse.relayPrepare` commands.
 2. Pi delegates the task's instruction, unchanged, to the computer-use agent.
-3. After the child run ends and before the lease is finished, the relay client runs the task's checking script in the guest. This needs a new configuration field, `computerUse.relayCheck`, a list of commands run once before `relay_finish`, like `relayPrepare` after staging. Their output is recorded as relay steps in the evidence package.
-4. The runner reads the check's score from the evidence package and writes one result record: task, run, score, the agent's final report, the outcome of each plan, and a link to `report.html`.
+3. After the child run ends and before the lease is finished, the relay client runs the task's checking script in the guest. The configuration field `computerUse.relayCheck` is a list of commands run once before `relay_finish`, like `relayPrepare` after staging. Their output is recorded as relay steps in the evidence package and as a `checks/check-<time>.json` record next to the run's other records. The runner keeps Pi running until that record exists, because the checks run while the child session closes.
+4. A task is scored as MacArena scores it: its checks worth 100 are tried in order, the first that prints "true" scores 1, one that prints anything else lets the next try, and one that does not run ends grading with 0.
+5. The runner, `scripts/computer-use/macarena-run.ts`, writes one result line per run: task, run, score, failure cause (Section 4), the agent's final report, the check output, and the run's artifact directory with `report.html`.
 
 - A task counts as passed when its score is 1.
 - Preparation that uses AppleScript or shell commands is setup, not agent input, so input mode ([design Section 11.4](computer-use.md#114-input-mode)) does not apply to it.
@@ -47,16 +48,19 @@ A task is an instruction, preparation steps, and a checking script. One task run
 
 ## 4. Failure causes
 
-Each failed run gets one cause, taken from the run's records in this order:
+Each failed run gets one cause, taken from the run's records in this order. The first two are failures of the evaluation harness, not of the agent, and are reported apart.
 
 | Cause | How it is found |
 | --- | --- |
-| `false_success` | The agent reported success, and the check scored below 1. This breaks CU-05 and is the most serious cause. |
+| `setup_failed` | A preparation command failed, so the task never started as written. |
+| `check_failed` | A checking script did not run, or its result is missing. |
+| `false_success` | The agent's last plan completed, with every step checked by the agent's own code, and the task's check scored below 1. This breaks CU-05 and is the most serious agent cause. The agent's written report is kept for review, but the cause is decided from the plan record, not from its wording. |
 | `destructive` | An action ran that the risk question judged destructive, without authority. This breaks CU-04. |
 | `out_of_scope` | The task needs something the approved requirements exclude, such as launching an application, several applications, or a browser page through a browser protocol. It is found from the agent's report and from `app_not_running` observations. |
 | An escalation reason | The last plan stopped with a reason such as `target_not_found`, `no_progress`, `postcondition_failed` or `input_mode`. |
 | A rejection rule | Every plan was rejected, with rules such as `needs_text` or `ios_target`. |
-| `wrong_result` | The agent reported that it stopped or failed, and the check scored below 1. |
+| `no_plan` | No plan ran and none was rejected, for example when the agent only observed. |
+| `wrong_result` | None of the above, and the check scored below 1. |
 
 - Causes are counted per benchmark run. The next change fixes the cause with the most failures, unless a `false_success` or `destructive` failure exists, which is always fixed first.
 - A cause is taken apart further only when it is the largest, for example `target_not_found` split by application.
