@@ -104,6 +104,9 @@ These facts come from `cua-driver describe get_window_state` for version 0.12.6.
 | Code never chooses between questions by comparing confidences. | A wrong answer was observed at 0.99 confidence while the correct question scored lower. | [Research Section 4.7](../research/computer-use-s0-s1.md#47-merging-independent-heads-by-confidence-n--8) |
 | Confidence is a safety gate only. Errors are detected by postconditions and structural signals. | Wrong answers overlapped correct answers in confidence. | [Research Section 5](../research/computer-use-s0-s1.md#5-findings) |
 | Actions use real pointer and keyboard input at coordinates resolved from the accessibility tree. | Owner decision D3 requires real input for ordinary work. This departs from the investigation's preference for accessibility activation. | [Section 2.3](#23-constraints-from-the-relay) |
+| Only an accessibility test sends accessibility events. Ordinary work sends pointer input in screen coordinates, synthesized key events, or, for browser pages, Chrome DevTools Protocol input, and the harness checks the input path of every action (PS-D8). | The driver turned window-pixel clicks into accessibility presses on the iOS Simulator, and the menu bar is reachable only in screen coordinates. | [Section 11.4](#114-input-mode), [research Section 16.8](../research/computer-use-s0-s1.md#168-driver-input-probes-and-the-ios-simulator) |
+| Every element has a platform, assigned by the harness from its position, and each platform has a closed action allowlist (PS-D6, PS-D7). | One Simulator window holds macOS and iOS elements with the same roles, and the planner confused a key press with a click. | [Sections 6.5](#65-platform-of-each-element) and [7.2](#72-actions) |
+| Before a plan runs, the executor reads each step's intent against the allowlist, and code edits a step's action fields when the executor disagrees with confidence (PS-D7). | All 7 recorded steps that said "Press Return" with the click action clicked instead of pressing the key. | [Section 5.5](#55-intent-and-field-consistency) |
 | Every literal value comes from the plan. | The executor answers choices and cannot produce text. | [Research Section 6](../research/computer-use-s0-s1.md#6-prior-art-consulted) |
 | Escalations are typed. | A typed reason tells the planner what kind of help is needed. | Cua `jev-use`, [research Section 6](../research/computer-use-s0-s1.md#6-prior-art-consulted) |
 | Observation records the full tree, the reduced list and every discard reason. | Retrieval failure is the largest untested risk. | [Research Section 7](../research/computer-use-s0-s1.md#7-verification-limits) |
@@ -263,12 +266,12 @@ The planner calls this tool with a complete plan. The tool returns only when the
 | `id` | It is a short identifier that is unique within the plan. |
 | `intent` | It is one sentence that says what the step achieves, for example "Open the File menu." |
 | `control` | It is optional. It names the control the step acts on, copied from a line of the observation: `name`, and optionally `role` and `region`, for example `{region: "content", role: "Button", name: "3"}`. The harness confirms the control in each fresh read before it acts ([Section 9](#9-step-lifecycle)). A step that acts on a control that no observation shows yet, such as an item of a menu that an earlier step opens, may still name it. |
-| `operation` | It is optional. It names the expected operation from [Section 7.2](#72-operations) when the planner knows it. |
+| `action` | It is optional. It names the action from the allowlist of the control's platform ([Section 7.2](#72-actions)) when the planner knows it. The earlier field `operation` and its values `press`, `double_press`, `context_press`, `enter_text` and `key_combo` are accepted as aliases of `click`, `double_click`, `right_click`, `type` and `key`, so recorded plans still parse. |
 | `text` | It is an optional literal string for text entry. It must be complete, because the executor cannot generate text. |
 | `keys` | It is an optional key combination for a keyboard shortcut, for example `cmd+shift+n`. |
 | `postcondition` | It is a predicate from [Section 5.3](#53-postconditions) that must hold after the step. |
 | `idempotent` | It is optional. It states that repeating the step does no harm, so the harness may skip it when its postcondition already holds ([Section 9](#9-step-lifecycle)). The default is `false`. |
-| `position` | It is optional, for `enter_text` only: `end`, `start` or `replace`. It places the insertion point with keys after the click and before typing ([Section 7.2](#72-operations)). |
+| `position` | It is optional, for `type` only: `end`, `start` or `replace`. It places the insertion point with keys after the click and before typing ([Section 7.2](#72-actions)). |
 | `max_attempts` | It is optional, from 1 to 5. It limits how often the harness may act for the step before escalating `postcondition_failed`. The default is 1, 2 for an `idempotent` step, and 3 for a scroll. A value above 1 requires `idempotent` or a scroll operation. |
 
 The harness checks the whole plan before any observation. The check follows one rule: it rejects only a plan that cannot run, or one that asks to repeat an action that could take effect twice. It never rejects a plan on a guess about what the planner meant or about a future screen ([decision PS-D3](../decisions.md)). A check before the run understands only part of what the runtime supports, so a guessing rule rejects correct plans ([research Section 16.2](../research/computer-use-s0-s1.md#162-calculator-with-thinking-off)).
@@ -278,7 +281,8 @@ The harness checks the whole plan before any observation. The check follows one 
 - It has no steps or more than 50 steps.
 - A step identifier is repeated, or `allow_destructive` names an unknown step.
 - A postcondition is malformed, or a `control` has an empty name or a role that is not an accessibility role.
-- An `enter_text` step has no `text`, or a `key_combo` step has no `keys`.
+- A `type` step has no `text`, or a `key` step has no `keys`.
+- An `action` is not in the allowlist of any platform.
 - A step has both `text` and `keys`.
 - A key combination does not parse. The rejection lists the valid key names. The names `backspace`, `enter` and `esc` are accepted for `delete`, `return` and `escape`.
 - `max_attempts` is outside 1 to 5, or `idempotent` is not a boolean.
@@ -308,7 +312,7 @@ A postcondition is a small predicate over the accessibility tree. Code evaluates
 | `value { name, equals }` | The named element's value equals the given string. |
 | `selected { name }` | The named element is selected, such as a file in a Finder list. |
 | `window { titleContains }` | The frontmost window title contains the given string. |
-| `text { contains }` or `text { endsWith }` | The value or descendant text of some on-screen element contains, or ends with, the given string. Exactly one of the two is given. Labels are not searched, because they name controls rather than show content. The string may equal a control's name when the window will show it as text, such as a digit on Calculator's display. When the check fails and a control with a matching name is on screen, the failure names that control and says to check it with `exists` ([research Section 14](../research/computer-use-s0-s1.md#14-pi-task-batch-2026-09-23)). |
+| `text { contains }` or `text { endsWith }` | The value or descendant text of some on-screen element, or the label of an on-screen heading or static text, contains, or ends with, the given string. Exactly one of the two is given. Labels of other roles are not searched, because they name controls rather than show content: Calculator's button "7" would otherwise satisfy "the display shows 7" before the key is pressed. A heading's label is shown text: through Pi, a check that the iOS Settings screen shows "Settings" failed because that title is an `AXHeading` label ([research Section 16.8](../research/computer-use-s0-s1.md#168-driver-input-probes-and-the-ios-simulator)). The string may equal a control's name when the window will show it as text, such as a digit on Calculator's display. When the check fails and a control with a matching name is on screen, the failure names that control and says to check it with `exists` ([research Section 14](../research/computer-use-s0-s1.md#14-pi-task-batch-2026-09-23)). |
 | `changed` | The tree differs from the tree before the step. |
 | `all [ ... ]` and `any [ ... ]` | All or any of the nested predicates hold. |
 
@@ -333,6 +337,19 @@ The result is compact, because it enters the planner's conversation.
 - An escalated result includes the escalation from [Section 10](#10-escalation-contract) and a fresh observation, so the planner can replan without calling `computer_observe` again.
 - The result states the number of executor decisions made during the call.
 - The result ends with a list headed "Verified by code after the step". It names each step whose postcondition code evaluated, and a second list names the steps that were only seen to change something. The planner is told to report only the first list as checked. Through Pi, a final answer had claimed more than the harness verified ([research Section 11](../research/computer-use-s0-s1.md#11-first-checks-through-pi-2026-09-23)).
+
+### 5.5 Intent and field consistency
+
+**Decision [PS-D7](../decisions.md), 2026-09-26.** A step's intent and its action fields must describe the same action. The planner wrote "Press Return to create a new empty last line" with the click action and no `keys` in all 7 such steps of the 79 recorded steps, and each clicked the text area instead of pressing the key ([research Section 16.7](../research/computer-use-s0-s1.md#167-element-detail-for-the-executor)). This check is about meaning, which only a model can read, so the executor reads it and code applies the result.
+
+- After the plan check of Section 5.2 and before the first read, the harness sends one executor request for the whole plan. The request holds each step's intent and platform, and asks one question per step: which action of that platform's allowlist the intent describes. A step whose answer is `key` gets a second question: which named key, from the named keys of [Section 7.2](#72-actions), or "a character or a combination".
+- A plan of more than 26 steps is sent in requests of at most 26 steps, because the executor accepts at most 26 questions per request with this layout.
+- Code compares each answer with the step's fields. A step with `keys` counts as `key`, a step with `text` as `type`, and a step with `action` as that action.
+- When the answer agrees, or the step names no action, nothing changes.
+- When the answer disagrees and its confidence is at or above the confidence gate of [Section 8](#8-decision-policy), code edits the step. It sets `action`, and for a named key it sets `keys`. The edit is recorded in the step's result as `edited: {from, to, confidence}`, so the planner sees it.
+- When the answer disagrees below the gate, or the edit would need a value the answer does not give, such as the characters of a key combination, the plan is rejected with the rule `intent_mismatch`. The rejection names the step, the step's fields and the executor's reading.
+- The check never edits `text`, `control` or `postcondition`, and it never adds or removes a step.
+- The check is enabled only after a replay over the recorded plans edits the 7 known mismatches and changes none of the other 72 recorded steps. The replay result is recorded in the research log.
 
 ## 6. Observation
 
@@ -416,6 +433,18 @@ For every observation, the harness records the following items in the step telem
 
 With this record, a wrong answer can be classified as a retrieval failure, when the correct element was missing from the table, or as a judgment failure, when it was present but not chosen.
 
+### 6.5 Platform of each element
+
+**Decision [PS-D6](../decisions.md), 2026-09-26.** Every kept element carries a platform. The harness assigns it from the element's position, and the planner never writes it.
+
+- An element of an ordinary macOS application window is `macos`.
+- The iOS Simulator's window holds two platforms. Its menu bar, toolbar and hardware buttons are macOS elements, and the device screen is an iOS guest whose elements the tree reports with the same roles, such as `AXButton "General"` ([research Section 16.8](../research/computer-use-s0-s1.md#168-driver-input-probes-and-the-ios-simulator)).
+- For a window of the application with bundle identifier `com.apple.iphonesimulator`, the device screen is the rectangle spanned by the elements that are not menu, toolbar or hardware-button elements. An element whose centre lies inside that rectangle is `ios`, and every other element is `macos`.
+- The platform appears in the planner's table next to each element, and each group has the platform of its elements. A group never mixes platforms, so the observer splits a group whose elements have two platforms.
+- The executor's element question for a step offers only elements of the step's platform. The step's platform is the platform of its `control`, or the platform of the window's content when no control is named. In the Dark Mode task through Pi, the executor chose the Simulator's macOS search field for a step on the iOS search field. A per-platform question would not have offered it.
+- The first read of a Simulator window showed only macOS elements, so a Simulator window with no iOS element is read once more before the observation is returned.
+- Until the iOS actions of [Section 7.2](#72-actions) are built, a plan whose step targets an `ios` element is rejected with a message that iOS targets are not supported yet.
+
 ## 7. Executor request
 
 ### 7.1 Request composition
@@ -438,7 +467,7 @@ The harness sends one `POST /v1/systemone` request per step with `samples` set t
 | --- | --- | --- |
 | `region` | The table has more than one group. | One alternative per group name. Each alternative's description lists the names of the group's elements and states how many more are hidden beyond the visible area. |
 | `element_<n>` | Always, with one question per group. | The group's element letters, plus `none`, described as "None of these controls carries out the step." |
-| `operation` | The step does not fix the operation. | The operations that the step allows ([Section 7.2](#72-operations)), plus `reobserve` and `abstain`. |
+| `operation` | The step does not fix the operation. | The operations that the step allows ([Section 7.2](#72-actions)), plus `reobserve` and `abstain`. |
 | `risk` | Always. | `safe`, `reversible` and `destructive`. |
 
 - The request never uses `depends_on` or `alone` ([research Section 4.3](../research/computer-use-s0-s1.md#43-question-coupling-on-a-mixed-role-list-of-26-candidates-n--48)).
@@ -447,24 +476,40 @@ The harness sends one `POST /v1/systemone` request per step with `samples` set t
 - Every element question offers `none` because the executor otherwise clicked some other control when the target was not listed. Over three seeds, such wrong actions fell from 16 of 18 to 7 of 18, while correct actions fell from 35 to 33 of 57.
 - The request may carry the fork's `seed` extension for evaluation. Production requests omit it, so the server's default seed makes them deterministic.
 
-### 7.2 Operations
+### 7.2 Actions
 
-| Operation | Effect | Literal source |
+**Decision [PS-D7](../decisions.md), 2026-09-26.** Every action comes from a closed allowlist for its platform. Each entry has a name, a definition that the planner sees in the tool schema, and the host input the harness sends. The executor's `operation` question offers only the entries of the step's platform.
+
+**macOS allowlist:**
+
+| Action | Definition | Host input |
 | --- | --- | --- |
-| `press` | It clicks the element's frame center once. | None. |
-| `double_press` | It double-clicks the element's frame center. | None. |
-| `context_press` | It right-clicks the element's frame center. | None. |
-| `enter_text` | It clicks the element's frame center, then presses one key per character. Characters outside the backend's key vocabulary are refused before any input. With `position`, it first sends Cmd+Down for `end`, Cmd+Up for `start`, or Cmd+Up and then Shift+Cmd+Down for `replace`. Cmd+A is not used, because it did not select all text in either delivery mode ([research Section 12.1](../research/computer-use-s0-s1.md#12-fix-checks-through-pi-2026-09-23)). | The step's `text` field and its `position` field. |
-| `key_combo` | It sends the key combination to the frontmost window. | The step's `keys` field. |
-| `scroll_up` and `scroll_down` | They scroll by one page at the center of the chosen group's visible frame. A page moves about 80 percent of that frame's height. Containers are never element candidates, so a scroll targets a group rather than an element. This is how a target below the visible part of a list becomes reachable. | None. |
+| `click` | Click the control once with the left button. | A left click in screen coordinates at the element's frame centre (Section 11.4). |
+| `double_click` | Click the control twice quickly, for example to open a file. | Two left clicks in screen coordinates. |
+| `right_click` | Click the control with the right button to open its context menu. | A right click in screen coordinates. |
+| `type` | Type the step's `text` into the control. | A click on the control, then one key event per character. With `position`, it first sends Cmd+Down for `end`, Cmd+Up for `start`, or Cmd+Up and then Shift+Cmd+Down for `replace`. Characters outside the key vocabulary of Section 11.2 are refused before any input. |
+| `key` | Press the key or key combination in the step's `keys`, such as `return` or `cmd+down`. | Key events to the frontmost window. |
+| `scroll_up` and `scroll_down` | Scroll the region of the chosen group by one page. | A scroll-wheel event at the centre of the group's visible frame; a page moves about 80 percent of that frame's height. |
 
-The planner decides the operation whenever the step states it, and the executor then chooses only the element and the risk.
+**iOS allowlist, for elements inside the iOS Simulator's device screen.** It is not built yet.
 
-- A step with `keys` is offered only `key_combo`, and a step with `text` is offered only `enter_text`.
-- A step that names an `operation` is offered only that operation.
-- Only a step with none of these is offered the full set of `press`, `double_press`, `context_press`, `scroll_up` and `scroll_down`.
-- The reason is a Pi run in which a step with the key "Backspace" was answered with `press`, which clicked the text area instead of pressing the key ([research Section 14](../research/computer-use-s0-s1.md#14-pi-task-batch-2026-09-23)).
-- When the step fixes the operation, the request has no `operation` question. Through Pi, the executor answered `abstain` to such a question for a clear `enter_text` step. A missing target is still reported through each element question's `none`.
+| Action | Definition | Host input |
+| --- | --- | --- |
+| `tap` | Touch the control once. | A left click in screen coordinates. The Simulator turns it into a touch. |
+| `type` | Type the step's `text` into the focused field. | One key event per character, as on macOS. `type_text` is not used, because it delivered "aa" for "bt" ([research Section 16.8](../research/computer-use-s0-s1.md#168-driver-input-probes-and-the-ios-simulator)). |
+| `swipe_up` and `swipe_down` | Move the content of the chosen group by most of its height, as a finger swipe. | A foreground mouse drag inside the group, away from floating controls, of at least 300 points, lasting 1,500 ms with 60 steps. The scroll wheel does nothing on an iPhone simulator. One drag with these values scrolled the Settings list; the values are to be measured over 10 repetitions before they are relied on. |
+| `home` | Go to the Home screen. | The Simulator shortcut Cmd+Shift+H, a macOS key event. |
+
+- Long press is not in the allowlist, because `click` has no hold time and a held drag has not been tried.
+- A name appears once per platform. `type` appears on both platforms with the same definition.
+
+**Which actions a step is offered:**
+
+- A step with `keys` is offered only `key`, and a step with `text` is offered only `type`.
+- A step that names an `action` is offered only that action.
+- Only a step with none of these is offered its platform's pointer and scroll actions: `click`, `double_click`, `right_click`, `scroll_up` and `scroll_down` on macOS, and `tap`, `swipe_up` and `swipe_down` on iOS.
+- The reason is a Pi run in which a step with the key "Backspace" was answered with a click, which clicked the text area instead of pressing the key ([research Section 14](../research/computer-use-s0-s1.md#14-pi-task-batch-2026-09-23)).
+- When the step fixes the action, the request has no `operation` question. Through Pi, the executor answered `abstain` to such a question for a clear text-entry step. A missing target is still reported through each element question's `none`.
 - The `risk` question is always asked, so a key combination is still judged for destructive risk.
 
 ### 7.3 Token budget
@@ -486,7 +531,7 @@ The policy runs in code after each response. It applies the following rules in o
 2. If `operation` is `reobserve`, the harness observes again and repeats the decision. It does this at most twice per step, and then it returns `no_progress`.
 3. If `operation` is `abstain`, or the routed element question answers `none`, the policy returns `target_not_found`.
 4. If the table has several groups, the policy reads the element answer from the question of the group chosen by `region`. It never compares confidences across questions ([research Section 4.7](../research/computer-use-s0-s1.md#47-merging-independent-heads-by-confidence-n--8)).
-5. If the chosen element and operation are incompatible, the policy returns `uncertain`. For example, `enter_text` on an element that is not a text field is incompatible.
+5. If the chosen element and operation are incompatible, the policy returns `uncertain`. For example, `type` on an element that is not a text field is incompatible.
 6. If `risk` is `destructive` and the step is not listed in `allow_destructive`, the policy returns `approval_required`. The risk answer can only add caution. It never authorizes an action.
 7. If the confidence of the used `region`, element or `operation` answer is below the configured gate, the policy returns `uncertain` and includes the answers as a prior. The default gate is 0.4, which is taken from prior art and is not validated here.
 8. Otherwise, the policy selects the element and operation for execution.
@@ -530,7 +575,8 @@ stateDiagram-v2
 - **Act:** The actuator performs one action.
 - **Verify:** The harness waits for the configured settle interval, observes again, and evaluates the postcondition. It also compares the tree with the before-tree.
 - **No repeat after an effect:** An action that changed the screen but missed its postcondition ends the step with `postcondition_failed`, unless the step is `idempotent`. Through Pi, a planner checked Calculator's Add with a predicate that cannot hold, and the harness pressed Add a second time after the first press had taken effect ([research Section 14](../research/computer-use-s0-s1.md#14-pi-task-batch-2026-09-23)). A second press of a Send button would send twice. A scroll is exempt, because it only moves the view: it acts up to 3 times by default, and it stops with `no_progress` when the view stops moving. Through Pi, every scroll toward a file below the visible list needed a new plan before this exemption ([research Section 14.6](../research/computer-use-s0-s1.md#146-fourth-batch-on-the-fixes)).
-- **No change:** One action that changes nothing in the tree ends the step with `no_progress`. The action is not repeated, because the tree cannot show every effect, and a repeat could act twice. Through Pi, a Cmd+Down key moved the insertion point but changed nothing in the tree, and the earlier limit of two sent it twice ([research Section 11](../research/computer-use-s0-s1.md#11-first-checks-through-pi-2026-09-23)).
+- **A key whose effect the tree cannot show:** A `key` step whose only postcondition is `changed`, and after which the tree did not change, is recorded as `unverified` instead of `no_progress`, and the plan continues. The key is not sent again. The insertion point and the selection are not in the tree: `cmd+down` moved the insertion point and `cmd+a` selected all text, and in both cases only the snapshot identifier changed ([research Section 16.8](../research/computer-use-s0-s1.md#168-driver-input-probes-and-the-ios-simulator)). The next step's postcondition verifies the combined effect, and the result lists the step under the steps not verified by code.
+- **No change:** Any other action that changes nothing in the tree ends the step with `no_progress`. The action is not repeated, because the tree cannot show every effect, and a repeat could act twice. Through Pi, a Cmd+Down key moved the insertion point but changed nothing in the tree, and the earlier limit of two sent it twice ([research Section 11](../research/computer-use-s0-s1.md#11-first-checks-through-pi-2026-09-23)).
 - **Budgets:** The harness stops with `budget_exhausted` when the plan exceeds the configured action limit. The default limit is 100 actions per `computer_run_plan` call, taken from prior art. A separate limit bounds escalations per child run, with a default of 5. Neither default is measured.
 - **Cancellation:** The harness checks the tool's abort signal before each executor request and before each action. An action already sent to the relay is not interrupted, and its outcome is recorded.
 
@@ -567,7 +613,7 @@ An escalation ends the `computer_run_plan` call and returns control to the plann
 
 | Reason | Raised when | Expected planner response |
 | --- | --- | --- |
-| `needs_text` | The step's text contains characters that the backend cannot type with real key presses. A step without `text` is never offered `enter_text`, so missing text cannot reach the executor. | Rewrite the text with typeable characters, or split the step. |
+| `needs_text` | The step's text contains characters that the backend cannot type with real key presses. A step without `text` is never offered `type`, so missing text cannot reach the executor. | Rewrite the text with typeable characters, or split the step. |
 | `state_too_large` | The tree was truncated, the table exceeds the element limit, or the executor rejects the request as too long at the last trim step of [Section 7.3](#73-token-budget). | Narrow the target, for example by closing panels or choosing a smaller window. |
 | `uncertain` | Confidence is below the gate, the element and operation are incompatible, or the executor chose a control other than the one the step names. The answers are returned as a prior. | Confirm the prior or rewrite the step more specifically. |
 | `target_not_found` | The executor abstained, or the control the step names is not in the window. | Check the returned observation and revise the step. |
@@ -579,6 +625,7 @@ An escalation ends the `computer_run_plan` call and returns control to the plann
 | `executor_unavailable` | The executor service failed or timed out. | Report the failure. The planner must not perform the steps itself in this release. |
 | `backend_failed` | The relay refused an action, reported an uncertain outcome, or lost the lease. | Report the failure. The harness never replays an uncertain action. |
 | `window_unclear` | Several windows of the app match and none was named, or the window the plan started on has closed. No action was taken on another window. | Name the window with `window_title`, or observe it and plan with `based_on`. |
+| `input_mode` | In ordinary mode, the driver reported that it performed an action through accessibility (Section 11.4). The action may have taken effect. | Report the failure. The planner cannot change the input path. |
 | `window_changed` | Before the first step, the window differs from the `based_on` observation: another window or title, a control gone, or a sheet, dialog, popover or menu opened over it. No action was taken. | Plan again from the returned observation. |
 
 - Every escalation carries the step identifier, the reason, the last executor answers, and a fresh observation when one can be taken.
@@ -613,11 +660,14 @@ The relay client is the part of Secretary that sends the harness's reads and act
 - A window screenshot is written by `get_window_state` into the declared screenshot directory in the guest workspace. The client retrieves it with `relay_image` and the source `application`, and reads the untouched original from the host path the relay reports in `image.originalPath`. The image block in the tool result is not used, because the relay resamples an image wider or taller than 2000 pixels for presentation, and scale learning needs the original width.
 - Each relay run captures two display screenshots. With one relay run per read, a read took a median of 5,042 ms and a click 7,127 ms ([research Section 15.1](../research/computer-use-s0-s1.md#151-one-relay-run-per-read)), against well under 2 seconds locally. Budgets must allow for this.
 - The guest read program removes a screenshot's `iCCP`, `zTXt`, `iTXt`, `eXIf` and `iDOT` chunks, because the relay 0.4 `image` action refused a PNG with compressed metadata, and every macOS window screenshot has it.
-- Every read uses `inputMode: "ordinary"`. Every action uses real pointer or keyboard input at coordinates computed from the element's frame, as required by owner decision D3.
-- The backend labels each relay step with a sequence identifier, such as `cu-0007`, and the driver tool it calls. A `relay_run` call takes no step record, so its identifier is in the reason. A step title is shortened to 200 characters, because the relay refuses a title over 500 characters with a generic input error. The relay's evidence package and the step telemetry are matched by time, because the backend interface does not pass the plan step to the backend.
+- Every read and action passes the run's input mode to the relay as `inputMode` ([Section 11.4](#114-input-mode)).
+- The backend labels each relay step with a sequence identifier, such as `cu-0007`. The harness passes a step label with every read and action, made of the run identifier, the plan step identifier and, for an action, the action and the control's name, for example `run-muhqd509 new_line: key return`. The relay step's title is the sequence identifier followed by that label, shortened to 200 characters, because the relay refuses a title over 500 characters with a generic input error. A `relay_run` call takes no title, so the same text is its reason.
+- The backend returns the sequence identifier with every read and action, and the step record stores it ([Section 12.1](#121-records)). The relay's evidence package and the step records are therefore joined by identifier instead of by time.
 - An `uncertain` or `refused` outcome from the relay becomes `backend_failed`. The backend never retries such an action.
-- Pixel actions take window-local screenshot pixels. The backend converts screen points by subtracting the window's current bounds and multiplying by a scale learned from a screenshot of that window. The driver's reported display scale cannot be used, because it reported 1.0 while a 656-point window produced a 1312-pixel screenshot.
-- Text entry uses `press_key` once per character. `type_text` is not used, because it inserts text through accessibility first and falls back to keystrokes only when that fails. The documented `press_key` vocabulary covers letters, digits, space, return, tab and named keys, so other characters are refused until a real-keystroke path for them is found.
+- Pointer actions take screen coordinates ([Section 11.4](#114-input-mode)). The driver's desktop scope takes desktop-screenshot pixels, which were 2 × screen points in the probe machine while `get_screen_size` reported a scale factor of 1. The backend therefore learns the display scale once per lease from a display screenshot: the screenshot's pixel width divided by the width of the menu bar element in points, which spans the display.
+- The earlier window-pixel path is kept only for the local development backend, where the driver's window-local screenshot scale is learned from a window screenshot. The driver's reported display scale cannot be used there either, because it reported 1.0 while a 656-point window produced a 1312-pixel screenshot.
+- Text entry uses `press_key` once per character. `type_text` is not used, because it inserts text through accessibility first and falls back to keystrokes only when that fails.
+- The key vocabulary covers printable US-layout ASCII. A character is sent as its own key name, such as `-` or `/`, or as the key name of its unshifted character with Shift, such as `1` with Shift for `!`. The driver refused spelled-out names such as `minus` ([research Section 16.8](../research/computer-use-s0-s1.md#168-driver-input-probes-and-the-ios-simulator)). Characters outside printable ASCII are refused before any input. A check that types all 95 printable characters in a machine must pass before the vocabulary is enabled, because only 11 were tried.
 
 ### 11.3 Local driver backend for development
 
@@ -631,17 +681,29 @@ The relay client is the part of Secretary that sends the harness's reads and act
 - `list_windows` reports a `z_index`, and a lower value is nearer the front. The driver's own tool description says the opposite, but a virtual machine screenshot showed Safari at 13 drawn over TextEdit at 36, and the covering check then named Safari in every trial of the second click lease ([research Section 12.1](../research/computer-use-s0-s1.md#12-fix-checks-through-pi-2026-09-23)). Without a window identifier, the backend picks the frontmost matching window, unless the harness asks it to refuse a choice among several. It ignores the driver's own full-screen overlay window, named `cua-driver`, when it looks for covering windows.
 - `bring_to_front` activates the app but did not raise its window above Safari, so it is not used for actions.
 
-### 11.4 Accessibility activation mode
+### 11.4 Input mode
 
-- Direct activation of an element by accessibility would avoid coordinate errors, and prior art prefers it.
-- It is disabled by default because owner decision D3 reserves it for accessibility tests.
-- If the user decides to allow it, it must be an explicit per-run option that the relay evidence labels as accessibility input.
+**Decision [PS-D8](../decisions.md), 2026-09-26.** A delegation runs in one of two input modes, and only an accessibility test sends accessibility events.
+
+| Mode | Used for | Allowed input |
+| --- | --- | --- |
+| `ordinary` | Every task, unless the delegation says otherwise. | Pointer events in screen coordinates, synthesized key events, and for browser pages the Chrome DevTools Protocol `Input` events, which the page receives as trusted user input. |
+| `accessibility-test` | A delegation that tests an application's accessibility behaviour. | Accessibility actions, such as a press or a value set, in addition to the ordinary input. The relay evidence labels these steps as accessibility input. |
+
+- The mode is configuration, `computerUse.inputMode`, with `ordinary` as the default. It is not a field of the delegation tool, because the subagent subsystem must not know this subsystem's options ([Section 2.4](#24-constraints-from-secretary)). It is fixed for the child run, and the backend passes it to the relay on every run as `inputMode`.
+- **Pointer input in screen coordinates.** Every click, double click, right click, scroll and drag is sent in screen coordinates: `click` and `scroll` with `scope: "desktop"`, and `drag` with foreground delivery. The menu bar and open menus are outside the window and can be clicked only this way. A window-pixel click on the iOS Simulator was performed as an accessibility press, twice ([research Section 16.8](../research/computer-use-s0-s1.md#168-driver-input-probes-and-the-ios-simulator)).
+- A click in screen coordinates reaches whatever window is at that point. Before each pointer action, the backend brings the target application to the front, and the existing coverage check refuses a point that another window covers ([Section 11.3](#113-local-driver-backend-for-development)).
+- A pointer action in screen coordinates moves the real pointer. This is acceptable in a relay machine, which is its purpose.
+- **Input path check.** Every driver result reports a `path`. In `ordinary` mode, `ax` is not allowed. An action whose result reports `ax` stops the plan with `input_mode`, because the action may already have taken effect and must not be sent again. The step record stores the path of every action.
+- **Browser pages.** A task that drives a page through Playwright or Chrome DevTools uses their mouse and keyboard input, which the browser treats as trusted user input. DOM-level shortcuts, such as calling `element.click()` in page JavaScript, are not ordinary input.
+- Key events from `press_key` and `hotkey` reported `path: "key_events"`. They are synthesized events posted to the application, not accessibility actions, and they are ordinary input.
 
 ## 12. Telemetry and metrics
 
 ### 12.1 Records
 
-- Each step writes one record with the observation identifier, the retrieval record from [Section 6.4](#64-retrieval-record), the executor request and response, the policy result, the action, the relay execution identifier, and the postcondition result.
+- Each step writes one record with the observation identifier, the retrieval record from [Section 6.4](#64-retrieval-record), the executor request and response, the policy result, the action, the driver's input path, the relay step identifiers of its reads and action, and the postcondition result.
+- Each child run writes `report.html` next to its records when it ends. For each plan step it shows the intent, the control, the executor's questions and answers, the action and its input path, the before and after screenshots, and the postcondition result. The screenshots come from the relay's evidence package, found by relay step identifier ([Section 11.2](#112-relay-client)). A test run copies the report into its `test-results/` directory. The report is recorded evidence, not human review.
 - Each `computer_run_plan` call writes a summary with the step count, the executor decision count, the escalation reason, and the latency totals.
 - Each rejected `computer_run_plan` call writes a rejection record with the rule that fired, its message and the plan. Rejections are therefore counted, and a rule that rejects correct plans can be found in the records ([research Section 16.3](../research/computer-use-s0-s1.md#163-review-of-the-plan-check)).
 - Records are written under the Secretary data directory, next to the agent records. Test runs write under the repository's ignored `test-results/` directory.
@@ -676,8 +738,8 @@ Step wall time includes the relay's screenshot captures, so it must not be compa
 | How does a step reach a target below the visible part of a list? | The executor never chose to scroll in 18 unlisted-target cases, even with the hidden count in the request. When the plan's step asked for a scroll, the executor routed to the list and chose `scroll_down` in 2 of 2 decisions of a standalone script run ([research Section 10.4](../research/computer-use-s0-s1.md#10-standalone-script-checks-in-a-macos-virtual-machine-2026-09-23)). Scrolling should come from the plan. A harness-side search of hidden names remains an option. | No. |
 | Does a click reach a covered window? | Closed. A background click depends on whether the app was recently active, not on the covering window. Foreground delivery moved the insertion point in 6 of 6 trials, and it is now the default for clicks ([Section 11.3](#113-local-driver-backend-for-development), [research Section 12.1](../research/computer-use-s0-s1.md#12-fix-checks-through-pi-2026-09-23)). An `enter_text` step places the insertion point with its `position` field. | No. |
 | How does a step close or zoom a window? | The title-bar buttons have no name in the tree. The planner should use key combinations such as `cmd+w` until the driver exposes their names. Menu shortcuts had no effect in the checks so far, so this depends on the next question. | No. |
-| How does a step run a menu command, such as Save? | Cmd+A and Cmd+S had no effect through the driver with either delivery mode, and menu bar items are not in the element table ([research Section 14.3](../research/computer-use-s0-s1.md#143-escalations-in-the-third-batch)). Measured: `press_key` and `hotkey`, each with background and foreground delivery or after `open -a`, cleared TextEdit's "Edited" label in 0 of 12 trials. The control through AppleScript timed out, so the label is not yet proven to clear on a real save ([research Section 14.6](../research/computer-use-s0-s1.md#146-fourth-batch-on-the-fixes)). Add a menu operation that opens the menu bar item and presses the named menu item, after a control confirms the label. | Yes, because a menu operation adds an operation and a table source. |
-| Should actions use direct accessibility activation? | Keep real input by default, as owner decision D3 requires. | Yes, because D3 is an owner decision. |
+| How does a step run a menu command, such as Save? | Closed by PS-D8 on 2026-09-26. With clicks in screen coordinates, the menu bar item and then the menu item are clicked as two steps, and an open menu's items are in the tree with frames ([Section 11.4](#114-input-mode)). Before that change, Cmd+A and Cmd+S had no effect in 0 of 12 trials, and menu bar items were not in the element table ([research Section 14.6](../research/computer-use-s0-s1.md#146-fourth-batch-on-the-fixes)). | No. |
+| Should actions use direct accessibility activation? | Closed by PS-D8 on 2026-09-26: only a delegation in `accessibility-test` mode sends accessibility events ([Section 11.4](#114-input-mode)). | No. |
 | What does a real screenshot cost the planner? | Measured in Phase 1: the cost is proportional to pixel area, and a 1312×844 window screenshot costs 1,068 input tokens on Qwen 3.8 27B ([research Section 8](../research/computer-use-s0-s1.md#8-phase-1-observations-2026-09-23)). Choose the default image scale when the planner prompt is written in Phase 6. | No. |
 | Should the executor also receive screenshots? | Do not send them in the first release. The accessibility tree is the executor's only input until screenshot cost is measured. | No. |
 | Should the fallback list keep models without image input? | Remove them, or accept planning without screenshots when they are selected. | Yes, because the list is user configuration. |
@@ -686,9 +748,11 @@ Step wall time includes the relay's screenshot captures, so it must not be compa
 | What does one relay run cost in latency? | Measure the relay round trip for a read and for an action before setting settle intervals and budgets. | No. |
 | Should rejected plans count against a limit? | Not yet. Rejections are now recorded per rule. Set a limit when the records show how often a planner repeats a rejected plan. In the Calculator run of 2026-09-25, three rejections cost about 4 s each ([research Section 16.2](../research/computer-use-s0-s1.md#162-calculator-with-thinking-off)). | No. |
 | Should a predicate check that shown text changed? | Consider it. When a text check cannot be written, `{changed:true}` accepts any change, including a press of the wrong button. A predicate that holds only when the window's shown text changed would be a stronger fallback. | Yes, because it adds a predicate. |
-| How does the executor find a text area whose label is its content? | cua-driver reports TextEdit's text area with the document's text as its label, and the executor answered "none" for every step that named it ([research Section 16.6](../research/computer-use-s0-s1.md#166-relay-061)). Options: name a text-entry element by its role when its label equals its value, add roles to the executor's lines, or let code choose a named control that matches exactly one element. | Yes, for the last two options, because they change the executor's input or decision PS-D4. |
+| How does the executor find a text area whose label is its content? | Closed by PS-D5 on 2026-09-26: the executor's lines carry each control's role, and it chose TextEdit's text area in every decision that needed it ([research Section 16.7](../research/computer-use-s0-s1.md#167-element-detail-for-the-executor)). | No. |
 | Should a failed relay start stop the child run? | A failed start is not kept, so each later tool call acquires and releases another machine. One refused preparation cost five machines. Keep the failure for the rest of the child run. | No. |
 | Should a resumed agent keep its escalation count? | The limit counts per run, and a parent that resumes the agent gives it a new budget. Count per agent, or report the earlier escalations to the parent. | Yes, because it changes a documented limit. |
+| Which drag values scroll an iOS list reliably? | One drag of 300 points in 1,500 ms and 60 steps scrolled the Settings list once. Repeat it 10 times, varying one value at a time, before `swipe_up` and `swipe_down` are enabled. | No. |
+| Should the guest's `cua-driver` be upgraded from 0.12.6 to 0.29.1? | Check the release notes for changes to the `path` behaviour and to desktop-scope scaling first, because this design depends on both. | Yes, because it changes the relay image. |
 | May the planner perform steps itself when the executor is unavailable? | Not in the first release. The escalation reports the failure instead. | Yes, if a degraded mode is wanted. |
 
 ## 14. Verification plan

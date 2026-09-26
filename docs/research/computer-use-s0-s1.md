@@ -909,3 +909,70 @@ The relay client pinned `@wezzard/mcp-vm-relay@0.4.0` from 2026-09-24. Pi's own 
 **Evidence:** `test-results/e2e/computer-use-delegation-textedit/2026-09-26T01-46-07-508Z-cedc8369/`. It is not versioned.
 
 **Verification limits:** The labelled intents cover 8 windows. None needs the content of priorities 2 to 4 to be answered, because the executor can only choose a listed control: an intent such as "make the text bold" is the planner's to split into opening a menu and choosing an item. The live check is one run of one task.
+
+### 16.8 Driver input probes and the iOS Simulator
+
+Three probes on 2026-09-26 ran `cua-driver` calls directly through the relay, without Pi, in `macos26` machines. The guest's `cua-driver` was version 0.12.6, and its update check reported 0.29.1 as the latest. Two tasks then ran through Pi on the iOS Simulator.
+
+**Punctuation with real key presses.** `press_key` typed the character given as the key name, and it refused spelled-out names.
+
+| Key argument | Modifiers | Result |
+| --- | --- | --- |
+| `-`, `.`, `,`, `/`, `'`, `;`, `=`, `[` | none | Each typed its character. |
+| `minus`, `period`, `comma`, `slash`, `quote`, `semicolon`, `equal`, `leftbracket` | none | Each failed with "Unknown key name". |
+| `1`, `=`, `-` | Shift | They typed `!`, `+` and `_`. |
+
+- `]`, `\`, `` ` `` and most shifted symbols were not tried.
+- The driver has no tool that types a string with one real key event per character. `type_text` inserts through accessibility first (`path: "ax"`).
+
+**The menu bar.**
+
+- A click with `scope: "desktop"` opened a menu. The driver took the coordinates as desktop-screenshot pixels, which were 2 × screen points in that machine, while `get_screen_size` reported a scale factor of 1. The first click, given in points, opened the TextEdit menu instead of the Edit menu. The retry with doubled coordinates opened the Edit menu, and the result reported `path: "cgevent_hid"`.
+- A click with window-local pixels outside the window, at negative coordinates, reported success and opened nothing.
+- An accessibility press on the menu bar item opened the menu.
+- An open menu's items appeared in the tree with frames, and the menu bar item was `selected: true`.
+
+**Insertion point and selection.**
+
+- The text area's record had no field for the insertion point or the selection, and the tree's Markdown had none either.
+- `cmd+down` moved the insertion point to the end: a letter pressed afterwards landed there. Only the snapshot identifier changed in the tree.
+- `cmd+a` selected all text with both foreground and background delivery: a letter pressed afterwards replaced the document.
+
+**The driver's input paths.** Every action result carries a `path` field.
+
+| Call | Reported path |
+| --- | --- |
+| `click` with `scope: "desktop"` | `cgevent_hid` |
+| `click` with window-local pixels in TextEdit | `cgevent` |
+| `click` with window-local pixels on the Simulator, background delivery | `ax`, with the text "PX hit-test pressed the background element via AX", twice |
+| `drag` with foreground delivery | `cgevent_fg` |
+| `press_key` and `hotkey` | `key_events` |
+
+**The iOS Simulator.**
+
+- The image has Xcode with an iOS 26.5 runtime and an iPhone 17 device. `open -a Simulator` fails, and the app opens by its path inside Xcode's bundle. A first boot took 27 s.
+- The first read of the Simulator window showed only its macOS elements. Every later read also showed the iOS screen's elements, such as `AXButton "General"` with identifier `com.apple.settings.general`, with frames in screen points.
+- The Settings search field was never in the tree.
+- A click on an icon opened the app, and `cmd+shift+h` returned to the Home screen.
+- `press_key` typed "wifi" into the search field. `type_text` sent "bt" through synthesized characters and the field received "aa".
+- A mouse-wheel scroll did not scroll the Settings list. Apple forum threads and third-party tools agree that the wheel scrolls only an iPad simulator with pointer capture.
+- A foreground drag of 500 ms in 20 steps from the bottom of the list did not scroll it.
+- A foreground drag of 1,500 ms in 60 steps, 300 points up from the Camera row, after the window was brought to the front, scrolled it. Every row moved by −285 points, the large title collapsed, and four new rows entered the tree. The reported path was `cgevent_fg`. The first drag started where iOS 26 draws a floating search field. The attempts differ in start point, duration, step count and activation, so the cause is not isolated.
+- Tools that inject touches straight into the simulator's input layer, such as idb, AXe and serve-sim, send no macOS input. XCTest-based tools synthesize the touch inside the guest. Neither was used.
+
+**The Simulator through Pi.** Each task ran once at revision `8c0f811`.
+
+| Task | Outcome | Plans |
+| --- | --- | --- |
+| Open Settings, General, About, and report the iOS version | Reported iOS 26.5, read from an observation | 3 plans, each stopped on its own postcondition after its tap worked: two checked a control's name with a `text` check, and one checked for "Software Version", which iOS 26 does not show |
+| Open Settings and turn on Dark Mode | Not done; the agent stopped at its limit of 5 escalations | Both scrolls stopped with `no_progress`; the executor chose the Simulator's macOS search field `_SC_SEARCH_FIELD` for a step naming the iOS search field |
+
+**Evidence:**
+
+- The driver probe: `relay-evidence/relay-textedit-cua-probe-eb4f734a/`. `relay_finish` failed after the probe agent deleted guest screenshots to fit the relay's 512 MiB extraction limit, so no verified package exists.
+- The Simulator probe: `relay-evidence/relay-ios-sim-cua-d3f5a780/`.
+- The scroll probe: `relay-evidence/relay-ios-sim-scroll-622e2b63/`.
+- The Pi runs: `test-results/e2e/computer-use-delegation-simulator-about/2026-09-26T05-16-20-210Z-a189452d/` and `test-results/e2e/computer-use-delegation-simulator-dark-mode/2026-09-26T05-21-24-138Z-bee2c7d0/`.
+- None of it is versioned.
+
+**Verification limits:** Every probe ran once. The scroll succeeded once. No person reviewed the screenshots.
