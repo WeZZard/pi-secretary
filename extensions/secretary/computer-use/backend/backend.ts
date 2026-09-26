@@ -53,9 +53,12 @@ export interface WindowRead {
   screenshot?: Screenshot;
   /** Backend-side time from issuing the read to receiving the parsed result. */
   readMs: number;
+  /** Relay step identifiers of this read, such as `cu-0007`, to find its evidence (design §11.2). */
+  evidence?: string[];
 }
 
-export interface ReadOptions { screenshot: boolean; signal?: AbortSignal }
+/** `label` names the plan step in the relay's evidence, such as `run-muhqd509 new_line: verify` (design §11.2). */
+export interface ReadOptions { screenshot: boolean; signal?: AbortSignal; label?: string }
 
 /** A point in screen coordinates, in points, with a top-left origin, as accessibility frames report them. */
 export interface Point { x: number; y: number }
@@ -71,13 +74,20 @@ export type BackendAction = (
   | { kind: "key"; key: string; modifiers: string[] }
   /** `extent` is the height in points of the region being scrolled; a page is most of it. */
   | { kind: "scroll"; point: Point; direction: "up" | "down"; by: "page"; extent: number }
-) & { delivery?: Delivery };
+) & { delivery?: Delivery; label?: string };
 
 /** Fix plan F-3: whether the target application is active, and which windows are drawn over a point. */
 export interface ForegroundState { active: boolean; coveredBy: string[] }
 
 /** `unverifiable` is the driver's normal report for key input; code verifies the effect afterwards. */
-export interface ActionOutcome { kind: "completed" | "unverifiable"; detail?: string }
+export interface ActionOutcome {
+  kind: "completed" | "unverifiable";
+  detail?: string;
+  /** The driver's input path, such as `cgevent_hid`, `key_events` or `ax` (design §11.4). */
+  path?: string;
+  /** Relay step identifiers of this action (design §11.2). */
+  evidence?: string[];
+}
 
 export interface ExecutionBackend {
   readonly kind: "local" | "relay" | "fake";

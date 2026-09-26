@@ -53,8 +53,22 @@ test("a plan completes: one request per step, a real click at the element center
   assert.equal(result.outcome, "completed");
   assert.deepEqual(result.steps, [{ id: "submit", result: "verified", action: "press", element: "Submit", detail: "\"Done\" is on screen" }]);
   assert.deepEqual([result.decisions, result.actions], [1, 1]);
-  assert.deepEqual(backend.actions.map(entry => entry.action), [{ kind: "click", point: { x: 140, y: 60 }, button: "left", count: 1 }]);
+  assert.deepEqual(backend.actions.map(entry => entry.action), [{ kind: "click", point: { x: 140, y: 60 }, button: "left", count: 1, label: 'run-1 submit: press "Submit"' }]);
   assert.ok(!("depends_on" in exec.bodies[0]!.questions.operation!));
+});
+
+test("each step records the relay steps of its reads and action and the driver's input path, and reads are labelled with the step", async (t) => {
+  const { backend, deps } = setup(t, [form, submitted]);
+  backend.reportEvidence = true;
+  const labels: (string | undefined)[] = [];
+  const read = backend.readWindow.bind(backend);
+  backend.readWindow = (target, options) => { labels.push(options.label); return read(target, options); };
+  const result = await runPlan(deps(executor(() => ({ element: "Submit", operation: "press" }))),
+    plan([{ id: "submit", intent: "Submit the form", postcondition: { exists: { name: "Done" } } }]));
+  assert.equal(result.outcome, "completed");
+  assert.deepEqual([result.steps[0]!.evidence, result.steps[0]!.inputPaths], [["cu-0001", "cu-0002", "cu-0003"], ["cgevent_hid"]],
+    "The initial read, the click and the verifying read, in order");
+  assert.deepEqual(labels, ["run-1 submit: initial", "run-1 submit: verify"]);
 });
 
 test("the first read refuses to guess among several windows, and every later read uses the same window", async (t) => {
@@ -189,7 +203,7 @@ test("a key combination needs no element, and the plan record redacts typed text
   const result = await runPlan(deps(executor(() => ({ operation: "key_combo" }))),
     plan([{ id: "s", intent: "Submit with the keyboard", keys: "cmd+return", text: "secret words", postcondition: { exists: { name: "Done" } } }]));
   assert.equal(result.outcome, "completed");
-  assert.deepEqual(backend.actions[0]!.action, { kind: "key", key: "return", modifiers: ["cmd"] });
+  assert.deepEqual(backend.actions[0]!.action, { kind: "key", key: "return", modifiers: ["cmd"], label: "run-1 s: key_combo" });
   const record = JSON.parse(readFileSync(join(root, "runs", "run-1", "plan.json"), "utf8"));
   assert.equal(record.plan.steps[0].text, "<12 characters>");
   assert.ok(readdirSync(join(root, "runs", "run-1")).some(file => file.startsWith("step-s-1-")));

@@ -49,7 +49,7 @@ server.setRequestHandler(CallToolRequestSchema, async request => {
   else if (tool === "relay_exec") text = completed(`"pid"=7\n`);
   // A relay_run result has a second text block with the target tool's own text.
   else if (tool === "relay_run") return { content: [{ type: "text", text: executed({ outcome: { kind: "completed", exitStatus: { code: 0, signal: null } }, relayOutcome: "completed",
-    target: input.target, tool: input.tool, toolOutcome: "completed", structuredContent: { ok: true } }) }, { type: "text", text: "✅ done" }], isError: false };
+    target: input.target, tool: input.tool, toolOutcome: "completed", structuredContent: { ok: true, effect: "unverifiable", path: "cgevent_hid" } }) }, { type: "text", text: "✅ done" }], isError: false };
   else if (tool === "relay_image") {
     const originalPath = resolve(workspace, input.target.name, input.target.path);
     // The relay refuses to present a PNG with compressed metadata, and then reports no original.

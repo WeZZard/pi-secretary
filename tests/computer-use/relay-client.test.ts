@@ -58,6 +58,19 @@ async function scripted(t: TestContext) {
   return { backend, calls, root, driverCalls };
 }
 
+test("relay steps carry the plan step's label, and reads and actions return their relay step identifiers and input path", async t => {
+  const { backend, calls } = await scripted(t);
+  const read = await backend.readWindow({ app: "Finder" }, { screenshot: false, label: "run-1 open: initial" });
+  const click = await backend.act(read.window, { kind: "click", point: { x: 150, y: 70 }, button: "left", count: 1, label: 'run-1 open: click "Agenda.txt"' });
+  assert.deepEqual([read.evidence, click.evidence, click.path], [["cu-0001"], ["cu-0002"], "cgevent_hid"]);
+  const runs = (await calls()).filter(call => RUN_TOOLS.has(call.relayTool));
+  assert.equal(runs[0]!.step.title, "run-1 open: initial · Read the Finder window");
+  assert.equal(runs[1]!.reason, 'Secretary computer use: run-1 open: click "Agenda.txt" · Input with click (cu-0002)');
+  const unlabelled = await backend.readWindow({ app: "Finder" }, { screenshot: false });
+  assert.deepEqual(unlabelled.evidence, ["cu-0003"]);
+  assert.equal((await calls()).filter(call => RUN_TOOLS.has(call.relayTool)).at(-1)!.step.title, "Read the Finder window", "The label ends with its read");
+});
+
 test("a relay read is one code run that passes the 64 KiB cap, plus the screenshot original", async t => {
   const { backend, calls, root, driverCalls } = await scripted(t);
   const read = await backend.readWindow({ app: "Finder", windowTitle: "Documents" }, { screenshot: true });

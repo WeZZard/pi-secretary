@@ -10,7 +10,8 @@
  * Each task's setup runs in the guest after staging, because the computer-use tools do not launch
  * applications.
  *
- * Output: a new directory under test-results/e2e/computer-use-delegation/.
+ * Output: a new directory under test-results/e2e/computer-use-delegation/, with report.html joining
+ * each plan step to its relay screenshots.
  */
 import { spawn } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
@@ -20,6 +21,7 @@ import { DatabaseSync } from "node:sqlite";
 import { createCleanPiEnvironment } from "../../tests/e2e/environment/isolation.ts";
 import { useGlobalLiteLLM } from "../../tests/e2e/environment/global-litellm.ts";
 import { DEFAULT_RELAY_COMMAND } from "../../extensions/secretary/computer-use/configuration.ts";
+import { writeRunReport } from "../../extensions/secretary/computer-use/report.ts";
 
 const [modelId = "qwen3.8-27b", executorUrl = "http://jev.home.arpa", taskName = "calculator"] = process.argv.slice(2);
 
@@ -143,6 +145,15 @@ log(unfinished().length ? `Relay leases not finished within 10 minutes of stoppi
 if (existsSync(evidence)) cpSync(evidence, join(environment.artifacts, "relay-evidence"), { recursive: true });
 writeFileSync(join(environment.artifacts, "runs.json"), environment.redact(JSON.stringify(runs(), null, 2)));
 profile.redactArtifacts();
+// One page that joins each plan step to its relay screenshots (design §12.1).
+const subdirectories = (root: string) => existsSync(root) ? readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => join(root, entry.name)) : [];
+const report = writeRunReport({
+  records: subdirectories(join(environment.artifacts, "extension-state", "computer-use")),
+  relayPackages: subdirectories(join(environment.artifacts, "relay-evidence")).filter(root => existsSync(join(root, "trajectory.json"))),
+  out: join(environment.artifacts, "report.html"),
+  title: `Computer use: ${taskName}`,
+});
+log(`Report: ${report.path} (${report.plans} plans, ${report.steps} steps, ${report.screenshots} screenshots)`);
 log(`\nElapsed: ${Math.round((Date.now() - started) / 1000)} s (wall clock from sending the prompt to stopping Pi)`);
 const all = runs();
 if (!all.length) log("Run: none");

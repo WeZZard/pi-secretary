@@ -116,6 +116,8 @@ export class RelaySession {
   readonly #prepare: string[][];
   #ready?: Promise<RelayConnection>;
   #sequence = 0;
+  #label?: string;
+  #issued: string[] = [];
   constructor(connect: RelayConnect, acquire: { image: string; env?: string; ttlHours: number; prepare?: string[][] }) {
     this.#connect = connect;
     this.#prepare = acquire.prepare ?? [];
@@ -162,6 +164,18 @@ export class RelaySession {
   }
 
   /**
+   * Runs `work` with `label` in the title of every relay step it makes, and returns the steps'
+   * identifiers, so the step records and the relay's evidence join by identifier (design §11.2).
+   * Reads and actions are sequential, so one label is active at a time.
+   */
+  async labelled<T>(label: string | undefined, work: () => Promise<T>): Promise<{ value: T; evidence: string[] }> {
+    this.#label = label;
+    this.#issued = [];
+    try { const value = await work(); return { value, evidence: [...this.#issued] }; }
+    finally { this.#label = undefined; }
+  }
+
+  /**
    * One relay run. An outcome other than a clean exit is `driver_failed` and is never repeated,
    * because the input may have reached the machine (design §11.2).
    */
@@ -171,9 +185,11 @@ export class RelaySession {
 
   async #runOn(connection: RelayConnection, input: RunInput, signal?: AbortSignal): Promise<RelayExecution> {
     const id = `cu-${String(++this.#sequence).padStart(4, "0")}`;
+    this.#issued.push(id);
     // The relay rejects a step title over 500 characters with a generic input error; a Finder
     // preparation command that wrote 40 fixture files was 740 characters (observed 2026-09-26).
-    const title = input.title.length > TITLE_LIMIT ? `${input.title.slice(0, TITLE_LIMIT - 1)}…` : input.title;
+    const full = this.#label ? `${this.#label} · ${input.title}` : input.title;
+    const title = full.length > TITLE_LIMIT ? `${full.slice(0, TITLE_LIMIT - 1)}…` : full;
     const reason = `Secretary computer use: ${title} (${id})`;
     // A command or program run records the client's step; a driver tool call sends the call to the
     // relay's own cua-driver server in the guest, which takes a reason but no step record.
@@ -426,6 +442,11 @@ export class RelayBackend implements ExecutionBackend {
   get session(): RelaySession { return this.#session; }
 
   async readWindow(target: WindowTarget, options: ReadOptions): Promise<WindowRead> {
+    const { value, evidence } = await this.#session.labelled(options.label, () => this.#read(target, options));
+    return { ...value, evidence };
+  }
+
+  async #read(target: WindowTarget, options: ReadOptions): Promise<WindowRead> {
     const started = performance.now();
     const file = `read-${String(++this.#reads).padStart(4, "0")}.png`;
     const execution = await this.#session.run({ kind: "code", title: `Read the ${target.app} window`, expected: "The screen does not change", afterIntervalMs: 0,
@@ -447,7 +468,10 @@ export class RelayBackend implements ExecutionBackend {
     }
     return toWindowRead(window, appActive, result.state, this.#options.maxTreeNodes, screenshot, performance.now() - started);
   }
-  act(window: WindowRef, action: BackendAction, signal?: AbortSignal): Promise<ActionOutcome> { return this.#driver.act(window, action, signal); }
+  async act(window: WindowRef, action: BackendAction, signal?: AbortSignal): Promise<ActionOutcome> {
+    const { value, evidence } = await this.#session.labelled(action.label, () => this.#driver.act(window, action, signal));
+    return { ...value, evidence };
+  }
   foreground(window: WindowRef, point: Point | undefined, signal?: AbortSignal): Promise<ForegroundState> { return this.#driver.foreground(window, point, signal); }
   bringToFront(window: WindowRef, signal?: AbortSignal): Promise<void> { return this.#driver.bringToFront(window, signal); }
   close(): Promise<void> { return this.#session.close(); }

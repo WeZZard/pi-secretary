@@ -321,8 +321,9 @@ export class LocalDriverBackend implements ExecutionBackend {
       result = await this.#options.run("press_key", { ...base, key: action.key, ...(action.modifiers.length ? { modifiers: action.modifiers } : {}) },
         { timeoutMs: this.#timeout, signal });
     }
-    const effect = (result as { effect?: string } | undefined)?.effect;
-    return effect === "unverifiable" ? { kind: "unverifiable", detail: "the driver cannot read back this input" } : { kind: "completed", ...(effect ? { detail: effect } : {}) };
+    const { effect, path } = (result ?? {}) as { effect?: string; path?: string };
+    const reported = typeof path === "string" ? { path } : {};
+    return effect === "unverifiable" ? { kind: "unverifiable", detail: "the driver cannot read back this input", ...reported } : { kind: "completed", ...(effect ? { detail: effect } : {}), ...reported };
   }
 
   async close(): Promise<void> {}

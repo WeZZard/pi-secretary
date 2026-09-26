@@ -53,6 +53,10 @@ export interface StepOutcome {
   detail?: string;
   /** Fix plan F-4: window pictures before and after each attempt, when step pictures are on. */
   pictures?: { attempt: number; before?: Picture; after?: Picture }[];
+  /** Relay step identifiers of the step's reads and actions, in order, to find its screenshots (design §12.1). */
+  evidence?: string[];
+  /** The driver's input path of each action the step sent (design §11.4). */
+  inputPaths?: string[];
 }
 
 export interface Escalation { stepId: string; reason: EscalationReason; detail: string; prior?: Prior; observation?: string }
@@ -172,13 +176,15 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
     for (let attempt = 1; ; attempt++) {
       checkCancelled();
       let read: WindowRead;
-      try { read = await backend.readWindow(target, { screenshot: config.stepPictures, signal }); }
+      try { read = await backend.readWindow(target, { screenshot: config.stepPictures, signal, label: `${runId} ${stepId}: ${purpose}` }); }
       catch (error) {
         if (error instanceof BackendError && error.code === "aborted") throw new Stop(undefined, true);
         if (error instanceof BackendError && (error.code === "window_ambiguous" || error.code === "window_not_found")) return escalate(stepId, "window_unclear", error.message);
         if (error instanceof BackendError && error.code === "state_too_large") return escalate(stepId, "state_too_large", error.message);
         return escalate(stepId, "backend_failed", error instanceof Error ? error.message : String(error));
       }
+      const outcome = outcomes.find(entry => entry.id === stepId);
+      if (outcome && read.evidence?.length) (outcome.evidence ??= []).push(...read.evidence);
       const result: Observation | ObservationFailure = observe(read, { id: `${runId}-${String(++sequence).padStart(3, "0")}`, maxElements: config.maxElements, maxNameLength: config.maxNameLength });
       await telemetry.recordObservation(read, result, { attempt, purpose: `${purpose} ${stepId}` });
       // Every later read and action uses the window this plan started on.
@@ -269,7 +275,12 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
         if (before.read.screenshot) pictures.before = await telemetry.recordPicture(runId, `${step.id}-${attempts + 1}-before`, before.read.screenshot);
         for (const action of backendActions) {
           checkCancelled();
-          try { await backend.act(before.read.window, action, signal); }
+          const label = `${runId} ${step.id}: ${decision.operation}${decision.element ? ` ${JSON.stringify(decision.element.name)}` : ""}`;
+          try {
+            const done = await backend.act(before.read.window, { ...action, label }, signal);
+            if (done.evidence?.length) (outcome.evidence ??= []).push(...done.evidence);
+            if (done.path) (outcome.inputPaths ??= []).push(done.path);
+          }
           catch (error) {
             // An action already sent is not replayed (design §11.2); its outcome is uncertain.
             if (error instanceof BackendError && error.code === "aborted") throw new Stop(undefined, true);

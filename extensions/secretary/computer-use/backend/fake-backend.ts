@@ -7,6 +7,11 @@ import { BackendError, type ActionOutcome, type BackendAction, type ExecutionBac
 export class FakeBackend implements ExecutionBackend {
   readonly kind = "fake" as const;
   readonly reads: WindowTarget[] = [];
+  /** When set, reads and actions report relay-style evidence identifiers and input paths, as the relay client does. */
+  reportEvidence = false;
+  /** The input path an action reports when `reportEvidence` is set; tests set `ax` to see the input-mode check. */
+  pointerPath = "cgevent_hid";
+  #evidence = 0;
   readonly actions: { window: WindowRef; action: BackendAction }[] = [];
   /** Scripted failures for the next actions, consumed in order. */
   readonly actionFailures: Error[] = [];
@@ -24,7 +29,7 @@ export class FakeBackend implements ExecutionBackend {
     const next = queue.length > 1 ? queue.shift()! : queue[0]!;
     if (next instanceof Error) throw next;
     const { screenshot, ...rest } = structuredClone(next);
-    return { ...rest, ...(options.screenshot && screenshot ? { screenshot } : {}), readMs: 0 };
+    return { ...rest, ...(options.screenshot && screenshot ? { screenshot } : {}), readMs: 0, ...this.#reported() };
   }
 
   async act(window: WindowRef, action: BackendAction, signal?: AbortSignal): Promise<ActionOutcome> {
@@ -32,7 +37,12 @@ export class FakeBackend implements ExecutionBackend {
     const failure = this.actionFailures.shift();
     if (failure) throw failure;
     this.actions.push({ window, action });
-    return action.kind === "key" ? { kind: "unverifiable" } : { kind: "completed" };
+    const path = this.reportEvidence ? { path: action.kind === "key" ? "key_events" : this.pointerPath } : {};
+    return action.kind === "key" ? { kind: "unverifiable", ...path, ...this.#reported() } : { kind: "completed", ...path, ...this.#reported() };
+  }
+
+  #reported(): { evidence?: string[] } {
+    return this.reportEvidence ? { evidence: [`cu-${String(++this.#evidence).padStart(4, "0")}`] } : {};
   }
 
   async close(): Promise<void> { this.closed = true; }
