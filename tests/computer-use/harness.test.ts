@@ -71,6 +71,23 @@ test("each step records the relay steps of its reads and action and the driver's
   assert.deepEqual(labels, ["run-1 submit: initial", "run-1 submit: verify"]);
 });
 
+test("in ordinary input mode, an action the driver performed through accessibility stops the plan and is not repeated (design §11.4)", async (t) => {
+  const ordinary = setup(t, [form, form]);
+  ordinary.backend.reportEvidence = true;
+  ordinary.backend.pointerPath = "ax";
+  const step = { id: "submit", intent: "Submit the form", idempotent: true, maxAttempts: 3, postcondition: { exists: { name: "Done" } } };
+  const stopped = await runPlan(ordinary.deps(executor(() => ({ element: "Submit", operation: "click" }))), plan([step]));
+  assert.equal(stopped.escalation?.reason, "input_mode");
+  assert.match(stopped.escalation!.detail, /click "Submit" through accessibility \(path ax\)/);
+  assert.equal(ordinary.backend.actions.length, 1);
+  assert.deepEqual(stopped.steps[0]!.inputPaths, ["ax"]);
+  const testing = setup(t, [form, submitted], { inputMode: "accessibility-test" });
+  testing.backend.reportEvidence = true;
+  testing.backend.pointerPath = "ax";
+  const allowed = await runPlan(testing.deps(executor(() => ({ element: "Submit", operation: "click" }))), plan([step]));
+  assert.equal(allowed.outcome, "completed", "An accessibility test may use accessibility input");
+});
+
 test("the first read refuses to guess among several windows, and every later read uses the same window", async (t) => {
   const { backend, deps } = setup(t, [form, submitted]);
   await runPlan(deps(executor(() => ({ element: "Submit", operation: "click" }))), plan([{ id: "submit", intent: "Submit the form", postcondition: { exists: { name: "Done" } } }]));

@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { BackendError, type ActionOutcome, type BackendAction, type ExecutionBackend, type ForegroundState, type Point, type ReadOptions, type WindowRead, type WindowRef, type WindowTarget } from "./backend.ts";
+import { BackendError, type ActionOutcome, type BackendAction, type ExecutionBackend, type ForegroundState, type Point, type RawElement, type ReadOptions, type WindowRead, type WindowRef, type WindowTarget } from "./backend.ts";
 import { LocalDriverBackend, selectWindow, toWindowRead, windowRef, type DriverRunner, type FrontmostPid, type ListedWindow, type ScreenshotFiles, type WindowBounds, type WindowState } from "./local-backend.ts";
 
 /**
@@ -299,16 +299,29 @@ export function stripPngMetadata(png: Buffer): Buffer {
   return Buffer.concat(kept);
 }
 
+/**
+ * Pixels per point of a whole-display screenshot `width` pixels wide. The widest menu bar spans the
+ * display in points; the status-item bar is another, narrower menu bar. A result outside 1 to 4 is
+ * not a display scale and is ignored.
+ */
+export function desktopScaleOf(width: number, elements: RawElement[]): number | undefined {
+  const bar = Math.max(0, ...elements.filter(element => element.role === "AXMenuBar" && element.frame).map(element => element.frame!.w));
+  const scale = bar > 0 ? width / bar : undefined;
+  return scale !== undefined && scale >= 1 && scale <= 4 ? scale : undefined;
+}
+
 /** Decodes the gzip-compressed, base64-encoded JSON a guest program printed. */
 function decoded(execution: RelayExecution, what: string): unknown {
   try { return JSON.parse(gunzipSync(Buffer.from((JSON.parse(execution.stdout ?? "") as { gz: string }).gz, "base64")).toString("utf8")); }
   catch { throw new BackendError("driver_failed", `${what} returned output that is not JSON`); }
 }
 
-interface WindowReadInput { target: WindowTarget; maxTreeNodes: number; warmed: string[]; screenshotPath: string; lsappinfo: string }
+interface WindowReadInput { target: WindowTarget; maxTreeNodes: number; warmed: string[]; screenshotPath: string; lsappinfo: string; measureDesktop: boolean }
 interface GuestWindowRead {
   error?: { code: "app_not_running" | "window_not_found" | "window_ambiguous"; message: string };
   window: ListedWindow; frontPid: number | null; listedActive: boolean | null; state: WindowState; pngWidth: number | null;
+  /** The width in pixels of a whole-display screenshot, measured until the client knows the desktop scale. */
+  desktopWidth?: number | null;
 }
 
 /**
@@ -358,7 +371,17 @@ export function windowReadProgram(input: WindowReadInput): string {
     fs.writeFileSync(shot, png);
     if (png.length >= 24 && png.readUInt32BE(12) === 0x49484452) pngWidth = png.readUInt32BE(16);
   }
-  print({ window, frontPid, listedActive, state, pngWidth });
+  let desktopWidth = null;
+  if (input.measureDesktop) {
+    const desktop = resolve((await import("node:os")).tmpdir(), "secretary-desktop-" + process.pid + ".png");
+    try {
+      call("get_desktop_state", { screenshot_out_file: desktop });
+      const png = fs.readFileSync(desktop);
+      if (png.length >= 24 && png.readUInt32BE(12) === 0x49484452) desktopWidth = png.readUInt32BE(16);
+    } catch {}
+    fs.rmSync(desktop, { force: true });
+  }
+  print({ window, frontPid, listedActive, state, pngWidth, desktopWidth });
 })().catch(error => { process.stderr.write(String((error && error.stack) || error).slice(0, 2000)); process.exit(1); });
 `;
 }
@@ -429,13 +452,19 @@ export class RelayBackend implements ExecutionBackend {
   readonly #options: RelayBackendOptions;
   readonly #warmed = new Set<string>();
   readonly #geometry = new Map<string, { bounds: WindowBounds; scale: number }>();
+  /**
+   * Desktop-screenshot pixels per point, learned once per lease from a whole-display screenshot and
+   * the menu bar's width in points, because get_screen_size reported a scale of 1 where the
+   * desktop screenshot was 2 pixels per point (research §16.8).
+   */
+  #desktopScale: number | undefined;
   #reads = 0;
   constructor(options: RelayBackendOptions) {
     this.#options = options;
     this.#session = new RelaySession(options.connect, options);
     this.#driver = new LocalDriverBackend({ run: relayDriverRunner(this.#session, options), maxTreeNodes: options.maxTreeNodes,
       foregroundDelivery: options.foregroundDelivery, frontmostPid: relayFrontmost(this.#session), screenshots: relayScreenshotFiles(this.#session),
-      geometry: window => this.#geometry.get(`${window.pid}:${window.windowId}`), timeoutMs: this.#timeout });
+      geometry: window => this.#geometry.get(`${window.pid}:${window.windowId}`), desktopScale: () => this.#desktopScale, timeoutMs: this.#timeout });
   }
   get #timeout(): number { return this.#options.timeoutMs ?? 60_000; }
   /** The lease, for scripts that prepare the machine, such as opening an application. */
@@ -451,7 +480,8 @@ export class RelayBackend implements ExecutionBackend {
     const file = `read-${String(++this.#reads).padStart(4, "0")}.png`;
     const execution = await this.#session.run({ kind: "code", title: `Read the ${target.app} window`, expected: "The screen does not change", afterIntervalMs: 0,
       timeoutMs: this.#timeout, body: { code: windowReadProgram({ target, maxTreeNodes: this.#options.maxTreeNodes, warmed: [...this.#warmed],
-        screenshotPath: `${SCREENSHOT_EXTRACTION}/${file}`, lsappinfo: this.#options.guestLsappinfo ?? "/usr/bin/lsappinfo" }), language: "javascript" } }, options.signal);
+        screenshotPath: `${SCREENSHOT_EXTRACTION}/${file}`, lsappinfo: this.#options.guestLsappinfo ?? "/usr/bin/lsappinfo",
+        measureDesktop: this.#desktopScale === undefined }), language: "javascript" } }, options.signal);
     const result = decoded(execution, "The window read") as GuestWindowRead;
     if (result.error) throw new BackendError(result.error.code, result.error.message);
     const window = windowRef(result.window);
@@ -460,6 +490,7 @@ export class RelayBackend implements ExecutionBackend {
     const bounds = result.window.bounds;
     if (result.pngWidth && bounds && bounds.width > 0) this.#geometry.set(key, { bounds, scale: result.pngWidth / bounds.width });
     else this.#geometry.delete(key);
+    if (this.#desktopScale === undefined && result.desktopWidth) this.#desktopScale = desktopScaleOf(result.desktopWidth, result.state.elements ?? []);
     const appActive = result.frontPid !== null ? result.frontPid === window.pid : result.listedActive === true;
     let screenshot: WindowRead["screenshot"];
     if (options.screenshot && result.pngWidth && Array.isArray(result.state.elements)) {

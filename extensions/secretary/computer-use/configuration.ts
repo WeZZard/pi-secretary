@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
 
 /** The `computerUse` object of secretary.json (design docs/arch/computer-use.md §4.5). */
+export type InputMode = "ordinary" | "accessibility-test";
+
 export interface ComputerUseConfiguration {
   backend: "none" | "local" | "relay";
   executorUrl?: string;
@@ -23,6 +25,11 @@ export interface ComputerUseConfiguration {
   stepPictures: boolean;
   /** Fix plan F-3: clicks and modifier shortcuts make the application active for the action. */
   foregroundDelivery: boolean;
+  /**
+   * Design §11.4, decision PS-D8: `ordinary` allows only real pointer and key input, and a driver
+   * action performed through accessibility stops the plan; `accessibility-test` allows it.
+   */
+  inputMode: InputMode;
   allowLocalDesktop: boolean;
   localDriverPath: string;
   /** Design §11.2: the command that starts an mcp-vm-relay server over standard input and output. */
@@ -57,6 +64,7 @@ export const defaultComputerUseConfiguration = (): ComputerUseConfiguration => (
   redactTypedText: true,
   stepPictures: false,
   foregroundDelivery: true,
+  inputMode: "ordinary",
   allowLocalDesktop: false,
   localDriverPath: "cua-driver",
   relayCommand: DEFAULT_RELAY_COMMAND,
@@ -82,6 +90,7 @@ const VALIDATORS: Record<Field, { check: (value: unknown) => boolean; expected: 
   redactTypedText: { check: value => typeof value === "boolean", expected: "a boolean" },
   stepPictures: { check: value => typeof value === "boolean", expected: "a boolean" },
   foregroundDelivery: { check: value => typeof value === "boolean", expected: "a boolean" },
+  inputMode: { check: value => value === "ordinary" || value === "accessibility-test", expected: "ordinary or accessibility-test" },
   allowLocalDesktop: { check: value => typeof value === "boolean", expected: "a boolean" },
   localDriverPath: { check: value => typeof value === "string" && value.trim().length > 0, expected: "a non-empty string" },
   relayCommand: { check: value => Array.isArray(value) && value.length > 0 && value.every(part => typeof part === "string" && part.length > 0), expected: "a non-empty array of non-empty strings" },

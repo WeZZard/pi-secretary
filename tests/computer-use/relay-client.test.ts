@@ -4,7 +4,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { BackendError } from "../../extensions/secretary/computer-use/backend/backend.ts";
-import { RelayBackend, readProgram, stdioRelayConnect, type RelayConnection } from "../../extensions/secretary/computer-use/backend/relay-client.ts";
+import { RelayBackend, desktopScaleOf, readProgram, stdioRelayConnect, type RelayConnection } from "../../extensions/secretary/computer-use/backend/relay-client.ts";
 
 /** Plan Phase 7: the relay client's contract with an mcp-vm-relay server (design §11.2). */
 
@@ -15,6 +15,7 @@ const RUN_TOOLS = new Set(["relay_exec", "relay_code", "relay_run"]);
 /**
  * A fake guest cua-driver. Its window tree is larger than the guest's 64 KiB output cap, as one
  * Finder read was (research §14.5), and its screenshot is 800 pixels wide for a 400-point window.
+ * Its display is 1,600 pixels wide under an 800-point menu bar.
  */
 const FAKE_DRIVER = `#!${process.execPath}
 const { writeFileSync } = require("node:fs");
@@ -22,13 +23,15 @@ const [, , , tool, , json] = process.argv;
 const args = JSON.parse(json);
 require("node:fs").appendFileSync(process.env.SCRIPTED_DRIVER_LOG, tool + (args.screenshot_out_file ? " with screenshot" : "") + "\\n");
 const chunk = (type, data) => { const head = Buffer.alloc(8); head.writeUInt32BE(data.length, 0); head.write(type, 4, "latin1"); return Buffer.concat([head, data, Buffer.alloc(4)]); };
-const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(800, 0); ihdr.writeUInt32BE(600, 4);
+const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(tool === "get_desktop_state" ? 1600 : 800, 0); ihdr.writeUInt32BE(600, 4);
 // Like a macOS window screenshot, it carries a compressed colour profile.
 const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("iCCP", Buffer.from("profile")), chunk("IDAT", Buffer.from("pixels")), chunk("IEND", Buffer.alloc(0))]);
 if (args.screenshot_out_file) writeFileSync(args.screenshot_out_file, png);
 const out = tool === "list_windows" ? { windows: [{ window_id: 5, pid: 7, app_name: "Finder", title: "Documents", is_on_screen: true, z_index: 1, bounds: { x: 100, y: 50, width: 400, height: 300 } }] }
   : tool === "get_window_state" ? { snapshot_id: "s", element_count: 400, elements: [{ element_index: 0, role: "AXWindow", label: "Documents", depth: 0, frame: { x: 100, y: 50, w: 400, h: 300 } },
-    ...Array.from({ length: 399 }, (_, i) => ({ element_index: i + 1, role: "AXCell", label: "Quarterly report draft number " + i + " with a long descriptive name", parent_index: 0, depth: 1, frame: { x: 110, y: 60 + i, w: 300, h: 20 } }))] }
+    { element_index: 1, role: "AXMenuBar", depth: 0, frame: { x: 0, y: 0, w: 800, h: 24 } },
+    ...Array.from({ length: 398 }, (_, i) => ({ element_index: i + 2, role: "AXCell", label: "Quarterly report draft number " + i + " with a long descriptive name", parent_index: 0, depth: 1, frame: { x: 110, y: 60 + i, w: 300, h: 20 } }))] }
+  : tool === "click" || tool === "scroll" ? { ok: true, path: "cgevent_hid" }
   : { ok: true };
 process.stdout.write(JSON.stringify(out));
 `;
@@ -62,12 +65,12 @@ test("relay steps carry the plan step's label, and reads and actions return thei
   const { backend, calls } = await scripted(t);
   const read = await backend.readWindow({ app: "Finder" }, { screenshot: false, label: "run-1 open: initial" });
   const click = await backend.act(read.window, { kind: "click", point: { x: 150, y: 70 }, button: "left", count: 1, label: 'run-1 open: click "Agenda.txt"' });
-  assert.deepEqual([read.evidence, click.evidence, click.path], [["cu-0001"], ["cu-0002"], "cgevent_hid"]);
+  assert.deepEqual([read.evidence, click.evidence, click.path], [["cu-0001"], ["cu-0002", "cu-0003"], "cgevent_hid"], "The click's evidence includes bringing the window to the front");
   const runs = (await calls()).filter(call => RUN_TOOLS.has(call.relayTool));
   assert.equal(runs[0]!.step.title, "run-1 open: initial · Read the Finder window");
-  assert.equal(runs[1]!.reason, 'Secretary computer use: run-1 open: click "Agenda.txt" · Input with click (cu-0002)');
+  assert.equal(runs[2]!.reason, 'Secretary computer use: run-1 open: click "Agenda.txt" · Input with click (cu-0003)');
   const unlabelled = await backend.readWindow({ app: "Finder" }, { screenshot: false });
-  assert.deepEqual(unlabelled.evidence, ["cu-0003"]);
+  assert.deepEqual(unlabelled.evidence, ["cu-0004"]);
   assert.equal((await calls()).filter(call => RUN_TOOLS.has(call.relayTool)).at(-1)!.step.title, "Read the Finder window", "The label ends with its read");
 });
 
@@ -98,8 +101,8 @@ test("a relay read is one code run that passes the 64 KiB cap, plus the screensh
   assert.deepEqual(image.target, { source: "application", name: "computer-use-screenshots", path: "read-0001.png" });
   await backend.readWindow({ app: "Finder", windowTitle: "Documents" }, { screenshot: false });
   assert.equal((await calls()).filter(call => call.relayTool === "relay_image").length, 1, "A read without a screenshot fetches no image");
-  assert.deepEqual(await driverCalls(), ["list_windows", "get_window_state", "get_window_state with screenshot", "list_windows", "get_window_state with screenshot"],
-    "Only the first read of a window makes the warm-up read");
+  assert.deepEqual(await driverCalls(), ["list_windows", "get_window_state", "get_window_state with screenshot", "get_desktop_state with screenshot", "list_windows", "get_window_state with screenshot"],
+    "Only the first read of a window makes the warm-up read, and only the first read of a lease measures the display");
   await assert.rejects(backend.readWindow({ app: "Safari" }, { screenshot: false }),
     (error: unknown) => error instanceof BackendError && error.code === "app_not_running", "The guest chose the window with the client's own rules");
   const server = Number(await readFile(join(root, "server.pid"), "utf8"));
@@ -110,19 +113,33 @@ test("a relay read is one code run that passes the 64 KiB cap, plus the screensh
   assert.equal(alive(), false, "Closing ends the relay server process");
 });
 
-test("a relay click is one relay_run call to the guest's cua-driver, with real pointer input at window pixels", async t => {
+test("a relay click brings the window to the front and clicks in screen coordinates at the display's learned scale", async t => {
   const { backend, calls } = await scripted(t);
   const read = await backend.readWindow({ app: "Finder" }, { screenshot: true });
   await backend.act(read.window, { kind: "click", point: { x: 150, y: 70 }, button: "left", count: 1 });
+  await backend.act(read.window, { kind: "click", point: { x: 150, y: 70 }, button: "right", count: 1 });
+  await backend.act(read.window, { kind: "click", point: { x: 150, y: 70 }, button: "left", count: 2 });
+  await backend.act(read.window, { kind: "scroll", point: { x: 300, y: 200 }, direction: "down", by: "page", extent: 250 });
   const runs = (await calls()).filter(call => RUN_TOOLS.has(call.relayTool));
-  assert.deepEqual(runs.map(call => call.relayTool), ["relay_code", "relay_run"], "The click reuses the read's bounds and scale");
-  const cua = runs.filter(call => call.relayTool === "relay_run");
-  assert.equal(cua[0]!.target, "cua");
-  assert.equal(cua[0]!.tool, "click");
-  assert.deepEqual({ x: cua[0]!.args.x, y: cua[0]!.args.y, delivery: cua[0]!.args.delivery_mode }, { x: 100, y: 40, delivery: "foreground" }, "Points become pixels at the learned scale of 2");
-  assert.equal(cua[0]!.args.element_index, undefined, "No accessibility activation");
-  assert.equal(cua[0]!.afterIntervalMs, 300);
-  assert.match(cua[0]!.reason, /^Secretary computer use: Input with click \(cu-0002\)$/);
+  assert.deepEqual(runs.map(call => call.relayTool === "relay_run" ? call.tool : call.relayTool),
+    ["relay_code", "bring_to_front", "click", "bring_to_front", "click", "bring_to_front", "click", "bring_to_front", "scroll"], "No read of bounds or scale before an action");
+  const pointer = runs.filter(call => call.tool === "click" || call.tool === "scroll").map(call => call.args);
+  assert.deepEqual(pointer, [
+    { scope: "desktop", x: 300, y: 140 },
+    { scope: "desktop", x: 300, y: 140, button: "right" },
+    { scope: "desktop", x: 300, y: 140, count: 2 },
+    { scope: "desktop", x: 600, y: 400, direction: "down", by: "page", amount: 2 },
+  ], "Points become desktop pixels at 1,600 pixels over an 800-point menu bar, with no window or accessibility element");
+  assert.deepEqual(runs[1]!.args, { pid: 7, window_id: 5 });
+  assert.equal(runs[2]!.afterIntervalMs, 300);
+  assert.match(runs[2]!.reason, /^Secretary computer use: Input with click \(cu-0003\)$/);
+});
+
+test("the desktop scale comes from the widest menu bar and is ignored outside 1 to 4", () => {
+  const bar = (w: number) => ({ element_index: w, role: "AXMenuBar", depth: 0, frame: { x: 0, y: 0, w, h: 24 } });
+  assert.equal(desktopScaleOf(2560, [bar(300), bar(1280)]), 2);
+  assert.equal(desktopScaleOf(2560, []), undefined);
+  assert.equal(desktopScaleOf(2560, [bar(300)]), undefined);
 });
 
 test("the read program prints the driver's output compressed", () => {

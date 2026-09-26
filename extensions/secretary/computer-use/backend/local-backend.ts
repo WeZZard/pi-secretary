@@ -125,6 +125,14 @@ export interface LocalBackendOptions {
    * call there is a relay run of several seconds (research §15).
    */
   geometry?: (window: WindowRef) => { bounds: WindowBounds; scale: number } | undefined;
+  /**
+   * Design §11.4: desktop-screenshot pixels per screen point. When it answers, clicks and scrolls are
+   * sent in screen coordinates with `scope: "desktop"` after the window is brought to the front,
+   * because a window-pixel click on the iOS Simulator was performed as an accessibility press
+   * (research §16.8) and the menu bar lies outside every window. The relay client sets it; the
+   * local backend does not, because a desktop click moves the pointer of the user's own Mac.
+   */
+  desktopScale?: () => number | undefined;
 }
 
 export interface WindowState { elements?: RawElement[]; element_count?: number; snapshot_id?: string; tree_markdown?: string }
@@ -307,7 +315,14 @@ export class LocalDriverBackend implements ExecutionBackend {
     const delivery = deliveryFor(action, this.#options.foregroundDelivery ?? false);
     const base = { pid: window.pid, window_id: window.windowId, ...(delivery ? { delivery_mode: delivery } : {}) };
     let result: unknown;
-    if (action.kind === "click") {
+    const desktop = action.kind !== "key" ? this.#options.desktopScale?.() : undefined;
+    if (desktop !== undefined && action.kind !== "key") {
+      await this.bringToFront(window, signal);
+      const at = { scope: "desktop", x: Math.round(action.point.x * desktop), y: Math.round(action.point.y * desktop) };
+      result = action.kind === "click"
+        ? await this.#options.run("click", { ...at, ...(action.button === "right" ? { button: "right" } : {}), ...(action.count === 2 ? { count: 2 } : {}) }, { timeoutMs: this.#timeout, signal })
+        : await this.#options.run("scroll", { ...at, direction: action.direction, by: action.by, amount: pageNotches(action.extent) }, { timeoutMs: this.#timeout, signal });
+    } else if (action.kind === "click") {
       const { x, y } = await this.#pixels(window, action.point, signal);
       const args = { ...base, x, y };
       result = action.button === "right" ? await this.#options.run("right_click", args, { timeoutMs: this.#timeout, signal })

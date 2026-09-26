@@ -64,6 +64,8 @@ The result names a reason and shows the current window. Replan from that window.
 - `window_changed`: the window changed after you observed it, and nothing was done. Plan again from the
   returned window.
 - `approval_required`: stop unless the task authorizes the step.
+- `input_mode`: the input did not arrive as a real click or key press, and it may have taken effect. Stop and
+  report it; a new plan cannot change how input is sent.
 - `executor_unavailable`, `backend_failed` or `budget_exhausted`: stop and report. Do not do the steps another way.
 
 After the escalation limit, the tool refuses further plans. Report what you achieved.

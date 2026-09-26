@@ -42,6 +42,10 @@ test("unknown fields, invalid values, and an unacknowledged local desktop are re
   assert.throws(() => loadComputerUseConfiguration(cwd, agentDir, false), /unsupported computerUse field backnd/);
   put(global, { computerUse: { confidenceGate: 1.5 } });
   assert.throws(() => loadComputerUseConfiguration(cwd, agentDir, false), /computerUse.confidenceGate must be a number from 0 to 1/);
+  put(global, { computerUse: { inputMode: "accessibility" } });
+  assert.throws(() => loadComputerUseConfiguration(cwd, agentDir, false), /computerUse.inputMode must be ordinary or accessibility-test/);
+  put(global, { computerUse: { inputMode: "accessibility-test" } });
+  assert.equal(loadComputerUseConfiguration(cwd, agentDir, false).inputMode, "accessibility-test");
   put(global, { computerUse: { executorUrl: "jev.home.arpa" } });
   assert.throws(() => loadComputerUseConfiguration(cwd, agentDir, false), /must be an http or https URL/);
   put(global, { computerUse: { backend: "local" } });

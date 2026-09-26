@@ -286,8 +286,14 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
             const done = await backend.act(before.read.window, { ...action, label }, signal);
             if (done.evidence?.length) (outcome.evidence ??= []).push(...done.evidence);
             if (done.path) (outcome.inputPaths ??= []).push(done.path);
+            // Design §11.4: in ordinary mode an action the driver performed through accessibility is
+            // not real input. It may have taken effect, so it is neither repeated nor continued.
+            if (done.path === "ax" && config.inputMode === "ordinary") {
+              escalate(step.id, "input_mode", `the driver performed ${decision.operation}${decision.element ? ` ${JSON.stringify(decision.element.name)}` : ""} through accessibility (path ax), which ordinary input mode does not allow; it may have taken effect, so it was not repeated`, decision.prior);
+            }
           }
           catch (error) {
+            if (error instanceof Stop) throw error;
             // An action already sent is not replayed (design §11.2); its outcome is uncertain.
             if (error instanceof BackendError && error.code === "aborted") throw new Stop(undefined, true);
             escalate(step.id, "backend_failed", error instanceof Error ? error.message : String(error), decision.prior);
