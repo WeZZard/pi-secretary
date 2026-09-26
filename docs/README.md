@@ -42,6 +42,7 @@
 | --- | --- |
 | [Requirements](user-stories/computer-use.md) | They are the required outcomes, CU-01 to CU-07, approved on 2026-09-24. |
 | [Technical design](arch/computer-use.md) | It is the design for a computer-use subagent in which a planner model plans, a structured-decision executor chooses one element per step, and code verifies each step. The observer, executor path, step harness and planner tools are implemented with the local driver backend. The relay backend and delegation from a parent agent are not. |
+| [Evaluation design](arch/computer-use-evaluation.md) | It defines the ship gate, the benchmark run on MacArena and how counted failures choose the next change (decision PS-D9). It is a draft and is not implemented. |
 | [Planner and executor investigation](research/computer-use-s0-s1.md) | It records the measurements of the executor service from 2026-09-22 and the live checks, through standalone scripts and through Pi, from 2026-09-23, with their verification limits. |
 
 ## Generated test artifacts
