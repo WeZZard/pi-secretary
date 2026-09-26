@@ -102,6 +102,16 @@ const files = (dir: string, match: (name: string) => boolean): string[] => !exis
 });
 const json = <T>(path: string): T | undefined => { try { return JSON.parse(readFileSync(path, "utf8")) as T; } catch { return undefined; } };
 
+const sessionText = (state: string) => files(join(state, "agents"), name => name.endsWith(".jsonl")).map(path => readFileSync(path, "utf8")).join("\n");
+
+/**
+ * A run that never had a machine: no check ran, and the relay refused to acquire one, as when the
+ * host's two macOS machines are in use. It says nothing about the agent, so it is run again later.
+ */
+export function machineUnavailable(input: { checks: CheckResult[] | undefined; state: string }): boolean {
+  return !input.checks && /relay_acquire failed/.test(sessionText(input.state));
+}
+
 /**
  * One cause per failed run, in the order of design §4, after the two harness causes. `state` is the run's extension-state
  * directory, which holds the computer-use records and the child agent's session.
@@ -116,7 +126,7 @@ export function classify(input: { score: number | undefined; checks: CheckResult
   const steps = files(records, name => name.startsWith("step-")).map(path => json<StepRecord>(path)).filter((step): step is StepRecord => !!step);
   const rejections = files(records, name => name.endsWith(".json")).filter(path => path.split(sep).includes("rejections")).sort()
     .map(path => json<{ rule: string }>(path)).filter((rejection): rejection is { rule: string } => !!rejection);
-  const session = files(join(input.state, "agents"), name => name.endsWith(".jsonl")).map(path => readFileSync(path, "utf8")).join("\n");
+  const session = sessionText(input.state);
   const last = plans.at(-1);
   // Harness failures come first: they say nothing about the agent.
   if (/\(Prepare: [\s\S]{0,4000}?\) was (?:completed|uncertain|failed)/.test(session)) return "setup_failed";

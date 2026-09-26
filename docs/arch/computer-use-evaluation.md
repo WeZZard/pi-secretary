@@ -45,6 +45,8 @@ A task is an instruction, preparation steps, and a checking script. One task run
 - A task counts as passed when its score is 1.
 - Preparation that uses AppleScript or shell commands is setup, not agent input, so input mode ([design Section 11.4](computer-use.md#114-input-mode)) does not apply to it.
 - Every run writes into a new directory under `test-results/`.
+- A run in which the relay refused every acquisition, because the host's two macOS machines were in use, ran no check and says nothing about the agent. The runner records it in `deferred.jsonl` and runs it again 5 minutes later, up to 15 times. Only the 15th such attempt is recorded as `check_failed`.
+- Runs go round by round, every task's first run before any task's second run. The runner skips runs already in its `results.jsonl`, so the same command resumes a stopped evaluation.
 
 ## 4. Failure causes
 

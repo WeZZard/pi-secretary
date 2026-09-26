@@ -3,7 +3,7 @@ import { test, type TestContext } from "node:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appsOf, classify, instructionFor, score, toCommands, type MacArenaTask } from "../../scripts/computer-use/support/macarena.ts";
+import { appsOf, classify, instructionFor, machineUnavailable, score, toCommands, type MacArenaTask } from "../../scripts/computer-use/support/macarena.ts";
 
 /** Evaluation plan phase E1: MacArena tasks as relay setup and checks, scored and classified (design §3, §4). */
 
@@ -81,4 +81,11 @@ test("a failed run gets one cause from its records", (t) => {
     "Quotes in the command are escaped in the session record");
   assert.equal(classify({ score: undefined, checks: undefined, state: state(t, { plans: [{ outcome: "completed" }] }) }), "check_failed",
     "A run whose checks never ran is not blamed on the agent");
+});
+
+test("a run that never had a machine is told apart, so it runs again instead of counting", (t) => {
+  const refused = state(t, { session: 'Observation failed: relay_acquire failed: vm-service /acquire: HTTP 409: macOS VM limit reached (2 active)' });
+  assert.equal(machineUnavailable({ checks: undefined, state: refused }), true);
+  assert.equal(machineUnavailable({ checks: ran(["False\n", "False\n"]), state: refused }), false, "A machine was acquired later and its checks ran");
+  assert.equal(machineUnavailable({ checks: undefined, state: state(t, { plans: [{ outcome: "completed" }] }) }), false);
 });
