@@ -6,9 +6,9 @@ import { CONFIG_DIR_NAME, parseFrontmatter, type ExtensionContext } from "@earen
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { FALLBACK_LIST_NAME, isExactModelIdentifier, type AgentConfiguration } from "./configuration.ts";
 import { ModelAvailability } from "./availability.ts";
-import type { AgentDefinition } from "./records.ts";
+import { THINKING_SETTINGS, type AgentDefinition } from "./records.ts";
 
-const fields = new Set(["name", "description", "tools", "disallowedTools", "model", "maxTurns", "background", "isolation"]);
+const fields = new Set(["name", "description", "tools", "disallowedTools", "model", "maxTurns", "background", "isolation", "thinking"]);
 const safeName = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const hash = (content: string) => createHash("sha256").update(content).digest("hex");
 
@@ -56,6 +56,10 @@ function definition(content: string, source: string): AgentDefinition {
   if (Object.hasOwn(data, "isolation")) {
     if (data.isolation !== "none" && data.isolation !== "worktree") throw new Error(`${source}: unsupported isolation`);
     result.isolation = data.isolation;
+  }
+  if (Object.hasOwn(data, "thinking")) {
+    if (!(THINKING_SETTINGS as readonly unknown[]).includes(data.thinking)) throw new Error(`${source}: thinking must be one of ${THINKING_SETTINGS.join(", ")}`);
+    result.thinking = data.thinking as AgentDefinition["thinking"];
   }
   return result;
 }

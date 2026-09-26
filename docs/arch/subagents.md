@@ -265,10 +265,11 @@ Discovery order, from highest to lowest precedence, is:
 3. Packaged definitions provide `general-purpose`, `Explore`, and `Plan`.
 
 - The registry rejects duplicate names within one scope and invalid frontmatter.
-- The initial frontmatter subset includes `name`, `description`, `tools`, `disallowedTools`, `model`, `maxTurns`, `background`, and `isolation`.
+- The initial frontmatter subset includes `name`, `description`, `tools`, `disallowedTools`, `model`, `maxTurns`, `background`, `isolation`, and `thinking`.
 - Tool lists use actual pi tool names. This is an explicit agent-definition adaptation, not a tool-schema change.
 - Unsupported behavioral fields such as permission overrides, hooks, or remote execution fail validation rather than being ignored.
 - The definition's `background` field is a boolean with the resolution rules in Section 4.1. The definition's `isolation` field accepts `none` or `worktree`; unsupported values fail registry validation. Explicit invocation isolation wins over the definition default, but an explicit unsupported value is rejected rather than replaced.
+- The definition's `thinking` field accepts one of pi's thinking levels: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Any other value fails registry validation. The rules for how it changes the child's thinking level are in Section 5.3.
 - Project trust is checked before project definitions, extensions, and configuration are honored.
 - A user definition can override a packaged agent; the inspector records the selected source and content hash.
 - Changes to definitions affect new agents. Resumption uses the stored definition snapshot, while current trust and permissions may narrow or refuse it.
@@ -338,7 +339,10 @@ Each candidate is checked in order against the model registry, the parent's scop
 - The launch result and the run record state the resolved model together with its resolution source: inheritance from the parent model, an exact definition or invocation model, or a named fallback list with the selected candidate's position in the list. When the first candidate was not used, they also state which candidates were skipped and why. A resolved model that equals the parent's current model must therefore be distinguishable from inheritance without inspecting configuration files.
 - The agent record persists this provenance as the interpreted value, its origin (invocation, configuration, definition, or default), the full candidate chain, the selected candidate's position, and the pre-launch skips. When the runner advances the chain at runtime, the recorded position advances with it; records written before provenance tracking lack the field and render no source.
 - Resumption retains the recorded model and does not re-evaluate the chain. A missing credential or unavailable model on resumption requires an explicit configuration correction, not a different model selected silently.
-- The child inherits the parent's thinking level unless a supported future definition field explicitly changes it. The initial public tool has no `thinking` parameter.
+- The child inherits the parent's thinking level unless its definition sets the `thinking` field. When the field is set, the child starts at that level instead of the parent's level.
+- Pi adjusts the level to one the child's model supports. For example, a model without reasoning support always runs with thinking `off`, and pi moves an unsupported level to the nearest supported one.
+- The agent record stores the level the run started with. Resumption keeps the recorded level and does not read the definition again.
+- The public `Agent` tool has no `thinking` parameter. Only a definition can change the child's thinking level.
 - Provider registrations and credentials must be obtained through supported pi facilities. Access to an undocumented model-registry backing field is not an accepted permanent integration strategy.
 
 ### 5.4 Request-scoped definition catalog

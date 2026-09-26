@@ -11,6 +11,8 @@ import { installSecretary } from "../../extensions/secretary/index.ts";
 export async function discoverySession(t: TestContext, options: {
   setup?: (root: string, agentDir: string) => Promise<void>;
   modelIds?: string[];
+  /** Marks the fixture models as reasoning models, so a thinking level other than off reaches the request. */
+  reasoning?: boolean;
   respond?: (context: Context, index: number) => Promise<AssistantMessage["content"]>;
   respondChild?: (context: Context, index: number, signal?: AbortSignal) => Promise<AssistantMessage["content"]>;
   mode?: "print" | "rpc";
@@ -31,11 +33,12 @@ export async function discoverySession(t: TestContext, options: {
   const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null,
     modelsStorePath: join(root, "models.json"), allowModelNetwork: false, refreshOnCreate: false });
   const model: Model<"openai-completions"> = { id: "fixture", provider: "discovery-test", name: "Local discovery fixture",
-    api: "openai-completions", baseUrl: "http://127.0.0.1:1/never", reasoning: false, input: ["text", "image"],
+    api: "openai-completions", baseUrl: "http://127.0.0.1:1/never", reasoning: options.reasoning ?? false, input: ["text", "image"],
     contextWindow: 128000, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
   const models = (options.modelIds ?? [model.id]).map(id => ({ ...model, id }));
   assert.ok(models.length, "The fixture requires an explicit local model");
   const parentModels: string[] = [], childModels: string[] = [];
+  const childReasoning: Array<string | undefined> = [];
   const parentCalls: Context[] = [], childCalls: Context[] = [], errors: unknown[] = [];
   const loader = new DefaultResourceLoader({ cwd: root, agentDir, settingsManager: settings,
     noExtensions: true, noSkills: true, noThemes: true, noPromptTemplates: true, noContextFiles: true,
@@ -46,6 +49,7 @@ export async function discoverySession(t: TestContext, options: {
           const parent = context.tools?.some(tool => tool.name === "Agent") ?? false;
           const calls = parent ? parentCalls : childCalls;
           (parent ? parentModels : childModels).push(`${m.provider}/${m.id}`);
+          if (!parent) childReasoning.push(request?.reasoning);
           calls.push({ ...context, messages: structuredClone(context.messages),
             tools: context.tools?.map(({ name, description, parameters }) => ({ name, description, parameters })) });
           const index = calls.length - 1;
@@ -82,5 +86,5 @@ export async function discoverySession(t: TestContext, options: {
     await rm(root, { recursive: true, force: true });
     assert.deepEqual(errors, [], "No swallowed extension or provider errors");
   });
-  return { root, agentDir, session, manager, engine, parentCalls, childCalls, models, parentModels, childModels };
+  return { root, agentDir, session, manager, engine, parentCalls, childCalls, models, parentModels, childModels, childReasoning };
 }

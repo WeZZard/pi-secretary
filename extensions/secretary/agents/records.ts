@@ -2,6 +2,10 @@ import type { TokenUsage } from "../usage.ts";
 
 export type RunStatus = "queued" | "starting" | "running" | "cancelling" | "succeeded" | "partial" | "failed" | "cancelled" | "interrupted";
 export const TERMINAL_STATUSES: ReadonlySet<RunStatus> = new Set(["succeeded", "partial", "failed", "cancelled", "interrupted"]);
+/** Pi's thinking levels; a definition's `thinking` field accepts exactly these. */
+export const THINKING_SETTINGS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export type ThinkingSetting = typeof THINKING_SETTINGS[number];
+
 export interface AgentDefinition {
   name: string;
   description: string;
@@ -14,6 +18,7 @@ export interface AgentDefinition {
   maxTurns?: number;
   background?: boolean;
   isolation?: "none" | "worktree";
+  thinking?: ThinkingSetting;
   resumable: boolean;
 }
 export interface WorktreeRecord {

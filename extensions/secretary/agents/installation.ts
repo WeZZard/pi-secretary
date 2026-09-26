@@ -225,7 +225,7 @@ export function installAgentSupport(pi: ExtensionAPI, options: AgentInstallation
                 selected: resolution.chain.indexOf(resolution.id), skipped: resolution.skipped },
               ...(myAgentId !== undefined ? { parentAgentId: myAgentId } : {}),
               ...(resolution.chain.length > 1 ? { modelCandidates: resolution.chain.slice(resolution.chain.indexOf(resolution.id) + 1) } : {}),
-              thinkingLevel: toolCtx.thinkingLevel, tools, prompt: params.prompt, description: params.description,
+              thinkingLevel: definition.thinking ?? toolCtx.thinkingLevel, tools, prompt: params.prompt, description: params.description,
               name: params.name, background, isolation: resolveIsolation(params.isolation, definition.isolation) });
             const run = launched.run!;
             if (background) return { ...displayResult(run), content: [{ type: "text" as const, text: `${runText(run)}\nLaunch accepted; execution is not yet complete. You will be notified on completion.` }] };
