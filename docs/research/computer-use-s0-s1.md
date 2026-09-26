@@ -817,3 +817,18 @@ The relay client pinned `@wezzard/mcp-vm-relay@0.4.0` from 2026-09-24. Pi's own 
 - The relay refuses a step title over 500 characters with the message "Invalid relay input: action is required; run and console-open require nonblank reason", which does not name the field. A Finder preparation command of 740 characters failed this way on 0.4.0 in the live check of 2026-09-26 at 00:02 UTC.
 
 **Evidence:** `test-results/computer-use/relay-061-probe-2026-09-26T00-12-16-774Z/`. It is not versioned.
+
+**The three tasks on 0.6.1.** Each task ran once through Pi at revision `f9f0fb2`, as in [Section 16.5](#165-named-controls-the-start-check-and-three-tasks-on-relay-040). Calculator and TextEdit started together, and Finder started when Calculator ended.
+
+| Task | Started (UTC) | Delegations | Outcome | Steps verified by code |
+| --- | --- | --- | --- | --- |
+| Calculator | 2026-09-26 00:18 | 1 | completed, 10 | 3 of 4; the planner chose `{changed:true}` for Add |
+| TextEdit | 2026-09-26 00:18 | 2; the parent resumed the agent after the first stopped | stopped | 0 |
+| Finder | 2026-09-26 00:22 | 2; the parent delegated again after the first failed | completed on the second | 2 of 2 |
+
+- Every lease ended with `relay_finish`, and each evidence package was delivered.
+- The first Finder delegation could not acquire a machine: "macOS VM limit reached (2 active); … host-wide Virtualization.framework guests: 3 (1 not ours)". The TextEdit run held one machine at the time, and a guest outside this project held another. The second delegation acquired one and completed.
+- In TextEdit, the executor answered "none" for every step that named the text area, and the plans stopped with `target_not_found`. The driver reports the text area's label as the document's text, so the executor's line for it is `I Disposable document for the computer-use batch.…`, with nothing that marks it as a place to type. Once the planner wrote `control: {name: "I"}`, the element's letter, and the control check stopped the step.
+- After the TextEdit agent's first run reached the limit of 5 escalations, the parent resumed it with `SendMessage`. The limit counts per run, so the resumed run planned 5 more times.
+
+**Verification limits:** One run per task. Two runs overlapped, so the machine-limit failure came from this check's own schedule.
