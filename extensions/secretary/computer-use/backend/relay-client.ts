@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { gunzipSync } from "node:zlib";
@@ -37,15 +38,42 @@ export function stdioRelayConnect(options: { command: string[]; cwd: string }): 
     const client = new Client({ name: "secretary-computer-use", version: "1.0.0" });
     // A first start may download the package, so it gets longer than a request.
     await client.connect(transport, { timeout: 5 * 60_000 });
+    const pid = transport.pid;
+    const server = { ending: false };
+    if (pid !== null) liveServers.set(pid, server);
+    installExitHook();
     return {
       async call(tool, args, { timeoutMs, signal }) {
+        if (tool === "relay_finish" || tool === "relay_release") server.ending = true;
         const result = await client.callTool({ name: tool, arguments: args }, undefined, { timeout: timeoutMs, signal });
         const blocks = (result.content ?? []) as { type: string; text?: string }[];
         return { text: blocks.find(block => block.type === "text")?.text ?? "", isError: result.isError === true };
       },
-      close: () => client.close(),
+      close: async () => { try { await client.close(); } finally { if (pid !== null) liveServers.delete(pid); } },
     };
   };
+}
+
+/**
+ * Relay servers still running when the process exits (design §11.2), with whether a finish or a
+ * release was sent. A child run's shutdown handlers get 5 s and `relay_finish` takes about a
+ * minute, so a server that is ending its lease is left to complete it after Pi exits, which
+ * delivers the evidence. A server that never got a finish, because Pi exited during a child run,
+ * kept renewing its lease for over an hour on 2026-09-26. Such a server and the `npm exec`
+ * wrapper's children are stopped, so the lease's own time limit ends the machine.
+ */
+const liveServers = new Map<number, { ending: boolean }>();
+let exitHookInstalled = false;
+function installExitHook(): void {
+  if (exitHookInstalled) return;
+  exitHookInstalled = true;
+  process.on("exit", () => {
+    for (const [pid, server] of liveServers) {
+      if (server.ending) continue;
+      spawnSync("/usr/bin/pkill", ["-TERM", "-P", String(pid)]);
+      try { process.kill(pid, "SIGTERM"); } catch {}
+    }
+  });
 }
 
 /** The declared extraction that receives window screenshots; the relay delivers it with the evidence. */

@@ -114,15 +114,19 @@ const runs = (): { status?: string; background?: boolean; output?: string; subag
   catch { return []; } finally { db.close(); }
 };
 const wait = (ms: number) => new Promise(done => setTimeout(done, ms));
+const TERMINAL = ["succeeded", "failed", "cancelled", "partial"];
 let finishedAt: number | undefined, endsAtFinish = 0, lastStatus = "";
 while (Date.now() - started < TIMEOUT_MS) {
   await wait(5000);
-  const run = runs()[0];
-  const status = run?.status ?? "none";
+  // The parent may delegate again after a run ends, so every run must end, not only the first.
+  const all = runs();
+  const status = all.map(run => run.status ?? "none").join(", ") || "none";
   if (status !== lastStatus) { log(`${Math.round((Date.now() - started) / 1000)}s run status: ${status}`); lastStatus = status; }
-  if (!finishedAt && ["succeeded", "failed", "cancelled", "partial"].includes(status)) { finishedAt = Date.now(); endsAtFinish = agentEnds; }
-  // After the run ends, the parent takes one more turn to report it.
-  if (finishedAt && (agentEnds > endsAtFinish || Date.now() - finishedAt > 3 * 60_000)) break;
+  const ended = all.length > 0 && all.every(run => TERMINAL.includes(run.status ?? ""));
+  if (!ended) { finishedAt = undefined; continue; }
+  if (!finishedAt) { finishedAt = Date.now(); endsAtFinish = agentEnds; }
+  // After the last run ends, the parent takes one more turn to report it.
+  if (agentEnds > endsAtFinish || Date.now() - finishedAt > 3 * 60_000) break;
 }
 child.stdin.end();
 child.kill("SIGTERM");
@@ -130,16 +134,21 @@ await wait(3000);
 writeFileSync(join(environment.artifacts, "stdout.jsonl"), environment.redact(stdout));
 writeFileSync(join(environment.artifacts, "stderr.log"), environment.redact(stderr));
 const evidence = join(environment.project, "relay-evidence");
-// The relay server finishes the lease after the agent's session ends, which can outlast Pi by minutes.
-const finished = () => existsSync(evidence) && readdirSync(evidence).some(name => name.endsWith(".lifecycle.json"));
-for (const deadline = Date.now() + 10 * 60_000; !finished() && Date.now() < deadline;) await wait(5000);
-log(finished() ? "The relay lease was finished." : "The relay lease was not finished within 10 minutes of stopping Pi.");
+// The relay server finishes a lease after the agent's session ends, which can outlast Pi by minutes.
+// A lease that acquired a machine has the relay's host configuration; a refused acquisition has only events.
+const leases = () => existsSync(evidence) ? readdirSync(evidence).filter(name => existsSync(join(evidence, name, "host", "mcp-host-config.json"))) : [];
+const unfinished = () => leases().filter(name => !existsSync(join(evidence, `${name}.lifecycle.json`)));
+for (const deadline = Date.now() + 10 * 60_000; unfinished().length && Date.now() < deadline;) await wait(5000);
+log(unfinished().length ? `Relay leases not finished within 10 minutes of stopping Pi: ${unfinished().join(", ")}.` : `Every relay lease was finished (${leases().length}).`);
 if (existsSync(evidence)) cpSync(evidence, join(environment.artifacts, "relay-evidence"), { recursive: true });
 writeFileSync(join(environment.artifacts, "runs.json"), environment.redact(JSON.stringify(runs(), null, 2)));
 profile.redactArtifacts();
-const run = runs()[0];
 log(`\nElapsed: ${Math.round((Date.now() - started) / 1000)} s (wall clock from sending the prompt to stopping Pi)`);
-log(`Run: ${run ? `${run.subagentType ?? ""} background=${run.background} status=${run.status}` : "none"}`);
-log(`Run output:\n${run?.output ?? ""}`);
+const all = runs();
+if (!all.length) log("Run: none");
+for (const [index, run] of all.entries()) {
+  log(`Run ${index + 1} of ${all.length}: ${run.subagentType ?? ""} background=${run.background} status=${run.status}`);
+  log(`Run output:\n${run.output ?? ""}`);
+}
 log(`Output: ${environment.artifacts}`);
 log(`Workspace kept for inspection: ${environment.workspace}`);

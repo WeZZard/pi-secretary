@@ -256,3 +256,42 @@ test("a cua-driver tool that fails inside a completed relay_run is a backend fai
     (error: unknown) => error instanceof BackendError && error.code === "driver_failed" && /cua-driver press_key was tool-error/.test(error.message));
   assert.equal(calls.filter(tool => tool === "relay_run").length, 1, "Not sent again");
 });
+
+/** Runs a process that connects to the scripted relay under a shell wrapper, as `npm exec` does, then exits without closing. */
+async function exitWithServer(t: TestContext, beforeExit: string) {
+  const root = await mkdtemp(join(tmpdir(), "secretary-relay-exit-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const pidFile = join(root, "server.pid");
+  const client = join(root, "client.ts");
+  const relayClient = resolve(import.meta.dirname, "../../extensions/secretary/computer-use/backend/relay-client.ts");
+  const wrapped = `"${process.execPath}" --experimental-strip-types --no-warnings "${server}"; true`;
+  await writeFile(client, `import { stdioRelayConnect } from ${JSON.stringify(relayClient)};
+const connection = await stdioRelayConnect({ command: ["/bin/sh", "-c", ${JSON.stringify(wrapped)}], cwd: ${JSON.stringify(root)} })();
+${beforeExit}
+process.stdout.write("connected");
+process.exit(143);
+`);
+  const { execFile } = await import("node:child_process");
+  await new Promise<void>((done, fail) => execFile(process.execPath, ["--experimental-strip-types", "--no-warnings", client],
+    { env: { ...process.env, SCRIPTED_RELAY_WORKSPACE: join(root, "workspace"), SCRIPTED_RELAY_LOG: join(root, "calls.jsonl"),
+      SCRIPTED_RELAY_DRIVER: "/bin/false", SCRIPTED_RELAY_PID_FILE: pidFile, SCRIPTED_RELAY_OUTLIVE_INPUT: "1", SCRIPTED_RELAY_FINISH_MS: "3000" } },
+    (error, stdout) => (stdout.includes("connected") ? done() : fail(error ?? new Error(stdout)))));
+  const serverPid = Number(await readFile(pidFile, "utf8"));
+  const alive = () => { try { process.kill(serverPid, 0); return true; } catch { return false; } };
+  t.after(() => { if (alive()) process.kill(serverPid, "SIGKILL"); });
+  return alive;
+}
+
+test("a relay server that never got a finish stops when the process exits", async t => {
+  // On 2026-09-26, Pi exited during a child run, and the relay server under `npm exec` kept renewing its lease for over an hour.
+  const alive = await exitWithServer(t, "");
+  for (let waited = 0; alive() && waited < 5000; waited += 100) await new Promise(done => setTimeout(done, 100));
+  assert.equal(alive(), false, "The server under the wrapper was stopped");
+});
+
+test("a relay server that is finishing its lease is left to deliver the evidence after the process exits", async t => {
+  const alive = await exitWithServer(t, `connection.call("relay_finish", {}, { timeoutMs: 60000 }).catch(() => {});
+await new Promise(done => setTimeout(done, 500));`);
+  await new Promise(done => setTimeout(done, 1000));
+  assert.equal(alive(), true, "A finish in progress is not cut off");
+});

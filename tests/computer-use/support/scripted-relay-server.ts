@@ -18,6 +18,8 @@ const driver = process.env.SCRIPTED_RELAY_DRIVER!;
 const MAX_OUTPUT_BYTES = 64 * 1024;
 mkdirSync(workspace, { recursive: true });
 if (process.env.SCRIPTED_RELAY_PID_FILE) writeFileSync(process.env.SCRIPTED_RELAY_PID_FILE, String(process.pid));
+// The real server keeps its machine when its input closes, waiting for an explicit finish or release.
+if (process.env.SCRIPTED_RELAY_OUTLIVE_INPUT) setInterval(() => {}, 1000);
 
 const executed = (execution: Record<string, unknown>) =>
   `${JSON.stringify({ imageDelivery: { status: "attached" }, executionFailed: false })}\n${JSON.stringify({ executionId: "e", ...execution }, null, 2)}`;
@@ -55,7 +57,10 @@ server.setRequestHandler(CallToolRequestSchema, async request => {
       return { content: [{ type: "text", text: `${JSON.stringify({ imageDelivery: { status: "presentation-unavailable", diagnostic: "Image operation failed: presentation-unavailable" } })}\n{}` }], isError: true };
     }
     text = `${JSON.stringify({ imageDelivery: { status: "attached", image: { source: "application", name: input.target.name, path: input.target.path, originalPath } } })}\n{}`;
-  } else if (TOOLS.includes(tool)) text = JSON.stringify({ ok: true, tool });
+  } else if (TOOLS.includes(tool)) {
+    if (tool === "relay_finish" && process.env.SCRIPTED_RELAY_FINISH_MS) await new Promise(done => setTimeout(done, Number(process.env.SCRIPTED_RELAY_FINISH_MS)));
+    text = JSON.stringify({ ok: true, tool });
+  }
   else return { content: [{ type: "text", text: `unknown tool ${tool}` }], isError: true };
   return { content: [{ type: "text", text }], isError: false };
 });
