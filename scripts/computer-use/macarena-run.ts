@@ -12,7 +12,7 @@
  */
 import { appendFileSync, mkdirSync } from "node:fs";
 import { basename, join } from "node:path";
-import { classify, loadTask, score, toCommands } from "./support/macarena.ts";
+import { appsOf, classify, loadTask, score, toCommands } from "./support/macarena.ts";
 import { delegate } from "./support/delegate.ts";
 
 const flags = new Map(process.argv.slice(2).filter(arg => arg.startsWith("--")).map(arg => { const [key, value] = arg.slice(2).split("="); return [key!, value ?? "true"]; }));
@@ -25,9 +25,9 @@ const results = join(out, "results.jsonl");
 
 for (const file of taskFiles) {
   const task = loadTask(file);
-  const apps = task.related_apps ?? [];
+  const apps = appsOf(task);
   const openApp = flags.has("open-app") ? apps.length === 1 ? apps[0] : undefined : undefined;
-  if (flags.has("open-app") && !openApp) { console.error(`${file}: --open-app needs exactly one related app, found ${apps.length}`); continue; }
+  if (flags.has("open-app") && !openApp) { console.error(`${file}: --open-app needs exactly one application, found ${apps.join(", ") || "none"}`); continue; }
   const { prepare, check } = toCommands(task, { ...(openApp ? { openApp } : {}) });
   for (let run = 1; run <= runsPerTask; run++) {
     const started = new Date().toISOString();

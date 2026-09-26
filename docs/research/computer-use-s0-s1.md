@@ -1009,3 +1009,32 @@ The Calculator, TextEdit and Finder tasks of [Section 14](#14-pi-task-batch-2026
 **Evidence:** each run's `report.html` in `test-results/e2e/computer-use-delegation/2026-09-26T08-31-37-332Z-a9a63302/`, `test-results/e2e/computer-use-delegation-textedit/2026-09-26T08-36-01-480Z-26f1c4b6/` and `test-results/e2e/computer-use-delegation-finder/2026-09-26T08-43-06-087Z-9a9b66f5/`. None of it is versioned.
 
 **Verification limits:** Each task ran once. No task used a double click, a right click or the menu bar, so screen-coordinate `count: 2` and `button: "right"` are untested. No person reviewed the reports; one screenshot was looked at.
+
+## 17. MacArena in relay machines (2026-09-26)
+
+These checks carry out the evaluation design ([PS-D9](../decisions.md), [evaluation design](../arch/computer-use-evaluation.md)).
+
+### 17.1 Which MacArena tasks can run
+
+`scripts/computer-use/macarena-inventory.ts` read MacArena at revision `dcdc7d3` and compared each task with the applications and tools that pilot-images lists for the `macos26` image (`images/macos26/applications.json`).
+
+- MacArena has 421 tasks. 200 are checked by shell scripts in the guest. The other 221 are OSWorld tasks, checked by Python on the host, which the runner does not support.
+- 107 of the 200 shell-checked tasks can run in the `macos26` image.
+- The other 93 cannot run for these reasons. A task can have more than one reason, so the counts add up to more than 93.
+  - 55 need macOSWorld's snapshot files under `/Users/admin`, which the relay image does not have.
+  - Keynote is missing for 26 tasks, Numbers for 25 and Pages for 25.
+  - Another application or tool is missing for 19 tasks: Anaconda-Navigator (4), Obsidian (4), Visual Studio Code (3), `conda` (3), Keka (2), OBS (1), LibreOffice (1) and `pdftotext` (1).
+  - 1 needs uploaded files.
+- The setup of 103 tasks quits the task's application. The approved requirements have the application already open, so the ship gate opens it after the setup ([evaluation design §5](../arch/computer-use-evaluation.md#5-the-ship-gate)).
+
+### 17.2 First run of one task
+
+MacArena task `4ff150c8` (Reminders: create the list "Project Alpha" with three tasks) ran once through Pi at revision `8cf980f`, with the application opened after setup. No score was produced: the cause was `check_failed`, and the run used 9 relay machines. Three faults in the runner and the relay client caused this:
+
+- **The setup failed on its own AppleScript.** MacArena's setup has a literal `\n` inside an AppleScript string, which `osascript` rejects. MacArena's server runs the setup with `/bin/sh` and ignores its exit status (`vm_files/server/main.py`), so the task still works there. The runner now does the same, and runs checks with `/bin/bash`, as MacArena does.
+- **The daemon was not ready.** Fresh clones answered SSH before the login session had started cua-driver's daemon. In 3 of the 9 clones, the relay's own snapshots failed with "Cua Driver daemon is not running". The relay client now waits up to 90 seconds for the daemon with a diagnostic run, which takes no snapshot, before the first recorded step.
+- **Every failed setup acquired another machine.** Each later read retried the whole start, so each retry cloned a new machine. A failed preparation is now final for the session.
+
+The Apple Events prompt that blocked `osascript` from SSH commands was removed in the image itself: pilot-images phase 65 grants Apple Events and data access to the SSH command path (pilot-images commits `7b9e6fa` to `b49aa3b`).
+
+**Evidence:** `test-results/computer-use/macarena-2026-09-26T13-42-15-804Z/results.jsonl` and `test-results/e2e/macarena-4ff150c8/2026-09-26T13-42-15-806Z-562e7fcf/`. None of it is versioned.

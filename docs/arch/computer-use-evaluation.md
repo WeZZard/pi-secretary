@@ -2,7 +2,7 @@
 
 **Document type:** Software design specification.
 
-**Status:** Draft, 2026-09-26. Nothing in this document is implemented.
+**Status:** Draft, 2026-09-26. Sections 3 and 4 are implemented in `scripts/computer-use/macarena-run.ts`; the ship gate (Section 5) and the benchmark run (Section 6) have not run yet.
 
 **Decision:** [PS-D9](../decisions.md), 2026-09-26. Computer-use work is driven by evaluation. A small fixed task set decides whether the agent ships, and a public macOS benchmark measures its success rate against other agents. What to build next is chosen by counted failures.
 
@@ -68,6 +68,24 @@ Each failed run gets one cause, taken from the run's records in this order. The 
 ## 5. The ship gate
 
 - **Tasks.** 20 MacArena tasks that are within the approved requirements: one application, which the preparation opens, whose applications exist in the relay image. They are spread over MacArena's categories, at most 4 per category. The list is fixed once and changes only by a recorded decision, so results stay comparable over time.
+- **Task list, fixed on 2026-09-26** from the 107 tasks that the inventory of [research §17.1](../research/computer-use-s0-s1.md#171-which-macarena-tasks-can-run) found runnable in the `macos26` image. Identifiers are the first 8 characters of MacArena's task identifiers, at MacArena revision `dcdc7d3`.
+
+  | MacArena category | Tasks | Application |
+  | --- | --- | --- |
+  | macarena/system_apps | `4ff150c8`, `7bcb0652` | Reminders |
+  | macarena/system_apps | `1de17bab` | Calendar |
+  | macarena/system_apps | `e7480f08` | Contacts |
+  | macarena/productivity | `4f0d1950`, `99ab4414`, `46649835` | Notes |
+  | macarena/productivity | `a13331ed` | TextEdit |
+  | macarena/file_management | `6b2f9a53`, `95575366`, `d012561d` | Preview |
+  | macarena/system_and_interface | `92ee67c9`, `385645e8` | System Settings |
+  | macarena/system_and_interface | `2c38b942` | Automator |
+  | macosworld/sys_apps | `4a89fe83` | Reminders |
+  | macosworld/sys_apps | `48cf0af3`, `b071a2dc` | Contacts |
+  | macosworld/productivity | `12c3de99`, `a1b99040` | Notes |
+  | macosworld/advanced | `5a219d2f` | Script Editor |
+
+- **The task's application.** It is the task's `related_apps` entry. macOSWorld tasks list none, so it is the application that their setup and checks address with `tell application` or `tell process`, except System Events. The runner's `--open-app` opens it after the task's setup.
 - **Runs.** Each task runs 3 times.
 - **The agent ships when all of these hold:**
   - at least 80 percent of the 60 runs pass;

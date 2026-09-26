@@ -35,6 +35,18 @@ export function loadTask(file: string): MacArenaTask {
 }
 
 /**
+ * The applications a task uses: its `related_apps`, or, for macOSWorld tasks, which do not list
+ * them, the applications its setup and checks script with `tell application` or `tell process`.
+ * System Events is the scripting bridge, not an application the task is about.
+ */
+export function appsOf(task: MacArenaTask): string[] {
+  if (task.related_apps?.length) return task.related_apps;
+  const scripts = [task.pre_command ?? "", ...task.evaluator.map(([command]) => command)].join("\n");
+  const named = [...scripts.matchAll(/tell (?:application|process) \\?"([^"\\]+)\\?"/g)].map(match => match[1]!);
+  return [...new Set(named)].filter(app => app !== "System Events");
+}
+
+/**
  * `openApp` is the ship gate's variant (design §5): the approved requirements have the application
  * already open, so the named application is opened after the task's own setup. The benchmark run
  * leaves the setup as MacArena wrote it.
