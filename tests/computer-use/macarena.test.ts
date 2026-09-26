@@ -17,8 +17,8 @@ const ran = (stdout: string[]) => [{ argv: ["/bin/sleep", "5"], completed: true,
 
 test("a task becomes setup commands, with the app opened only for the ship gate, and checks worth 100 after the grading delay", () => {
   assert.deepEqual(toCommands(task, {}), {
-    prepare: [["/bin/zsh", "-c", task.pre_command], ["/bin/sleep", "4"]],
-    check: [["/bin/sleep", "5"], ["/bin/zsh", "-c", "echo True"], ["/bin/zsh", "-c", "echo False"]],
+    prepare: [["/bin/sh", "-c", `${task.pre_command}\ntrue`], ["/bin/sleep", "4"]],
+    check: [["/bin/sleep", "5"], ["/bin/bash", "-c", "echo True"], ["/bin/bash", "-c", "echo False"]],
   });
   assert.deepEqual(toCommands(task, { openApp: "Reminders" }).prepare.slice(1, 3), [["/usr/bin/open", "-a", "Reminders"], ["/bin/sleep", "3"]]);
 });
@@ -67,7 +67,8 @@ test("a failed run gets one cause from its records", (t) => {
   assert.equal(classify({ score: 0, checks: failed, state: state(t, { rejections: ["needs_text"] }) }), "rejection:needs_text");
   assert.equal(classify({ score: 0, checks: failed, state: state(t, { session: "No window of Reminders is open. This tool does not launch applications." }) }), "out_of_scope");
   assert.equal(classify({ score: 0, checks: failed, state: state(t, {}) }), "no_plan");
-  assert.equal(classify({ score: 0, checks: failed, state: state(t, { session: "relay_exec cu-0001 (Prepare: /bin/zsh -c x) was completed: exit 1" }) }), "setup_failed");
+  assert.equal(classify({ score: 0, checks: failed, state: state(t, { session: "relay_exec cu-0001 (Prepare: /bin/zsh -c osascript -e 'tell application \\\"Reminders\\\" to quit') was completed: exit 1" }) }), "setup_failed",
+    "Quotes in the command are escaped in the session record");
   assert.equal(classify({ score: undefined, checks: undefined, state: state(t, { plans: [{ outcome: "completed" }] }) }), "check_failed",
     "A run whose checks never ran is not blamed on the agent");
 });

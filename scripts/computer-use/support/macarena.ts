@@ -18,7 +18,14 @@ export interface MacArenaTask {
   related_apps?: string[];
 }
 
-const shell = (script: string) => ["/bin/zsh", "-c", script];
+/**
+ * MacArena's server starts a task's setup with `subprocess.Popen(command, shell=True)`, which is
+ * /bin/sh, and never checks its exit status; its checks run as `#!/bin/bash` scripts
+ * (vm_files/server/main.py). Some setups carry a literal "\n" that AppleScript rejects, so the
+ * setup is run the same way: under /bin/sh, with its exit status ignored.
+ */
+const setup = (script: string) => ["/bin/sh", "-c", `${script}\ntrue`];
+const shell = (script: string) => ["/bin/bash", "-c", script];
 
 export function loadTask(file: string): MacArenaTask {
   const task = JSON.parse(readFileSync(file, "utf8")) as MacArenaTask;
@@ -34,7 +41,7 @@ export function loadTask(file: string): MacArenaTask {
  */
 export function toCommands(task: MacArenaTask, options: { openApp?: string }): { prepare: string[][]; check: string[][] } {
   const prepare = [
-    ...(task.pre_command ? [shell(task.pre_command)] : []),
+    ...(task.pre_command ? [setup(task.pre_command)] : []),
     ...(options.openApp ? [["/usr/bin/open", "-a", options.openApp], ["/bin/sleep", "3"]] : []),
     ...(task.before_action_delay_seconds ? [["/bin/sleep", String(task.before_action_delay_seconds)]] : []),
   ];
@@ -91,7 +98,7 @@ export function classify(input: { score: number | undefined; checks: CheckResult
   const session = files(join(input.state, "agents"), name => name.endsWith(".jsonl")).map(path => readFileSync(path, "utf8")).join("\n");
   const last = plans.at(-1);
   // Harness failures come first: they say nothing about the agent.
-  if (/Prepare: [^"]*? was (?:completed|uncertain|failed)/.test(session)) return "setup_failed";
+  if (/\(Prepare: [\s\S]{0,4000}?\) was (?:completed|uncertain|failed)/.test(session)) return "setup_failed";
   if (input.score === undefined || input.checks!.some(result => !result.completed && result.argv[0] !== "/bin/sleep")) return "check_failed";
   if (last?.outcome === "completed") return "false_success";
   if (steps.some(step => step.decision?.kind === "act" && step.decision.risk === "destructive")) return "destructive";

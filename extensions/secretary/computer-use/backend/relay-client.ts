@@ -120,6 +120,8 @@ export class RelaySession {
   readonly #check: string[][];
   readonly #onCheck?: (results: CheckResult[]) => Promise<void> | void;
   #ready?: Promise<RelayConnection>;
+  /** A preparation failure is final for the session: another machine would fail the same way. */
+  #prepareFailure?: BackendError;
   #sequence = 0;
   #label?: string;
   #issued: string[] = [];
@@ -142,6 +144,7 @@ export class RelaySession {
   }
 
   #connection(signal?: AbortSignal): Promise<RelayConnection> {
+    if (this.#prepareFailure) return Promise.reject(this.#prepareFailure);
     if (this.#ready) return this.#ready;
     const ready = (async () => {
       const connection = await this.#connect();
@@ -152,10 +155,16 @@ export class RelaySession {
           if (result.isError) throw new BackendError("driver_failed", `${tool} failed: ${result.text.slice(0, 500)}`);
           acquired = true;
         }
+        await this.#waitForDriver(connection, signal);
         // Configured preparation, such as opening the application a task needs, runs once after staging.
         for (const argv of this.#prepare) {
-          await this.#runOn(connection, { kind: "exec", title: `Prepare: ${argv.join(" ")}`, expected: "The machine is ready for the task",
-            afterIntervalMs: 2000, timeoutMs: 120_000, body: { argv } }, signal);
+          try {
+            await this.#runOn(connection, { kind: "exec", title: `Prepare: ${argv.join(" ")}`, expected: "The machine is ready for the task",
+              afterIntervalMs: 2000, timeoutMs: 120_000, body: { argv } }, signal);
+          } catch (error) {
+            if (error instanceof BackendError && error.code !== "aborted") this.#prepareFailure = error;
+            throw error;
+          }
         }
         return connection;
       } catch (error) {
@@ -169,6 +178,20 @@ export class RelaySession {
     // A failed start is not cached: the next call tries again.
     ready.catch(() => { if (this.#ready === ready) this.#ready = undefined; });
     return ready;
+  }
+
+  /**
+   * The relay reports a machine ready when SSH answers, which can be before the login session has
+   * started cua-driver's daemon; the relay's own snapshots then fail with "Cua Driver daemon is not
+   * running" (3 of 9 fresh clones on 2026-09-26). A diagnostic run takes no snapshot, so it can
+   * wait for the daemon before the first recorded step.
+   */
+  async #waitForDriver(connection: RelayConnection, signal?: AbortSignal): Promise<void> {
+    const script = "for i in $(seq 1 90); do cua-driver call get_screen_size --json '{}' >/dev/null 2>&1 && exit 0; sleep 1; done; "
+      + "echo 'cua-driver daemon did not answer within 90 s' >&2; exit 1";
+    const result = await this.#call(connection, "relay_exec", { argv: ["/bin/zsh", "-lc", script], diagnostic: true, timeoutMs: 120_000,
+      reason: "Secretary computer use: wait for the cua-driver daemon before the first recorded step" }, 120_000 + RELAY_OVERHEAD_MS, signal);
+    if (result.isError) throw new BackendError("driver_failed", `the machine's cua-driver daemon did not start: ${result.text.slice(0, 400)}`);
   }
 
   /**

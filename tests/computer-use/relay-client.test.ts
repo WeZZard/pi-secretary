@@ -11,6 +11,11 @@ import { RelayBackend, desktopScaleOf, readProgram, stdioRelayConnect, type Chec
 const server = resolve(import.meta.dirname, "support/scripted-relay-server.ts");
 /** The relay 0.6 tools that perform a recorded run in the guest. */
 const RUN_TOOLS = new Set(["relay_exec", "relay_code", "relay_run"]);
+/** A logged relay call that is a recorded run, not the diagnostic wait for the guest's cua-driver daemon. */
+const recorded = (call: Record<string, any>) => RUN_TOOLS.has(call.relayTool) && !call.diagnostic;
+/** How the in-memory relays answer and log the diagnostic wait for the daemon. */
+const DAEMON_WAIT = "relay_exec diagnostic";
+const COMPLETED = `${JSON.stringify({ imageDelivery: { status: "attached" }, executionFailed: false })}\n${JSON.stringify({ outcome: { kind: "completed", exitStatus: { code: 0, signal: null } }, stdout: "" })}`;
 
 /**
  * A fake guest cua-driver. Its window tree is larger than the guest's 64 KiB output cap, as one
@@ -66,12 +71,12 @@ test("relay steps carry the plan step's label, and reads and actions return thei
   const read = await backend.readWindow({ app: "Finder" }, { screenshot: false, label: "run-1 open: initial" });
   const click = await backend.act(read.window, { kind: "click", point: { x: 150, y: 70 }, button: "left", count: 1, label: 'run-1 open: click "Agenda.txt"' });
   assert.deepEqual([read.evidence, click.evidence, click.path], [["cu-0001"], ["cu-0002", "cu-0003"], "cgevent_hid"], "The click's evidence includes bringing the window to the front");
-  const runs = (await calls()).filter(call => RUN_TOOLS.has(call.relayTool));
+  const runs = (await calls()).filter(recorded);
   assert.equal(runs[0]!.step.title, "run-1 open: initial · Read the Finder window");
   assert.equal(runs[2]!.reason, 'Secretary computer use: run-1 open: click "Agenda.txt" · Input with click (cu-0003)');
   const unlabelled = await backend.readWindow({ app: "Finder" }, { screenshot: false });
   assert.deepEqual(unlabelled.evidence, ["cu-0004"]);
-  assert.equal((await calls()).filter(call => RUN_TOOLS.has(call.relayTool)).at(-1)!.step.title, "Read the Finder window", "The label ends with its read");
+  assert.equal((await calls()).filter(recorded).at(-1)!.step.title, "Read the Finder window", "The label ends with its read");
 });
 
 test("a relay read is one code run that passes the 64 KiB cap, plus the screenshot original", async t => {
@@ -92,7 +97,7 @@ test("a relay read is one code run that passes the 64 KiB cap, plus the screensh
   assert.equal(log[0]!.env, "default");
   assert.match(log[0]!.session, /^secretary-computer-use-/, "The client runs its own relay session, apart from the parent's");
   assert.equal(log[0]!.project, root);
-  const runs = log.filter(call => RUN_TOOLS.has(call.relayTool));
+  const runs = log.filter(recorded);
   assert.deepEqual(runs.map(call => call.relayTool), ["relay_code"], "One run lists the windows, reads the active application, warms up, reads and measures the scale");
   assert.equal(runs[0]!.step.inputMode, "ordinary");
   assert.equal(runs[0]!.snapshots.afterIntervalMs, 0, "A read waits for nothing");
@@ -120,7 +125,7 @@ test("a relay click brings the window to the front and clicks in screen coordina
   await backend.act(read.window, { kind: "click", point: { x: 150, y: 70 }, button: "right", count: 1 });
   await backend.act(read.window, { kind: "click", point: { x: 150, y: 70 }, button: "left", count: 2 });
   await backend.act(read.window, { kind: "scroll", point: { x: 300, y: 200 }, direction: "down", by: "page", extent: 250 });
-  const runs = (await calls()).filter(call => RUN_TOOLS.has(call.relayTool));
+  const runs = (await calls()).filter(recorded);
   assert.deepEqual(runs.map(call => call.relayTool === "relay_run" ? call.tool : call.relayTool),
     ["relay_code", "bring_to_front", "click", "bring_to_front", "click", "bring_to_front", "click", "bring_to_front", "scroll"], "No read of bounds or scale before an action");
   const pointer = runs.filter(call => call.tool === "click" || call.tool === "scroll").map(call => call.args);
@@ -152,7 +157,8 @@ test("the read program prints the driver's output compressed", () => {
 function answering(execution: Record<string, unknown>) {
   const inputs: string[] = [];
   const connection: RelayConnection = {
-    async call(tool) {
+    async call(tool, args) {
+      if (args.diagnostic) return { text: COMPLETED, isError: false };
       inputs.push(tool);
       if (!RUN_TOOLS.has(tool)) return { text: "{}", isError: false };
       return { text: `${JSON.stringify({ imageDelivery: { status: "attached" }, executionFailed: true })}\n${JSON.stringify(execution)}`, isError: true };
@@ -208,6 +214,7 @@ test("checks run on the leased machine before the finish, and a failing check is
   const connection: RelayConnection = {
     async call(tool, args) {
       const argv = (args.argv as string[] | undefined)?.join(" ");
+      if (args.diagnostic) { actions.push(DAEMON_WAIT); return { text: COMPLETED, isError: false }; }
       actions.push(RUN_TOOLS.has(tool) && argv ? `${tool} ${argv}` : tool);
       const exit = argv?.includes("fails") ? 1 : 0;
       if (RUN_TOOLS.has(tool)) return { text: `${JSON.stringify({ imageDelivery: { status: "attached" }, executionFailed: exit !== 0 })}\n${JSON.stringify({ outcome: { kind: "completed", exitStatus: { code: exit, signal: null } }, stdout: argv?.includes("passes") ? "True\n" : "" })}`, isError: exit !== 0 };
@@ -222,36 +229,59 @@ test("checks run on the leased machine before the finish, and a failing check is
   assert.deepEqual(actions, [], "A session that never acquired a machine checks nothing");
   await backend.readWindow({ app: "Reminders" }, { screenshot: false }).catch(() => undefined);
   await backend.close();
-  assert.deepEqual(actions, ["relay_acquire", "relay_stage", "relay_code", "relay_exec /bin/zsh -c fails", "relay_exec /bin/zsh -c passes", "relay_finish", "closed"]);
+  assert.deepEqual(actions, ["relay_acquire", "relay_stage", DAEMON_WAIT, "relay_code", "relay_exec /bin/zsh -c fails", "relay_exec /bin/zsh -c passes", "relay_finish", "closed"]);
   assert.equal(recorded.length, 1);
   assert.deepEqual(recorded[0]!.map(result => [result.completed, result.stdout]), [[false, ""], [true, "True\n"]]);
   assert.match(recorded[0]![0]!.error!, /Check: \/bin\/zsh -c fails/);
 });
 
-test("preparation runs once after staging, and a failed start releases the machine it acquired", async () => {
+test("preparation runs once after staging and the daemon wait, and a failed preparation releases the machine and is final", async () => {
   const actions: string[] = [];
   let failPrepare = true;
   const connection: RelayConnection = {
     async call(tool, args) {
+      if (args.diagnostic) { actions.push(DAEMON_WAIT); return { text: COMPLETED, isError: false }; }
       actions.push(RUN_TOOLS.has(tool) ? `${tool} ${(args.argv as string[] | undefined)?.join(" ") ?? ""}`.trim() : tool);
       if (tool === "relay_exec" && failPrepare) {
-        failPrepare = false;
         return { text: `${JSON.stringify({ imageDelivery: { status: "attached" }, executionFailed: true })}\n${JSON.stringify({ outcome: { kind: "completed", exitStatus: { code: 1, signal: null } }, stderr: "no such app" })}`, isError: true };
       }
-      if (RUN_TOOLS.has(tool)) return { text: `${JSON.stringify({ imageDelivery: { status: "attached" }, executionFailed: false })}\n${JSON.stringify({ outcome: { kind: "completed", exitStatus: { code: 0, signal: null } }, stdout: "" })}`, isError: false };
+      if (RUN_TOOLS.has(tool)) return { text: COMPLETED, isError: false };
       return { text: "{}", isError: false };
     },
     async close() { actions.push("closed"); },
   };
-  const backend = new RelayBackend({ connect: async () => connection, image: "macos26", ttlHours: 1, maxTreeNodes: 2000, foregroundDelivery: false, actionIntervalMs: 0,
-    prepare: [["/usr/bin/open", "-a", "Calculator"]] });
-  await assert.rejects(backend.readWindow({ app: "Calculator" }, { screenshot: false }), /Prepare: \/usr\/bin\/open -a Calculator/);
-  assert.deepEqual(actions, ["relay_acquire", "relay_stage", "relay_exec /usr/bin/open -a Calculator", "relay_release", "closed"]);
+  const options = { connect: async () => connection, image: "macos26", ttlHours: 1, maxTreeNodes: 2000, foregroundDelivery: false, actionIntervalMs: 0,
+    prepare: [["/usr/bin/open", "-a", "Calculator"]] };
+  const failing = new RelayBackend(options);
+  await assert.rejects(failing.readWindow({ app: "Calculator" }, { screenshot: false }), /Prepare: \/usr\/bin\/open -a Calculator/);
+  assert.deepEqual(actions, ["relay_acquire", "relay_stage", DAEMON_WAIT, "relay_exec /usr/bin/open -a Calculator", "relay_release", "closed"]);
   actions.length = 0;
+  await assert.rejects(failing.readWindow({ app: "Calculator" }, { screenshot: false }), /Prepare: \/usr\/bin\/open -a Calculator/);
+  assert.equal(actions.length, 0, "Another machine would fail the same way, so none is acquired (9 machines in one run on 2026-09-26)");
+
+  failPrepare = false;
+  const backend = new RelayBackend(options);
   await backend.readWindow({ app: "Calculator" }, { screenshot: false }).catch(() => undefined);
-  assert.deepEqual(actions.slice(0, 4), ["relay_acquire", "relay_stage", "relay_exec /usr/bin/open -a Calculator", "relay_code"]);
+  assert.deepEqual(actions.slice(0, 5), ["relay_acquire", "relay_stage", DAEMON_WAIT, "relay_exec /usr/bin/open -a Calculator", "relay_code"]);
   await backend.readWindow({ app: "Calculator" }, { screenshot: false }).catch(() => undefined);
-  assert.equal(actions.filter(action => action.startsWith("relay_exec")).length, 1, "Preparation runs once per machine");
+  assert.equal(actions.filter(action => action.startsWith("relay_exec /")).length, 1, "Preparation runs once per machine");
+  await backend.close();
+});
+
+test("a machine whose cua-driver daemon never answers is released before any recorded step", async () => {
+  const actions: string[] = [];
+  const connection: RelayConnection = {
+    async call(tool, args) {
+      actions.push(args.diagnostic ? DAEMON_WAIT : tool);
+      if (args.diagnostic) return { text: "cua-driver daemon did not answer within 90 s", isError: true };
+      return { text: "{}", isError: false };
+    },
+    async close() { actions.push("closed"); },
+  };
+  const backend = new RelayBackend({ connect: async () => connection, image: "macos26", ttlHours: 1, maxTreeNodes: 2000, foregroundDelivery: false, actionIntervalMs: 0 });
+  await assert.rejects(backend.readWindow({ app: "Finder" }, { screenshot: false }),
+    (error: unknown) => error instanceof BackendError && error.code === "driver_failed" && /daemon did not start/.test(error.message));
+  assert.deepEqual(actions, ["relay_acquire", "relay_stage", DAEMON_WAIT, "relay_release", "closed"]);
 });
 
 test("a long preparation command is sent with a title the relay accepts", async () => {
@@ -259,7 +289,7 @@ test("a long preparation command is sent with a title the relay accepts", async 
   const titles: string[] = [];
   const connection: RelayConnection = {
     async call(tool, args) {
-      if (RUN_TOOLS.has(tool)) titles.push((args.step as { title: string }).title, String(args.reason));
+      if (RUN_TOOLS.has(tool) && !args.diagnostic) titles.push((args.step as { title: string }).title, String(args.reason));
       return RUN_TOOLS.has(tool) ? { text: `${JSON.stringify({ imageDelivery: { status: "attached" }, executionFailed: false })}\n${JSON.stringify({ outcome: { kind: "completed", exitStatus: { code: 0, signal: null } }, stdout: "" })}`, isError: false }
         : { text: "{}", isError: false };
     },
@@ -277,7 +307,8 @@ test("a long preparation command is sent with a title the relay accepts", async 
 test("a cancelled read is not sent again, and closing still finishes the lease", async () => {
   const actions: string[] = [];
   const connection: RelayConnection = {
-    async call(tool, _args, { signal }) {
+    async call(tool, args, { signal }) {
+      if (args.diagnostic) return { text: COMPLETED, isError: false };
       actions.push(tool);
       if (!RUN_TOOLS.has(tool)) return { text: "{}", isError: false };
       // The run waits until the caller cancels it, as a long relay run would.
