@@ -1037,4 +1037,10 @@ MacArena task `4ff150c8` (Reminders: create the list "Project Alpha" with three 
 
 The Apple Events prompt that blocked `osascript` from SSH commands was removed in the image itself: pilot-images phase 65 grants Apple Events and data access to the SSH command path (pilot-images commits `7b9e6fa` to `b49aa3b`).
 
-**Evidence:** `test-results/computer-use/macarena-2026-09-26T13-42-15-804Z/results.jsonl` and `test-results/e2e/macarena-4ff150c8/2026-09-26T13-42-15-806Z-562e7fcf/`. None of it is versioned.
+**The rerun.** The same task ran again at 14:03 UTC at revision `2e191e5`, in one machine. The harness worked end to end: the setup ran, the checks ran before the finish, and the run scored 0 with the cause `escalation:target_not_found`.
+
+- Three of the 7 plans handled Reminders' first-launch screens: a welcome screen, an iCloud prompt and an information banner. The agent passed all of them.
+- The agent then opened the "New List" sheet but could not type the list's name. The sheet's only text field has no label, only the automatic identifier `_NS:146`, so the observer discarded it as `unnamed`. The executor was offered the colour check boxes and "Cancel", chose no control 3 times, and the escalation limit ended the run.
+- Pi then delegated the task a second time. The second child session could not acquire a machine: the relay reported "macOS VM limit reached (2 active)", with one guest that belonged to another user. Its report asked an operator to release a machine. It produced no check record, so the score came from the first session's check.
+
+**Evidence:** `test-results/computer-use/macarena-2026-09-26T13-42-15-804Z/results.jsonl`, `test-results/e2e/macarena-4ff150c8/2026-09-26T13-42-15-806Z-562e7fcf/`, `test-results/computer-use/macarena-2026-09-26T14-03-44-934Z/results.jsonl` and `test-results/e2e/macarena-4ff150c8/2026-09-26T14-03-44-936Z-84beba7a/report.html`. None of it is versioned.
