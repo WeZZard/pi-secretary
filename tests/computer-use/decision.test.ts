@@ -18,7 +18,7 @@ test("a grouped window gets a routing question, one element question per group, 
   assert.equal(built.body.samples, 1);
   assert.ok(Object.values(built.body.questions).every(question => !("depends_on" in question) && !("alone" in question)));
   assert.deepEqual(Object.keys(built.body.questions.operation!.criteria), ["press", "double_press", "context_press", "scroll_up", "scroll_down", "reobserve", "abstain"]);
-  assert.match(String((built.body.state as { elements: string }).elements), /^TOOLBAR\n {2}A Back\n/);
+  assert.match(String((built.body.state as { elements: string }).elements), /^TOOLBAR\n {2}A Button "Back"\n/);
   assert.equal(built.historyUsed, 5);
 });
 
@@ -117,4 +117,37 @@ test("the client reports timeout, rejection, malformed answers and usage", async
   let seenUrl = "";
   await new ExecutorClient({ baseUrl: "http://jev.home.arpa/", timeoutMs: 1000, fetch: async url => { seenUrl = url; return { ok: true, status: 200, text: async () => JSON.stringify({ answers: { q: null } }) }; } }).decide(body);
   assert.equal(seenUrl, "http://jev.home.arpa/v1/systemone");
+});
+
+test("the priority table removes closed menus, then history, then inactive controls, then shortens shown text", () => {
+  const value = textEditRead();
+  value.appActive = true;
+  const window = value.elements.find(element => element.role === "AXWindow")!;
+  value.descendantText = { [window.element_index]: `Shown ${"y".repeat(120)}` };
+  const observation = observe({ ...value, readMs: 0 }, { id: "o", maxElements: 240, maxNameLength: 48 }) as Observation;
+  const build = (answerReserveTokens: number, elementDetail: "names" | "roles" | "priority" = "priority") => ready(buildDecisionRequest({
+    goal: "g", step: { id: "s", intent: "i" }, observation, recent, answerReserveTokens, elementDetail }));
+  const elements = (built: ReturnType<typeof build>) => (built.body.state as Record<string, unknown>).elements as string;
+
+  const full = build(0);
+  assert.match(elements(full), /TextArea "Disposable document text"/);
+  assert.match(elements(full), /SHOWN TEXT \(not clickable\)\n {2}"Shown y+"/);
+  assert.match(elements(full), /NOT CLICKABLE NOW\n {2}Button \(unnamed\)/);
+  assert.match(elements(full), /CLOSED MENUS \(not clickable until the menu is open\)\n {2}File ▸ Save…/);
+  assert.equal(full.historyUsed, 5, "Nothing is removed while the request fits");
+
+  const fitting = (tokens: number) => build(4096 - tokens);
+  const noMenus = fitting(full.estimatedTokens - 1);
+  assert.doesNotMatch(elements(noMenus), /CLOSED MENUS/);
+  assert.equal(noMenus.historyUsed, 5, "Closed menus go before any history");
+  const noHistory = fitting(noMenus.estimatedTokens - 1);
+  assert.ok(noHistory.historyUsed < 5);
+  assert.match(elements(noHistory), /NOT CLICKABLE NOW/, "History goes before inactive controls");
+  const bare = build(4096 - 1);
+  assert.equal(bare.historyUsed, 0);
+  assert.doesNotMatch(elements(bare), /NOT CLICKABLE NOW/);
+  assert.match(elements(bare), /"Shown y{53}…"/, "Shown text is shortened last, and the request is still built");
+
+  assert.doesNotMatch(elements(build(0, "roles")), /SHOWN TEXT|CLOSED MENUS/, "Roles alone is priority 1 only");
+  assert.match(elements(build(0, "names")), /^WINDOW\n {2}A /);
 });

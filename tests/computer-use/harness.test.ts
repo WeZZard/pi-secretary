@@ -29,7 +29,7 @@ function executor(script: (body: DecisionRequestBody, call: number) => { element
     if (answer instanceof Error) throw answer;
     const confidence = answer.confidence ?? 0.9;
     const table = String((body.state as { elements: string }).elements);
-    const letter = answer.element ? table.split("\n").find(line => line.slice(4) === answer.element)?.trim()[0] ?? "none" : "none";
+    const letter = answer.element ? table.split("\n").find(line => /^ {2}[A-Z] \S+ (".*?")(?: |$)/.exec(line)?.[1] === JSON.stringify(answer.element))?.trim()[0] ?? "none" : "none";
     return { roundTripMs: 1, answers: { element_1: { choice: letter, confidence }, operation: { choice: answer.operation, confidence }, risk: { choice: answer.risk ?? "safe", confidence } } };
   } };
 }
@@ -154,7 +154,7 @@ test("executor failure, untypeable text and backend failure escalate without rep
   assert.deepEqual([failed.escalation!.reason, failed.actions, broken.backend.actions.length], ["backend_failed", 0, 0]);
 });
 
-test("a request the executor finds too long is sent once more without history", async (t) => {
+test("a request the executor finds too long is built again from the next trim step, here without its history record", async (t) => {
   const next = window([{ name: "Next" }]);
   const { deps } = setup(t, [form, next, window([{ name: "Finished" }])]);
   const exec = executor((body, call) => call === 2 ? new ExecutorError("too_large", "the request does not fit the executor's model length")

@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Screenshot, WindowRead } from "./backend/backend.ts";
-import { renderExecutorTable, type Observation, type ObservationFailure } from "./observer.ts";
+import type { Observation, ObservationFailure } from "./observer.ts";
+import { renderExecutorTable } from "./request-builder.ts";
 
 /**
  * Step telemetry (design docs/arch/computer-use.md §12.1). Phase 1 writes the retrieval

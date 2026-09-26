@@ -23,7 +23,11 @@ export interface QuestionMap {
 }
 
 /** The executor decides whether a request fits (design §7.3), so the builder always returns a request. */
-export interface BuiltRequest { status: "ready"; body: DecisionRequestBody; questions: QuestionMap; offered: Operation[]; estimatedTokens: number; historyUsed: number }
+export interface BuiltRequest { status: "ready"; body: DecisionRequestBody; questions: QuestionMap; offered: Operation[]; estimatedTokens: number; historyUsed: number;
+  /** The trim step this request was built at. When the executor finds it too long, build again from the next one (design §7.3). */
+  trimStep: number;
+  /** No trim step is left; a request the executor finds too long cannot be made smaller. */
+  smallest: boolean }
 
 /** The executor's model length (research §2.2). */
 export const EXECUTOR_MODEL_LENGTH = 4096;
@@ -75,11 +79,54 @@ export function offeredOperations(step: StepSpec, observation: Observation): Ope
  */
 export type RegionDescriptions = "none" | "names";
 
+/**
+ * How the executor's `elements` field describes the window (design §6.2, decision PS-D5).
+ * `names`: letter and name, cut at the name length (the table measured in research §4.5).
+ * `roles`: letter, role, name cut at 200 characters, and state: priority 1 alone.
+ * `priority`: priority 1, then shown text, controls that cannot be clicked now and closed menus,
+ * removed from the lowest priority when the request is too large (design §7.3).
+ */
+export type ElementDetail = "names" | "roles" | "priority";
+
+/** Priority 1 alone: as accurate as the full priority model and more accurate than names (research §16.7). */
+export const DEFAULT_ELEMENT_DETAIL: ElementDetail = "roles";
+
+/** A shown text is shortened to this length when nothing else is left to remove (design §7.3). */
+const SHORT_TEXT_LENGTH = 60;
+
+function clickableLine(element: Observation["groups"][number]["elements"][number], detail: ElementDetail): string {
+  if (detail === "names") return `  ${element.letter} ${element.name}`;
+  const state = [element.selected ? "selected" : "", element.value !== undefined ? `value=${JSON.stringify(element.value)}` : ""].filter(Boolean).join(" ");
+  return `  ${element.letter} ${element.role.replace(/^AX/, "")} ${JSON.stringify(element.fullName)}${state ? ` ${state}` : ""}`;
+}
+
+/** The executor's view of a read, as the first request for a step would carry it (design §6.2). */
+export function renderExecutorTable(observation: Observation, detail: ElementDetail = DEFAULT_ELEMENT_DETAIL): string {
+  return renderElements(observation, detail, { menus: true, inactive: true, shortTexts: false });
+}
+
+/** The `elements` text. Only the clickable table carries letters; the other sections are context. */
+function renderElements(observation: Observation, detail: ElementDetail, parts: { menus: boolean; inactive: boolean; shortTexts: boolean }): string {
+  const table = observation.groups.map(group =>
+    `${group.name.toUpperCase()}\n${group.elements.map(element => clickableLine(element, detail)).join("\n")}${group.hidden ? `\n  (${group.hidden} more hidden below; scroll to reveal)` : ""}`).join("\n");
+  if (detail !== "priority") return table;
+  const sections = [table];
+  const texts = (observation.texts ?? []).map(text => parts.shortTexts && text.length > SHORT_TEXT_LENGTH ? `${text.slice(0, SHORT_TEXT_LENGTH - 1)}…` : text);
+  if (texts.length) sections.push(`SHOWN TEXT (not clickable)\n${texts.map(text => `  ${JSON.stringify(text)}`).join("\n")}`);
+  if (parts.inactive && observation.context.inactive.length) sections.push(`NOT CLICKABLE NOW\n${observation.context.inactive.map(line => `  ${line}`).join("\n")}`);
+  if (parts.menus && observation.context.menus.length) sections.push(`CLOSED MENUS (not clickable until the menu is open)\n${observation.context.menus.map(line => `  ${line}`).join("\n")}`);
+  return sections.join("\n");
+}
+
 export function buildDecisionRequest(input: {
   goal: string; step: StepSpec; observation: Observation; recent: ActionRecord[]; answerReserveTokens?: number;
   regionDescriptions?: RegionDescriptions;
   /** Offer "none" in every element question. It is on by default; the switch exists for evaluation. */
   noneOption?: boolean;
+  /** How `elements` describes the window (design §6.2); the other values exist for evaluation. */
+  elementDetail?: ElementDetail;
+  /** The first trim step to try, after the executor found a larger request too long. */
+  fromTrimStep?: number;
 }): BuiltRequest {
   const { goal, step, observation } = input;
   const offered = offeredOperations(step, observation);
@@ -119,20 +166,30 @@ export function buildDecisionRequest(input: {
     destructive: "It deletes, sends, purchases, overwrites or closes without saving, and cannot easily be undone.",
   } };
 
-  const elements = observation.groups.map(group =>
-    `${group.name.toUpperCase()}\n${group.elements.map(element => `  ${element.letter} ${element.name}`).join("\n")}${group.hidden ? `\n  (${group.hidden} more hidden below; scroll to reveal)` : ""}`).join("\n");
+  const detail = input.elementDetail ?? DEFAULT_ELEMENT_DETAIL;
   const budget = EXECUTOR_MODEL_LENGTH - (input.answerReserveTokens ?? ANSWER_RESERVE_TOKENS);
-  // Drop the oldest history first until the estimate fits (design §7.3). Without history the
-  // request is sent even when the estimate is over, because only the executor can count exactly.
-  for (let used = input.recent.length; used >= 0; used--) {
-    const recent = input.recent.slice(input.recent.length - used);
+  // Remove content from the lowest priority until the estimate fits (design §7.3): closed menus,
+  // then history from the oldest, then controls that cannot be clicked now, then shorten shown text.
+  // The last candidate is sent even when the estimate is over, because only the executor counts exactly.
+  // The estimate undercounts menu paths by about a third (research §16.7), so the caller builds again
+  // from the next step when the executor finds a request too long.
+  const candidates: { menus: boolean; inactive: boolean; shortTexts: boolean; used: number }[] = [];
+  const all = input.recent.length;
+  if (detail === "priority") candidates.push({ menus: true, inactive: true, shortTexts: false, used: all });
+  for (let used = all; used >= 0; used--) candidates.push({ menus: false, inactive: true, shortTexts: false, used });
+  if (detail === "priority") candidates.push({ menus: false, inactive: false, shortTexts: false, used: 0 }, { menus: false, inactive: false, shortTexts: true, used: 0 });
+  const first = Math.min(input.fromTrimStep ?? 0, candidates.length - 1);
+  for (const [index, candidate] of candidates.entries()) {
+    if (index < first) continue;
+    const recent = input.recent.slice(all - candidate.used);
     const state: Record<string, unknown> = {
-      goal, step: step.intent, app: observation.window.app, window: observation.window.title, elements,
+      goal, step: step.intent, app: observation.window.app, window: observation.window.title, elements: renderElements(observation, detail, candidate),
       ...(recent.length ? { recent: recent.map(formatRecord) } : {}),
     };
     const body: DecisionRequestBody = { state, questions, samples: 1 };
     const estimatedTokens = estimateTokens(body);
-    if (estimatedTokens <= budget || used === 0) return { status: "ready", body, questions: map, offered, estimatedTokens, historyUsed: recent.length };
+    if (estimatedTokens <= budget || index === candidates.length - 1) return { status: "ready", body, questions: map, offered, estimatedTokens, historyUsed: recent.length,
+      trimStep: index, smallest: index === candidates.length - 1 };
   }
   throw new Error("unreachable");
 }

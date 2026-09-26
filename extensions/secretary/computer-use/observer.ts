@@ -28,6 +28,8 @@ export interface ObservedElement {
   index: number;
   role: string;
   name: string;
+  /** The name cut at 200 characters rather than the configured name length, for the executor's priority table (design §6.2). */
+  fullName: string;
   value?: string;
   /** The end of a text field's or text area's content, for the planner only (design §5.1). */
   contentEnd?: string;
@@ -59,6 +61,15 @@ export interface Observation {
   rawCount: number;
   /** What the plan-start window check compares (design §9). */
   comparison: WindowComparison;
+  /** Content that cannot be clicked now, for the executor's priority table (design §6.2, priorities 3 and 4). */
+  context: ObservationContext;
+}
+
+export interface ObservationContext {
+  /** Elements in the window with a frame that are disabled or unnamed, such as `Button (unnamed) ×3`. */
+  inactive: string[];
+  /** Items of closed menu-bar menus, as paths such as `Format ▸ Text ▸ Align Left`. */
+  menus: string[];
 }
 
 export interface ObservationFailure {
@@ -72,6 +83,15 @@ export interface ObservationFailure {
 
 const MAX_SHOWN_TEXTS = 8;
 const MAX_SHOWN_TEXT_LENGTH = 200;
+/** The name length of the executor's priority table (design §6.2, priority 1). */
+const FULL_NAME_LENGTH = 200;
+
+/** `Button (unnamed)` three times becomes `Button (unnamed) ×3`, in first-seen order. */
+function collapseRepeats(lines: string[]): string[] {
+  const counts = new Map<string, number>();
+  for (const line of lines) counts.set(line, (counts.get(line) ?? 0) + 1);
+  return [...counts].map(([line, count]) => count > 1 ? `${line} ×${count}` : line);
+}
 
 export interface ObserverOptions { maxElements: number; maxNameLength: number; id: string }
 
@@ -159,13 +179,47 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
     return texts.length ? { texts } : {};
   };
 
+  // Priorities 3 and 4 of the executor's table (design §6.2): what the window has but cannot be clicked now.
+  const inactive: string[] = [];
+  const nameOf = (element: RawElement) => cleanName(element.label, FULL_NAME_LENGTH) ?? cleanName(element.value, FULL_NAME_LENGTH)
+    ?? cleanName(read.descendantText?.[element.element_index], FULL_NAME_LENGTH);
+  const describeInactive = (element: RawElement, reason: string) => {
+    const name = nameOf(element);
+    inactive.push(`${element.role.replace(/^AX/, "")} ${name ? JSON.stringify(name) : "(unnamed)"}${reason === "disabled" ? " disabled" : ""}`);
+  };
+  const children = new Map<number, RawElement[]>();
+  for (const element of read.elements) if (element.parent_index !== undefined) children.set(element.parent_index, [...(children.get(element.parent_index) ?? []), element]);
+  const menuPaths = (): string[] => {
+    if (!read.appActive) return [];
+    const paths: string[] = [];
+    const walk = (menu: RawElement, prefix: string, depth: number) => {
+      for (const item of children.get(menu.element_index) ?? []) {
+        if (item.role !== "AXMenuItem") continue;
+        const name = cleanName(item.label, FULL_NAME_LENGTH);
+        if (!name) continue;
+        const path = `${prefix} ▸ ${name}`;
+        // An open menu's items have frames and are clickable controls already.
+        if (!item.frame) paths.push(`${path}${item.enabled === false ? " (disabled)" : ""}`);
+        if (depth < 4) for (const sub of children.get(item.element_index) ?? []) if (sub.role === "AXMenu") walk(sub, path, depth + 1);
+      }
+    };
+    for (const bar of read.elements.filter(element => element.role === "AXMenuBar")) {
+      for (const title of children.get(bar.element_index) ?? []) {
+        const name = cleanName(title.label, FULL_NAME_LENGTH);
+        if (title.role !== "AXMenuBarItem" || !name) continue;
+        for (const menu of children.get(title.element_index) ?? []) if (menu.role === "AXMenu") walk(menu, name, 1);
+      }
+    }
+    return paths;
+  };
+
   const hiddenBy = new Map<number | "content", number>();
   const kept: { element: RawElement; name: string; landmark?: RawElement }[] = [];
   for (const element of read.elements) {
     if (CONTAINER_ROLES.has(element.role)) { discard(element, "container"); continue; }
     if (!element.frame) { discard(element, "no_frame"); continue; }
     if (!visible(element)) { discard(element, "collapsed_frame"); continue; }
-    if (element.enabled === false) { discard(element, "disabled"); continue; }
+    if (element.enabled === false) { discard(element, "disabled"); if (!underMenu(element) && insideWindow(element.frame)) describeInactive(element, "disabled"); continue; }
     if (!read.appActive && underMenuBar(element)) { discard(element, "inactive_menu_bar"); continue; }
     if (!underMenu(element) && !insideWindow(element.frame!)) {
       discard(element, "outside_window");
@@ -177,7 +231,7 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
     }
     const name = cleanName(element.label, options.maxNameLength) ?? cleanName(element.value, options.maxNameLength)
       ?? cleanName(read.descendantText?.[element.element_index], options.maxNameLength);
-    if (!name) { discard(element, "unnamed"); continue; }
+    if (!name) { discard(element, "unnamed"); describeInactive(element, "unnamed"); continue; }
     kept.push({ element, name, landmark: landmarkOf(element) });
   }
 
@@ -197,7 +251,7 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
   }
 
   const toElement = (entry: typeof kept[number], group: string, position: number): ObservedElement => ({
-    index: entry.element.element_index, role: entry.element.role, name: entry.name,
+    index: entry.element.element_index, role: entry.element.role, name: entry.name, fullName: nameOf(entry.element) ?? entry.name,
     ...(entry.element.value !== undefined && cleanName(entry.element.value, options.maxNameLength) !== entry.name
       ? { value: cleanName(entry.element.value, options.maxNameLength) } : {}),
     ...(entry.element.selected ? { selected: true } : {}),
@@ -213,7 +267,8 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
     const blocking = read.elements.filter(element => BLOCKING_ROLES.test(element.role) && !underMenuBar(element))
       .map(element => `${element.role} ${JSON.stringify(element.label ?? "")}`);
     return { status: "ready", id: options.id, window: read.window, snapshotId: read.snapshotId, groups, discards, rawCount: read.elements.length, ...shownTexts(),
-      comparison: { windowId: read.window.windowId, title: read.window.title ?? "", controls, blocking } };
+      comparison: { windowId: read.window.windowId, title: read.window.title ?? "", controls, blocking },
+      context: { inactive: collapseRepeats(inactive), menus: menuPaths() } };
   };
 
   const hiddenTotal = () => { const total = [...hiddenBy.values()].reduce((sum, count) => sum + count, 0); return total ? { hidden: total } : {}; };
@@ -276,12 +331,6 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
     return { status: "state_too_large", ...base, detail: `the window splits into ${groups.length} groups; the executor can route among at most ${MAX_ALTERNATIVES}.` };
   }
   return ready(groups);
-}
-
-/** The executor's view: group headings and name-only lines (design §6.2, research §4.8 format). */
-export function renderExecutorTable(observation: Observation): string {
-  return observation.groups.map(group =>
-    `${group.name.toUpperCase()}\n${group.elements.map(element => `  ${element.letter} ${element.name}`).join("\n")}`).join("\n");
 }
 
 /** The planner's view includes role, state, and the text the window shows (design §5.1, fix plan F-6). */

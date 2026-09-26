@@ -832,3 +832,62 @@ The relay client pinned `@wezzard/mcp-vm-relay@0.4.0` from 2026-09-24. Pi's own 
 - After the TextEdit agent's first run reached the limit of 5 escalations, the parent resumed it with `SendMessage`. The limit counts per run, so the resumed run planned 5 more times.
 
 **Verification limits:** One run per task. Two runs overlapped, so the machine-limit failure came from this check's own schedule.
+
+### 16.7 Element detail for the executor
+
+[Section 16.6](#166-relay-061) found that in TextEdit, the executor answered "none" for every step that named the text area. This section measures why, and compares three ways to describe the window to the executor ([design Section 6.2](../arch/computer-use.md#62-element-table), decision [PS-D5](../decisions.md)).
+
+**The text area without its role.** The request that Pi's TextEdit run sent on 2026-09-26 at 00:18 UTC was replayed against the executor five times per variant, for two steps: focus the document, and type the new line. Only the `elements` field changed.
+
+| Variant | Focus the document | Type the new line |
+| --- | --- | --- |
+| As sent: letter and name cut at 48 characters | 1 of 5 chose the text area | 0 of 5 |
+| The role on every line | 5 of 5 | 5 of 5 |
+| The text area's name replaced by "Text area" | 5 of 5 | 5 of 5 |
+
+- As sent, the text area's line was `I Disposable document for the computer-use batch.…`. The driver reports a text area's label as its content, so nothing on the line marks it as a place to type.
+
+**Evidence:** `test-results/computer-use/jev-textarea-ab-2026-09-26T01-14-14Z/calls.jsonl`. It is not versioned.
+
+**The size of a complete tree.** Across 336 distinct reads recorded under `test-results/`, the complete tree was written one element per line, with role, full name, value and state. Sizes use the builder's estimate, characters divided by three. About 3,568 tokens remain for the tree: 4,096, minus the 128-token answer reserve, minus about 400 tokens for the rest of the request.
+
+| App | Reads | Complete tree, tokens (median / largest) | Fits | Elements with a frame only, tokens (median / largest) | Fits |
+| --- | --- | --- | --- | --- | --- |
+| Calculator | 131 | 1,766 / 3,428 | 131 of 131 | 200 / 1,012 | 131 of 131 |
+| Finder | 112 | 4,066 / 5,987 | 4 of 112 | 897 / 1,269 | 112 of 112 |
+| TextEdit | 90 | 3,836 / 4,726 | 9 of 90 | 153 / 257 | 90 of 90 |
+| Safari | 3 | 35,852 / 36,586 | 0 of 3 | 842 / 895 | 3 of 3 |
+
+- Almost all of the difference is the items of closed menus, which have no frame. This is why the priority model ranks closed menus lowest.
+
+**Three variants, replayed.** The evaluation script sent one decision request per labelled intent at revision `61fb899` with the uncommitted PS-D5 changes, for seeds 1 to 10. It used 8 recorded reads: the 5 recorded reads with the 19 labelled intents of [Section 9.2](#92-retrieval-on-recorded-trees) (`trees-2026-09-23T03-27-27-548Z`), and the live TextEdit, Calculator and Finder reads of Section 16.6 with 9 more intents. There were 28 labelled intents, so each variant made 280 decisions. The measures are those of [Section 9.3](#93-executor-decisions-on-recorded-trees). The variants differ only in `elements`:
+
+- `names`: a letter and the name cut at 48 characters, the table measured in [Section 4.5](#45-name-only-labels-compared-with-verbose-descriptors-n--8-26-candidates).
+- `roles`: priority 1 alone, a letter, the role, the name cut at 200 characters and the state.
+- `priority`: priority 1, then shown text, elements that cannot be clicked now, and closed menus, trimmed from the lowest priority.
+
+| Measure | `names` | `roles` | `priority` |
+| --- | --- | --- | --- |
+| Correct actions | 176 of 280 | 201 of 280 | 199 of 280 |
+| Expected element absent from the table | 60 of 280 | 60 of 280 | 60 of 280 |
+| Judgment misses, of 220 decisions whose element was in the table | 3 | 5 | 1 |
+| Wrong actions on unlisted targets | 29 of 60 | 18 of 60 | 22 of 60 |
+| Stopped for approval because the executor judged the step destructive | 13 | 9 | 11 |
+| TextEdit live: focus the document and type the line | 0 of 20 | 20 of 20 | 20 of 20 |
+| Requests the executor found too long, then trimmed and sent again | 0 | 0 | 60 |
+| Round trip, median | 167 to 185 ms | 185 to 189 ms | 157 to 171 ms |
+
+- The two reports per variant, seeds 1 to 3 and seeds 4 to 10, give the round-trip range.
+- The executor counted the request for the live Calculator read, 29 controls, at 881 input tokens with `names`, 942 with `roles` and 2,783 with `priority`.
+- `roles` and `priority` differ by 2 correct actions of 280. They made the same number of actions on a wrong element, judgment misses plus wrong actions on unlisted targets: 23 each, against 32 for `names`.
+- The `priority` table did worse on one intent. For "Close the document window" in the TextEdit read of Section 4, whose close button is unnamed, it pressed the text area in 8 of 10 decisions. `roles` pressed nothing in all 10. The `NOT CLICKABLE NOW` section listed `Button (unnamed) ×3`.
+- It did better on another. For "Show the Downloads folder" in TextEdit's open panel, where Downloads is not listed, it acted on another element in 4 of 10 decisions against 7 of 10 for `roles`.
+- The approved rule was to switch to the priority model only if it was at least as accurate as priority 1 alone. It was not, so the default is `roles`. The priority model remains available to the evaluation script as `--elements=priority`.
+
+**The estimate undercounts closed menus.** In the first `priority` run, every request for the live TextEdit and Finder reads was rejected as too long. The TextEdit request was estimated at 3,092 tokens, and the executor counted at least 4,079. For the live Calculator read, which fit, the estimate was 2,187 and the executor counted 2,783, 27 percent more. That is outside the range of −17 to +26 percent measured in [Section 13.3](#133-estimate-error). Paths such as `Format ▸ Text ▸ Align Left` have more tokens per character than names.
+
+- The harness and the evaluation now build a request again from the next trim step when the executor finds it too long, instead of only dropping history ([design Section 7.3](../arch/computer-use.md#73-token-budget)). With this, one retry per request was enough for every live TextEdit and Finder read, and the retried requests were counted at 428 to 1,649 tokens.
+
+**Evidence:** `test-results/computer-use/eval-elements-2026-09-26T01-32-57Z/`, with one report per variant and seed range. The report of the first `priority` run, before the retry, is in `superseded/`. None of it is versioned.
+
+**Verification limits:** The labelled intents cover 8 windows. None needs the content of priorities 2 to 4 to be answered, because the executor can only choose a listed control: an intent such as "make the text bold" is the planner's to split into opening a menu and choosing an item. A live run through Pi with the new default has not been done.

@@ -221,20 +221,21 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
         // Control check (design §9): the named control must be in this read before the executor is asked.
         const named = step.control ? controlMatches(observation, step.control) : undefined;
         if (step.control && !named!.length) escalate(step.id, "target_not_found", `the control the step names, ${describeControl(step.control)}, is not in the window; no action was taken`);
-        const build = (recent: ReturnType<typeof history.recent>) =>
-          buildDecisionRequest({ goal: plan.goal, step, observation, recent, answerReserveTokens: config.answerReserveTokens });
-        let built = build(history.recent());
+        const recent = history.recent();
+        const build = (fromTrimStep: number) =>
+          buildDecisionRequest({ goal: plan.goal, step, observation, recent, answerReserveTokens: config.answerReserveTokens, fromTrimStep });
+        let built = build(0);
         let response: DecisionResponse | undefined;
         // The executor counts tokens exactly and the estimate does not. A request it finds too long
-        // is sent once more without history, which is safe because a decision acts on nothing.
+        // is built again from the next trim step (design §7.3), which is safe because a decision acts on nothing.
         while (!response) {
           checkCancelled();
           try { response = await executor.decide(built.body, signal); }
           catch (error) {
             if (error instanceof ExecutorError && error.code === "aborted") throw new Stop(undefined, true);
             if (error instanceof ExecutorError && error.code === "too_large") {
-              if (built.historyUsed > 0) { built = build([]); continue; }
-              escalate(step.id, "state_too_large", `the window is too large for the executor even without history (estimated ${built.estimatedTokens} tokens): ${error.message}`);
+              if (!built.smallest) { built = build(built.trimStep + 1); continue; }
+              escalate(step.id, "state_too_large", `the window is too large for the executor even with everything optional removed (estimated ${built.estimatedTokens} tokens): ${error.message}`);
             }
             return escalateAfter(step.id, "executor_unavailable", error instanceof Error ? error.message : String(error));
           }

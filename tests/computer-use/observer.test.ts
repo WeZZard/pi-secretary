@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cleanName, discardSummary, observe, renderExecutorTable, renderPlannerTable, type Observation } from "../../extensions/secretary/computer-use/observer.ts";
+import { cleanName, discardSummary, observe, renderPlannerTable, type Observation } from "../../extensions/secretary/computer-use/observer.ts";
+import { renderExecutorTable } from "../../extensions/secretary/computer-use/request-builder.ts";
 import { finderRead, textEditRead } from "./fixtures/trees.ts";
 import type { RawElement } from "../../extensions/secretary/computer-use/backend/backend.ts";
 
@@ -23,7 +24,7 @@ test("a window above 25 elements is grouped by landmark container in reading ord
   const reasons = discardSummary(result.discards);
   assert.equal(reasons.collapsed_frame, 1, "A virtualized row with a 1-point frame is discarded");
   assert.equal(reasons.disabled, 1);
-  assert.match(renderExecutorTable(result), /^TOOLBAR\n {2}A Back\n/);
+  assert.match(renderExecutorTable(result), /^TOOLBAR\n {2}A Button "Back"\n/);
 });
 
 test("an oversized group is split in reading order, leaving each element question one alternative for none", () => {
@@ -128,4 +129,20 @@ test("container text equal to a control's name is still listed", () => {
     frame: { x: window.frame!.x + 10, y: window.frame!.y + 40, w: 40, h: 40 } });
   value.descendantText = { ...(value.descendantText ?? {}), [window.element_index]: "\u200e0" };
   assert.deepEqual(ready(observe(read(value), options)).texts, ["0"]);
+});
+
+test("the observation keeps full names, controls that cannot be clicked now, and closed menus as paths", () => {
+  const value = textEditRead();
+  const text = value.elements.find(element => element.role === "AXTextArea")!;
+  text.label = text.value = `Disposable document text ${"x".repeat(100)}`;
+  const background = ready(observe(read(value), options));
+  const area = background.groups.flatMap(group => group.elements).find(element => element.role === "AXTextArea")!;
+  assert.equal(area.name.length, 48, "The table name keeps the configured length");
+  assert.equal(area.fullName, text.label, "The full name is cut only at 200 characters");
+  assert.deepEqual(background.context, { inactive: ["Button (unnamed)"], menus: [] }, "A background application's menus are not listed");
+
+  const active = ready(observe(read({ ...value, appActive: true }), options));
+  assert.deepEqual(active.context.menus, ["File ▸ Save…"]);
+  const finder = ready(observe(read(finderRead()), options));
+  assert.ok(finder.context.inactive.includes("Button \"Disabled action\" disabled"));
 });

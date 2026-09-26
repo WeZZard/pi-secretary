@@ -16,16 +16,18 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { WindowRead } from "../../extensions/secretary/computer-use/backend/backend.ts";
 import { defaultComputerUseConfiguration } from "../../extensions/secretary/computer-use/configuration.ts";
-import { ExecutorClient } from "../../extensions/secretary/computer-use/executor-client.ts";
+import { ExecutorClient, ExecutorError } from "../../extensions/secretary/computer-use/executor-client.ts";
 import { observe, type Observation } from "../../extensions/secretary/computer-use/observer.ts";
 import { decide } from "../../extensions/secretary/computer-use/policy.ts";
-import { buildDecisionRequest } from "../../extensions/secretary/computer-use/request-builder.ts";
+import { buildDecisionRequest, DEFAULT_ELEMENT_DETAIL, type ElementDetail } from "../../extensions/secretary/computer-use/request-builder.ts";
 
 const flags = process.argv.slice(2).filter(arg => arg.startsWith("--"));
 const [dir, targetsPath, url = "http://jev.home.arpa"] = process.argv.slice(2).filter(arg => !arg.startsWith("--"));
-if (!dir || !targetsPath) { console.error("usage: evaluate-decisions.ts <trees-dir> <targets.json> [executor-url] [--region-plain] [--no-none] [--seeds=1,2,3]"); process.exit(2); }
+if (!dir || !targetsPath) { console.error("usage: evaluate-decisions.ts <trees-dir> <targets.json> [executor-url] [--region-plain] [--no-none] [--seeds=1,2,3] [--elements=names|roles|priority]"); process.exit(2); }
 const regionDescriptions = flags.includes("--region-plain") ? "none" as const : "names" as const;
 const noneOption = !flags.includes("--no-none");
+const elementDetail = (flags.find(flag => flag.startsWith("--elements="))?.slice(11) ?? DEFAULT_ELEMENT_DETAIL) as ElementDetail;
+if (!["names", "roles", "priority"].includes(elementDetail)) { console.error(`unknown --elements=${elementDetail}`); process.exit(2); }
 const seeds = (flags.find(flag => flag.startsWith("--seeds="))?.slice(8) ?? "42").split(",").map(Number);
 const targets = JSON.parse(readFileSync(targetsPath, "utf8")) as { label: string; app: string; goal?: string; intents?: { intent: string; expect: string[]; text?: string; keys?: string }[] }[];
 const config = defaultComputerUseConfiguration();
@@ -38,7 +40,7 @@ const records = new Map(readdirSync(join(dir, "observations")).map(file => {
 
 const rows: string[] = ["| Target | Intent | Groups | In table | Decision | Outcome | Confidences | Input tokens (estimate) | Round trip |", "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"];
 const latencies: number[] = [];
-let labelled = 0, retrievalMisses = 0, present = 0, judgmentMisses = 0, correct = 0, escalations = 0, wrongActsOnAbsent = 0, scrollsOnAbsent = 0;
+let trimmed = 0, labelled = 0, retrievalMisses = 0, present = 0, judgmentMisses = 0, correct = 0, escalations = 0, wrongActsOnAbsent = 0, scrollsOnAbsent = 0;
 for (const target of targets) {
   const record = records.get(target.label);
   if (!record || record.status !== "ready") { rows.push(`| ${target.label} | (no ready record) | | | | | | | |`); continue; }
@@ -51,10 +53,19 @@ for (const target of targets) {
     const inTable = observation.groups.flatMap(group => group.elements).some(element => wanted.has(clean(element.name)));
     if (inTable) present++; else retrievalMisses++;
     const step = { id: "s", intent: intent.intent, ...(intent.text ? { text: intent.text } : {}), ...(intent.keys ? { keys: intent.keys } : {}) };
-    const built = buildDecisionRequest({ goal: target.goal ?? intent.intent, step, observation, recent: [], answerReserveTokens: config.answerReserveTokens, regionDescriptions, noneOption });
-    let response;
-    try { response = await client.decide({ ...built.body, seed }); }
-    catch (error) { rows.push(`| ${target.label} | ${intent.intent} | ${observation.groups.length} | ${inTable} | ${(error as Error).message} | escalation | | (${built.estimatedTokens}) | |`); escalations++; continue; }
+    const build = (fromTrimStep: number) => buildDecisionRequest({ goal: target.goal ?? intent.intent, step, observation, recent: [], answerReserveTokens: config.answerReserveTokens,
+      regionDescriptions, noneOption, elementDetail, fromTrimStep });
+    // As in the harness: a request the executor finds too long is built again from the next trim step.
+    let built = build(0), response, retries = 0;
+    for (;;) {
+      try { response = await client.decide({ ...built.body, seed }); break; }
+      catch (error) {
+        if (error instanceof ExecutorError && error.code === "too_large" && !built.smallest) { built = build(built.trimStep + 1); retries++; continue; }
+        rows.push(`| ${target.label} | ${intent.intent} (seed ${seed}) | ${observation.groups.length} | ${inTable} | ${(error as Error).message.slice(0, 120)} | escalation | | (${built.estimatedTokens}) | |`); escalations++; break;
+      }
+    }
+    if (!response) continue;
+    if (retries) trimmed++;
     latencies.push(response.roundTripMs);
     const decision = decide({ response, questions: built.questions, observation, step, allowDestructive: false, confidenceGate: config.confidenceGate });
     const confidences = Object.entries(decision.prior.confidences).map(([k, v]) => `${k} ${v.toFixed(2)}`).join(", ");
@@ -73,13 +84,13 @@ for (const target of targets) {
       outcome = inTable ? "escalation" : "escalation (target absent)";
       if (decision.prior.element) described += ` (prior ${JSON.stringify(decision.prior.element)})`;
     }
-    rows.push(`| ${target.label} | ${intent.intent} (seed ${seed}) | ${observation.groups.length} | ${inTable} | ${described} | ${outcome} | ${confidences} | ${response.inputTokens ?? "?"} (${built.estimatedTokens}) | ${Math.round(response.roundTripMs)} ms |`);
+    rows.push(`| ${target.label} | ${intent.intent} (seed ${seed}) | ${observation.groups.length} | ${inTable} | ${described} | ${outcome} | ${confidences} | ${response.inputTokens ?? "?"} (${built.estimatedTokens}${retries ? `, trim step ${built.trimStep}` : ""}) | ${Math.round(response.roundTripMs)} ms |`);
   }
 }
 const median = (values: number[]) => { const s = [...values].sort((a, b) => a - b); return s.length ? (s.length % 2 ? s[(s.length - 1) / 2]! : (s[s.length / 2 - 1]! + s[s.length / 2]!) / 2) : NaN; };
-const text = `# Executor decision evaluation\n\nTrees: ${dir}\nExecutor: ${url}\nRegion descriptions: ${regionDescriptions}\nNone option: ${noneOption}\nSeeds: ${seeds.join(", ")}\nRun: ${new Date().toISOString()}\n\n` +
+const text = `# Executor decision evaluation\n\nTrees: ${dir}\nExecutor: ${url}\nRegion descriptions: ${regionDescriptions}\nNone option: ${noneOption}\nElement detail: ${elementDetail}\nSeeds: ${seeds.join(", ")}\nRun: ${new Date().toISOString()}\n\n` +
   `| Measure | Value |\n| --- | --- |\n| Labelled intents | ${labelled} |\n| Retrieval misses | ${retrievalMisses} of ${labelled} |\n` +
-  `| Judgment misses | ${judgmentMisses} of ${present} intents whose element was in the table |\n| Correct actions | ${correct} of ${labelled} |\n` +
+  `| Judgment misses | ${judgmentMisses} of ${present} intents whose element was in the table |\n| Correct actions | ${correct} of ${labelled} |\n| Requests trimmed after the executor found them too long | ${trimmed} |\n` +
   `| Escalations | ${escalations} |\n| Wrong actions when the target was not listed | ${wrongActsOnAbsent} of ${retrievalMisses} |\n| Scrolls when the target was not listed | ${scrollsOnAbsent} of ${retrievalMisses} |\n| Executor round-trip latency, median | ${Math.round(median(latencies))} ms over ${latencies.length} requests |\n\n${rows.join("\n")}\n`;
-writeFileSync(join(dir, `evaluation-${new Date().toISOString().replace(/[:.]/g, "-")}.md`), text);
+writeFileSync(join(dir, `evaluation-${elementDetail}-${new Date().toISOString().replace(/[:.]/g, "-")}.md`), text);
 console.log(text);

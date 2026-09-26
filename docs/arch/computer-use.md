@@ -54,7 +54,7 @@ These constraints come from the [research record](../research/computer-use-s0-s1
 - Several questions asked in one stage are faster and more accurate than questions staged with `depends_on` or `alone`.
 - Confidences from independent questions are not comparable, and a wrong answer was observed at 0.99 confidence.
 - A routing question with one speculative element question per group reached 12/12 end to end over 103 candidates.
-- A name-only element list costs roughly seven input tokens per element.
+- A name-only element list costs roughly seven input tokens per element. The list with roles, used since 2026-09-26, cost 942 tokens for the live Calculator read against 881 for names only ([research Section 16.7](../research/computer-use-s0-s1.md#167-element-detail-for-the-executor)).
 
 ### 2.3 Constraints from the relay
 
@@ -99,7 +99,7 @@ These facts come from `cua-driver describe get_window_state` for version 0.12.6.
 | --- | --- | --- |
 | The planner runs once per plan and once per escalation, never once per step. | The design goal is to keep per-step decisions out of the planner's conversation. | [Research Section 5](../research/computer-use-s0-s1.md#5-findings) |
 | The executor receives one request per step, and every question is answered in one stage. | Staged questions were slower and less accurate. | [Research Sections 4.2 and 4.3](../research/computer-use-s0-s1.md#42-question-coupling-on-a-list-of-buttons-n--12) |
-| The element list uses name-only labels. | Accuracy was not separated, and the encoding used about 20 percent fewer tokens. | [Research Section 4.5](../research/computer-use-s0-s1.md#45-name-only-labels-compared-with-verbose-descriptors-n--8-26-candidates) |
+| The element list gives each clickable control's role, full name and state (PS-D5). This replaced name-only labels on 2026-09-26. | Name-only labels were as accurate on lists of buttons and used about 20 percent fewer tokens. They hid TextEdit's text area, and the role raised correct actions from 176 to 201 of 280 replayed decisions. | [Research Sections 4.5](../research/computer-use-s0-s1.md#45-name-only-labels-compared-with-verbose-descriptors-n--8-26-candidates) and [16.7](../research/computer-use-s0-s1.md#167-element-detail-for-the-executor) |
 | Lists longer than 26 use a routing question and one speculative element question per group. | This scored 12/12 and needs no service change. | [Research Section 4.8](../research/computer-use-s0-s1.md#48-a-routing-question-with-one-speculative-question-per-group-n--12) |
 | Code never chooses between questions by comparing confidences. | A wrong answer was observed at 0.99 confidence while the correct question scored lower. | [Research Section 4.7](../research/computer-use-s0-s1.md#47-merging-independent-heads-by-confidence-n--8) |
 | Confidence is a safety gate only. Errors are detected by postconditions and structural signals. | Wrong answers overlapped correct answers in confidence. | [Research Section 5](../research/computer-use-s0-s1.md#5-findings) |
@@ -364,7 +364,25 @@ The result is compact, because it enters the planner's conversation.
 
 ### 6.2 Element table
 
-- The executor's element table has one line per element. Each line holds a label letter and the element's name, without role or kind ([research Section 4.5](../research/computer-use-s0-s1.md#45-name-only-labels-compared-with-verbose-descriptors-n--8-26-candidates)).
+**Decision [PS-D5](../decisions.md), 2026-09-26.** The window's content is ranked by priority. The request builder removes the lowest-priority content first when the request is too large ([Section 7.3](#73-token-budget)).
+
+**Measured default: priority 1 alone.** The executor receives only the controls that can be clicked, each with its role, full name and state. Priorities 2 to 4 are implemented, and the evaluation script sends them with `--elements=priority`. On 280 replayed decisions, priority 1 alone had 201 correct actions, the full priority model 199, and the names-only table 176 ([research Section 16.7](../research/computer-use-s0-s1.md#167-element-detail-for-the-executor)). The rule agreed with the owner was to send the full model only if it was at least as accurate as priority 1 alone.
+
+| Priority | Content | Format in `elements` | When the request is too large |
+| --- | --- | --- | --- |
+| 1 | Controls that can be clicked: the kept elements of Section 6.1, the only answers the executor may choose | `A Button "Save"`, with the role without its `AX` prefix, the name cut at 200 characters, and `selected` or `value="…"` when set | Never removed. A request that does not fit with priority 1 alone is sent, and the executor's rejection escalates `state_too_large`. |
+| 2 | Text the window shows outside its controls, from Section 6.2 below | A `SHOWN TEXT` section, one quoted entry per line | Shortened to 60 characters per entry last |
+| 3 | Elements in the window that cannot be clicked now: disabled or unnamed, with a frame | A `NOT CLICKABLE NOW` section, such as `MenuButton "document actions" disabled` or `Button (unnamed) ×3` | Removed after the history |
+| 4 | Items of closed menu-bar menus, which have no frame | A `CLOSED MENUS` section with one path per line, such as `Format ▸ Text ▸ Align Left` | Removed first |
+
+- Only priority 1 carries letters. The other sections are context, because an element without a frame has no point to click, and an element question offers at most 26 answers.
+- The history of recent steps ([Section 7.1](#71-request-composition)) is removed after priority 4 and before priority 3, oldest first.
+- Through Pi on 2026-09-26, the names-only table showed TextEdit's text area as `I Disposable document for the computer-use batch.…`, and the executor did not choose it for any step that named it. With the role on every line, it chose the text area in 10 of 10 replayed requests, and in 20 of 20 decisions of the evaluation ([research Section 16.7](../research/computer-use-s0-s1.md#167-element-detail-for-the-executor)).
+- In the full model, the `NOT CLICKABLE NOW` line `Button (unnamed) ×3` led the executor to press TextEdit's text area for "Close the document window" in 8 of 10 decisions. Priority 1 alone pressed nothing.
+
+**Common to every variant:**
+
+- The names-only table, measured in [research Section 4.5](../research/computer-use-s0-s1.md#45-name-only-labels-compared-with-verbose-descriptors-n--8-26-candidates), had one line per element with a label letter and the element's name cut at the name length. That measurement used lists of buttons and no text area. It remains available to the evaluation script as `--elements=names`.
 - An element without an accessible name uses its value or its help text. An element with none of these is discarded with the reason `unnamed`.
 - Elements are listed under their group name, in the same format that was measured in [research Section 4.8](../research/computer-use-s0-s1.md#48-a-routing-question-with-one-speculative-question-per-group-n--12).
 - In the planner's table, a text field or text area also shows the last 200 characters of its content. Its name is the start of its content and is cut at the name length, so without this line a planner could not see a line it had just added. Through Pi, a planner in that position typed probe letters into the document to find its own edit ([research Section 14](../research/computer-use-s0-s1.md#14-pi-task-batch-2026-09-23)).
@@ -454,8 +472,10 @@ The planner decides the operation whenever the step states it, and the executor 
 - The executor accepts a request when its input tokens plus its answer tokens are at most 4,096 ([research Section 13.1](../research/computer-use-s0-s1.md#13-executor-token-budget-2026-09-23)).
 - The answer length depends only on the questions, and the questions depend only on the group count. The largest answer one read can need is 127 tokens, so the answer reserve is 128 tokens ([research Section 13.2](../research/computer-use-s0-s1.md#13-executor-token-budget-2026-09-23)).
 - The builder estimates the request size as the request body's characters divided by three. The estimate was off by −17 to +26 percent against the service's count, depending on the window's text ([research Section 13.3](../research/computer-use-s0-s1.md#13-executor-token-budget-2026-09-23)). It therefore decides only how much history to send, and it never refuses a request.
-- The builder drops the oldest `recent` records until the estimate fits within 4,096 tokens minus the reserve. When no history is left, it sends the request anyway.
-- The executor is the only exact counter. When it rejects a request as longer than its model length, the harness sends the request once more without history. A second rejection, or a first rejection without history, escalates `state_too_large`. The retry is safe, because a decision request acts on nothing.
+- Each way of making the request smaller is a trim step. With priority 1 alone, the trim steps drop the oldest `recent` record, one at a time. The builder sends the first trim step whose estimate fits within 4,096 tokens minus the reserve. When no trim step is left, it sends the request anyway.
+- With the full priority table of [Section 6.2](#62-element-table), the trim steps remove content in this order: closed menus, then history records from the oldest, then elements that cannot be clicked now, then they shorten each shown text to 60 characters. Controls that can be clicked are never removed.
+- The executor is the only exact counter. When it rejects a request as longer than its model length, the harness builds the request again from the next trim step and sends it. A rejection at the last trim step escalates `state_too_large`. The retry is safe, because a decision request acts on nothing.
+- The estimate undercounts closed-menu paths: a TextEdit request estimated at 3,092 tokens was counted at more than 4,079. With the retry, one extra request was enough for every live TextEdit and Finder read ([research Section 16.7](../research/computer-use-s0-s1.md#167-element-detail-for-the-executor)).
 - After each response, telemetry records the service's input and answer tokens next to the estimate and the number of history records sent.
 
 ## 8. Decision policy
@@ -548,7 +568,7 @@ An escalation ends the `computer_run_plan` call and returns control to the plann
 | Reason | Raised when | Expected planner response |
 | --- | --- | --- |
 | `needs_text` | The step's text contains characters that the backend cannot type with real key presses. A step without `text` is never offered `enter_text`, so missing text cannot reach the executor. | Rewrite the text with typeable characters, or split the step. |
-| `state_too_large` | The tree was truncated, the table exceeds the element limit, or the executor rejects the request as too long even without history. | Narrow the target, for example by closing panels or choosing a smaller window. |
+| `state_too_large` | The tree was truncated, the table exceeds the element limit, or the executor rejects the request as too long at the last trim step of [Section 7.3](#73-token-budget). | Narrow the target, for example by closing panels or choosing a smaller window. |
 | `uncertain` | Confidence is below the gate, the element and operation are incompatible, or the executor chose a control other than the one the step names. The answers are returned as a prior. | Confirm the prior or rewrite the step more specifically. |
 | `target_not_found` | The executor abstained, or the control the step names is not in the window. | Check the returned observation and revise the step. |
 | `already_satisfied` | The postcondition held before the step, and the step is not marked `idempotent`. No action was taken. | Write a postcondition that is false before the step, or mark the step `idempotent` when repeating it does no harm. |
