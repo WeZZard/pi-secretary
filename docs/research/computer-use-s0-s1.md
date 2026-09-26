@@ -890,4 +890,22 @@ The relay client pinned `@wezzard/mcp-vm-relay@0.4.0` from 2026-09-24. Pi's own 
 
 **Evidence:** `test-results/computer-use/eval-elements-2026-09-26T01-32-57Z/`, with one report per variant and seed range. The report of the first `priority` run, before the retry, is in `superseded/`. None of it is versioned.
 
-**Verification limits:** The labelled intents cover 8 windows. None needs the content of priorities 2 to 4 to be answered, because the executor can only choose a listed control: an intent such as "make the text bold" is the planner's to split into opening a menu and choosing an item. A live run through Pi with the new default has not been done.
+**The TextEdit task through Pi with priority 1.** The task of Section 16.6 ran once at revision `af488d9`, starting 2026-09-26 at 01:46 UTC. The agent made 6 plans and stopped at its limit of 5 escalations. The document ended with `Second line of the document.Hello from Pi`, so the text was added to the last line instead of on a new one.
+
+- The executor chose the text area in every decision that needed it, with confidence 0.96 to 0.98. Section 16.6's failure did not recur.
+- Every stop came from the plan or the backend:
+
+| Plan | Stopped at | Reason |
+| --- | --- | --- |
+| 1 | the first step | The planner wrote the control's name as `TextArea "Disposable document…"`, with the role and quotes of the planner's table, and the control check found no such name. |
+| 2 | `cmd+down` | `no_progress`: moving the insertion point changes nothing in the accessibility tree. |
+| 3 | completed | The step "Press Return" used the operation `press`, which is a click. The click landed in the text area, and the next step typed at the end without a line break. |
+| 4 | `cmd+a` | `no_progress`: a selection changes nothing in the accessibility tree either. |
+| 5 | typing the whole document | `needs_text`: the text held "-", and real key presses cover only letters, digits, space, Return and Tab ([design Section 7.2](../arch/computer-use.md#72-operations)). |
+| 6 | clicking the Edit menu | `backend_failed`: pixel clicks are positioned in the window's screenshot, and the menu bar lies outside the window. |
+
+- Plans 1 to 5 also had 3 rejections for a `text` check written with both or neither of `contains` and `endsWith`, or with `endsWith` at the top level.
+
+**Evidence:** `test-results/e2e/computer-use-delegation-textedit/2026-09-26T01-46-07-508Z-cedc8369/`. It is not versioned.
+
+**Verification limits:** The labelled intents cover 8 windows. None needs the content of priorities 2 to 4 to be answered, because the executor can only choose a listed control: an intent such as "make the text bold" is the planner's to split into opening a menu and choosing an item. The live check is one run of one task.
