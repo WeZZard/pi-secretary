@@ -58,6 +58,8 @@ export interface RelayExecution {
   outputTruncated?: boolean;
 }
 
+/** Step titles are shortened to this length; the relay accepts at most 500 characters. */
+const TITLE_LIMIT = 200;
 interface RunInput { kind: "exec" | "code" | "cua"; title: string; expected: string; afterIntervalMs: number; timeoutMs: number; body: Record<string, unknown> }
 
 /**
@@ -134,8 +136,11 @@ export class RelaySession {
 
   async #runOn(connection: RelayConnection, input: RunInput, signal?: AbortSignal): Promise<RelayExecution> {
     const id = `cu-${String(++this.#sequence).padStart(4, "0")}`;
-    const result = await this.#call(connection, { action: "run", kind: input.kind, reason: `Secretary computer use: ${input.title}`,
-      step: { id, title: input.title, expected: input.expected, inputMode: "ordinary" }, snapshots: { afterIntervalMs: input.afterIntervalMs },
+    // The relay rejects a step title over 500 characters with a generic input error; a Finder
+    // preparation command that wrote 40 fixture files was 740 characters (observed 2026-09-26).
+    const title = input.title.length > TITLE_LIMIT ? `${input.title.slice(0, TITLE_LIMIT - 1)}…` : input.title;
+    const result = await this.#call(connection, { action: "run", kind: input.kind, reason: `Secretary computer use: ${title}`,
+      step: { id, title, expected: input.expected, inputMode: "ordinary" }, snapshots: { afterIntervalMs: input.afterIntervalMs },
       timeoutMs: input.timeoutMs, ...input.body }, input.timeoutMs + RELAY_OVERHEAD_MS, signal);
     let execution: RelayExecution | undefined;
     try { execution = await resultBody(result.text) as RelayExecution; }

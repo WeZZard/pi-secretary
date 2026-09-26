@@ -194,6 +194,26 @@ test("preparation runs once after staging, and a failed start releases the machi
   assert.equal(actions.filter(action => action.startsWith("run exec")).length, 1, "Preparation runs once per machine");
 });
 
+test("a long preparation command is sent with a title the relay accepts", async () => {
+  // The relay rejects a step title over 500 characters (observed 2026-09-26 with a Finder fixture command).
+  const titles: string[] = [];
+  const connection: RelayConnection = {
+    async call(input) {
+      if (input.action === "run") titles.push((input.step as { title: string }).title, String(input.reason));
+      return input.action === "run" ? { text: `${JSON.stringify({ imageDelivery: { status: "attached" }, executionFailed: false })}\n${JSON.stringify({ outcome: { kind: "completed", exitStatus: { code: 0, signal: null } }, stdout: "" })}`, isError: false }
+        : { text: "{}", isError: false };
+    },
+    async close() {},
+  };
+  const long = ["/bin/zsh", "-c", `for f in ${Array.from({ length: 60 }, (_, i) => `"File ${i}"`).join(" ")}; do touch "$f.txt"; done`];
+  const backend = new RelayBackend({ connect: async () => connection, image: "macos26", ttlHours: 1, maxTreeNodes: 2000, foregroundDelivery: false, actionIntervalMs: 0, prepare: [long] });
+  await backend.readWindow({ app: "Finder" }, { screenshot: false }).catch(() => undefined);
+  assert.ok(`Prepare: ${long.join(" ")}`.length > 500);
+  assert.ok(titles[0]!.length <= 200 && titles[0]!.endsWith("…"), "the step title is shortened");
+  assert.ok(titles[1]!.length <= 500, "the reason stays within the relay's title limit too");
+  await backend.close();
+});
+
 test("a cancelled read is not sent again, and closing still finishes the lease", async () => {
   const actions: string[] = [];
   const connection: RelayConnection = {

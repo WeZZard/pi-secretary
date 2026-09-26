@@ -3,7 +3,11 @@
  * computer-use agent definition, which runs through the relay client in a fresh relay virtual
  * machine, with the real LiteLLM model and the executor at jev.home.arpa. It makes model calls.
  *
- *   node --experimental-strip-types scripts/computer-use/pi-delegation-live.ts [model] [executor-url]
+ *   node --experimental-strip-types scripts/computer-use/pi-delegation-live.ts [model] [executor-url] [task]
+ *
+ * The task is calculator (the default), textedit or finder, as in the Pi task batch (research §14).
+ * Each task's setup runs in the guest after staging, because the computer-use tools do not launch
+ * applications.
  *
  * Output: a new directory under test-results/e2e/computer-use-delegation/.
  */
@@ -16,9 +20,35 @@ import { createCleanPiEnvironment } from "../../tests/e2e/environment/isolation.
 import { useGlobalLiteLLM } from "../../tests/e2e/environment/global-litellm.ts";
 import { DEFAULT_RELAY_COMMAND } from "../../extensions/secretary/computer-use/configuration.ts";
 
-const [modelId = "qwen3.8-27b", executorUrl = "http://jev.home.arpa"] = process.argv.slice(2);
+const [modelId = "qwen3.8-27b", executorUrl = "http://jev.home.arpa", taskName = "calculator"] = process.argv.slice(2);
+
+// Fixtures match scripts/computer-use/pi-task-batch.ts, so results compare with research §14.
+const FILES = ["Agenda", "Appendix", "Archive", "Backups", "Budget draft", "Calendar", "Contacts", "Contract", "Diagram", "Drafts",
+  "Estimates", "Expenses", "Feedback", "Forecast", "Glossary", "Guidelines", "Handbook", "Invoices", "Itinerary", "Journal",
+  "Ledger", "Letters", "Minutes", "Notes", "Outline", "Plans", "Proposal", "Queries", "Receipts", "Reports",
+  "Schedule", "Slides", "Summary", "Templates", "Timeline", "Todo", "Updates", "Vendors", "Workshop", "Zoning notes"];
+const shell = (script: string) => ["/bin/zsh", "-c", script];
+const TASKS: Record<string, { task: string; prepare: string[][] }> = {
+  calculator: {
+    task: "in the Calculator app, which is already open, compute 7 plus 3 and report the result the display shows.",
+    prepare: [["/usr/bin/open", "-a", "Calculator"]],
+  },
+  textedit: {
+    task: "in TextEdit, the document scratch.txt is open. Add a new last line that says: Hello from Pi",
+    prepare: [shell("defaults write com.apple.TextEdit ApplePersistenceIgnoreState -bool YES; mkdir -p ~/cu-fixtures"
+      + " && printf 'Disposable document for the computer-use batch.\\nSecond line of the document.' > ~/cu-fixtures/scratch.txt"
+      + " && open -a TextEdit ~/cu-fixtures/scratch.txt && sleep 3")],
+  },
+  finder: {
+    task: "in Finder, the window \"Fixture Folder\" is open. Select the file named Zoning notes.txt.",
+    prepare: [shell(`mkdir -p ~/cu-fixtures/"Fixture Folder" && cd ~/cu-fixtures/"Fixture Folder" && for f in ${FILES.map(name => JSON.stringify(name)).join(" ")}; do printf '%s\\n' "$f" > "$f.txt"; done`
+      + " && open ~/cu-fixtures/\"Fixture Folder\" && sleep 3")],
+  },
+};
+const selected = TASKS[taskName];
+if (!selected) throw new Error(`unknown task ${taskName}; expected ${Object.keys(TASKS).join(", ")}`);
 const TIMEOUT_MS = 20 * 60_000;
-const environment = createCleanPiEnvironment({ name: "computer-use-delegation",
+const environment = createCleanPiEnvironment({ name: `computer-use-delegation${taskName === "calculator" ? "" : `-${taskName}`}`,
   extensionUnderTest: join(import.meta.dirname, "../../extensions/secretary/index.ts"),
   projectFixture: join(import.meta.dirname, "../../tests/e2e/fixtures/computer-use/project") });
 const profile = useGlobalLiteLLM(environment, undefined, { model: modelId });
@@ -33,13 +63,12 @@ writeFileSync(join(environment.agentDir, "secretary.json"), JSON.stringify({
     backend: "relay", relayImage: "macos26", relayEnv: "default", relayTtlHours: 1,
     // The isolated Pi environment replaces HOME; the relay keeps its state and credential packs under the real one.
     relayCommand: ["/usr/bin/env", `HOME=${homedir()}`, ...DEFAULT_RELAY_COMMAND],
-    relayPrepare: [["/usr/bin/open", "-a", "Calculator"]],
+    relayPrepare: selected.prepare,
     executorUrl, executorTimeoutMs: 60_000,
   },
 }, null, 2));
 
-const prompt = "Delegate this task to the computer-use agent and do not use the computer tools yourself: "
-  + "in the Calculator app, which is already open, compute 7 plus 3 and report the result the display shows. "
+const prompt = `Delegate this task to the computer-use agent and do not use the computer tools yourself: ${selected.task} `
   + "When the agent finishes, tell me its result and what it verified.";
 const args = [join(environment.repository, "node_modules/@earendil-works/pi-coding-agent/dist/cli.js"), "--no-extensions",
   ...environment.extensions.flatMap(extension => ["--extension", extension]),
