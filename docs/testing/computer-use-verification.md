@@ -63,6 +63,6 @@ The values are per scenario run, from the harness's plan and step records and th
 ### Limits
 
 - Each scenario ran once, or twice after a runner correction. The results show that the behavior occurred, not how often it occurs.
-- The relay was an unreleased local build. The published `mcp-vm-relay` 0.6.1, which the default configuration uses, lacks the lifecycle fixes these runs relied on, including PS-D12's removal of the evidence size limit.
-- vm-service was the installed `76dc42c`, without the lifecycle fixes on its branch.
+- The relay was an unreleased local build. Its fixes were published on 2026-09-28 as `mcp-vm-relay` 0.6.2, which the default configuration now uses, but no scenario has run on the published package yet.
+- vm-service was the installed `76dc42c`, without the lifecycle fixes on its branch. Version 0.1.1 with those fixes was installed on 2026-09-28, after these runs.
 - Nobody has reviewed the screenshots, the `report.html` pages or the evidence packages. The results are executed checks and recorded evidence, not a person's approval.
