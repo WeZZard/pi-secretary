@@ -36,7 +36,7 @@ export interface DelegationResult {
   /** The relay check results, when checks were configured and ran. */
   checks?: CheckResult[];
   elapsedMs: number;
-  /** Relay leases that did not finish within 10 minutes of stopping Pi. */
+  /** Relay leases that had not finished 10 minutes after the last run ended, when Pi was stopped. */
   unfinishedLeases: string[];
   log: (line: string) => void;
 }
@@ -125,7 +125,7 @@ export async function delegate(input: DelegationInput): Promise<DelegationResult
   await stopPi(child, { unfinished, leaseWaitMs: 10 * 60_000, exitGraceMs: 30_000, pollMs: 5000 });
   writeFileSync(join(environment.artifacts, "stdout.jsonl"), environment.redact(stdout));
   writeFileSync(join(environment.artifacts, "stderr.log"), environment.redact(stderr));
-  log(unfinished().length ? `Relay leases not finished within 10 minutes of stopping Pi: ${unfinished().join(", ")}.` : `Every relay lease was finished (${leases().length}).`);
+  log(unfinished().length ? `Relay leases not finished within 10 minutes, when Pi was stopped: ${unfinished().join(", ")}.` : `Every relay lease was finished (${leases().length}).`);
   if (existsSync(evidence)) cpSync(evidence, join(environment.artifacts, "relay-evidence"), { recursive: true });
   const all = runs();
   writeFileSync(join(environment.artifacts, "runs.json"), environment.redact(JSON.stringify(all, null, 2)));

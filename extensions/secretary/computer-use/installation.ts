@@ -35,7 +35,7 @@ export interface ComputerUseInstallOptions {
 export function createBackend(config: ComputerUseConfiguration, cwd: string, telemetry?: Telemetry): ExecutionBackend {
   if (config.backend === "local") return new LocalDriverBackend({ run: cuaDriverRunner(config.localDriverPath), maxTreeNodes: config.maxTreeNodes, foregroundDelivery: config.foregroundDelivery, frontmostPid: lsappinfoFrontmost });
   if (config.backend === "relay") {
-    return new RelayBackend({ connect: stdioRelayConnect({ command: config.relayCommand, cwd }), image: config.relayImage!, ...(config.relayEnv ? { env: config.relayEnv } : {}),
+    return new RelayBackend({ connect: stdioRelayConnect({ command: config.relayCommand, cwd, ...(telemetry ? { stderrLog: join(telemetry.root, "relay-server.log") } : {}) }), image: config.relayImage!, ...(config.relayEnv ? { env: config.relayEnv } : {}),
       ttlHours: config.relayTtlHours, prepare: config.relayPrepare,
       ...(config.relayCheck.length ? { check: config.relayCheck, onCheck: async (results: CheckResult[]) => { await telemetry?.recordCheck(results); } } : {}), maxTreeNodes: config.maxTreeNodes, foregroundDelivery: config.foregroundDelivery, actionIntervalMs: config.settleMs });
   }

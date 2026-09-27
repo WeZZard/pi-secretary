@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
+import { dirname } from "node:path";
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { gunzipSync } from "node:zlib";
@@ -27,30 +29,44 @@ export type RelayConnect = () => Promise<RelayConnection>;
 
 /**
  * Starts one mcp-vm-relay server over standard input and output. The fresh session identifier
- * keeps this lease apart from the relay session of the parent's conversation.
+ * keeps this lease apart from the relay session of the parent's conversation. The server's
+ * standard error, which holds its operation events and failures, is appended to `stderrLog`. The
+ * server writes to the file itself, so the log keeps what it writes after Pi exits.
  */
-export function stdioRelayConnect(options: { command: string[]; cwd: string }): RelayConnect {
+export function stdioRelayConnect(options: { command: string[]; cwd: string; stderrLog?: string }): RelayConnect {
   return async () => {
     const [command, ...args] = options.command;
     const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
-    const transport = new StdioClientTransport({ command: command!, args, cwd: options.cwd, stderr: "ignore",
-      env: { ...env, MCP_VM_RELAY_SESSION: `secretary-computer-use-${randomUUID()}`, MCP_VM_RELAY_PROJECT: options.cwd } });
-    const client = new Client({ name: "secretary-computer-use", version: "1.0.0" });
-    // A first start may download the package, so it gets longer than a request.
-    await client.connect(transport, { timeout: 5 * 60_000 });
-    const pid = transport.pid;
-    const server = { ending: false };
-    if (pid !== null) liveServers.set(pid, server);
-    installExitHook();
-    return {
-      async call(tool, args, { timeoutMs, signal }) {
-        if (tool === "relay_finish" || tool === "relay_release") server.ending = true;
-        const result = await client.callTool({ name: tool, arguments: args }, undefined, { timeout: timeoutMs, signal });
-        const blocks = (result.content ?? []) as { type: string; text?: string }[];
-        return { text: blocks.find(block => block.type === "text")?.text ?? "", isError: result.isError === true };
-      },
-      close: async () => { try { await client.close(); } finally { if (pid !== null) liveServers.delete(pid); } },
-    };
+    const session = `secretary-computer-use-${randomUUID()}`;
+    let stderr: number | "ignore" = "ignore";
+    if (options.stderrLog) {
+      mkdirSync(dirname(options.stderrLog), { recursive: true });
+      stderr = openSync(options.stderrLog, "a");
+      writeSync(stderr, `--- ${new Date().toISOString()} relay server for session ${session}\n`);
+    }
+    try {
+      const transport = new StdioClientTransport({ command: command!, args, cwd: options.cwd, stderr,
+        env: { ...env, MCP_VM_RELAY_SESSION: session, MCP_VM_RELAY_PROJECT: options.cwd } });
+      const client = new Client({ name: "secretary-computer-use", version: "1.0.0" });
+      // A first start may download the package, so it gets longer than a request.
+      await client.connect(transport, { timeout: 5 * 60_000 });
+      const pid = transport.pid;
+      const server = { ending: false };
+      if (pid !== null) liveServers.set(pid, server);
+      installExitHook();
+      return {
+        async call(tool, args, { timeoutMs, signal }) {
+          if (tool === "relay_finish" || tool === "relay_release") server.ending = true;
+          const result = await client.callTool({ name: tool, arguments: args }, undefined, { timeout: timeoutMs, signal });
+          const blocks = (result.content ?? []) as { type: string; text?: string }[];
+          return { text: blocks.find(block => block.type === "text")?.text ?? "", isError: result.isError === true };
+        },
+        close: async () => { try { await client.close(); } finally { if (pid !== null) liveServers.delete(pid); } },
+      };
+    } finally {
+      // The server has its own copy of the descriptor.
+      if (typeof stderr === "number") closeSync(stderr);
+    }
   };
 }
 
@@ -259,8 +275,8 @@ export class RelaySession {
   }
 
   /**
-   * Delivers the evidence package and releases the machine. A failed `finish` keeps the lease, so
-   * the client then releases it without the package. With relay 0.4, `finish` pulled the whole
+   * Delivers the evidence package and releases the machine. A failed `finish`, whether it reports
+   * an error or throws, keeps the lease, so the client then releases it without the package. With relay 0.4, `finish` pulled the whole
    * guest recording in one transfer capped at 512 MiB, and two display screenshots per run passed
    * that cap in a 40-run check (research §15). The failure is still reported.
    */
@@ -286,9 +302,10 @@ export class RelaySession {
         }
         await Promise.resolve(this.#onCheck?.(results)).catch(() => undefined);
       }
-      const finished = await this.#call(connection, "relay_finish", {}, 15 * 60_000);
+      // A finish that throws, on a timeout or a closed connection, has not released the machine either.
+      const finished = await this.#call(connection, "relay_finish", {}, 15 * 60_000).catch((error: BackendError) => ({ text: error.message, isError: true }));
       if (!finished.isError) return;
-      const released = await this.#call(connection, "relay_release", {}, 5 * 60_000);
+      const released = await this.#call(connection, "relay_release", {}, 5 * 60_000).catch((error: BackendError) => ({ text: error.message, isError: true }));
       throw new BackendError("driver_failed", `relay finish failed, so the evidence package was not delivered: ${finished.text.slice(0, 300)}. `
         + (released.isError ? `Release also failed, and the machine remains until its lease expires: ${released.text.slice(0, 300)}` : "The machine was released."));
     } finally {
