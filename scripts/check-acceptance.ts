@@ -15,7 +15,8 @@ for (const name of readdirSync(root).filter(name => name.endsWith(".feature")).s
     const scenario = child.scenario;
     if (!scenario) continue;
     const tags = scenario.tags.map(tag => tag.name);
-    const scenarioIds = tags.filter(tag => tag.startsWith("@ACC-SA-"));
+    // Subagent scenarios are @ACC-SA-..; computer-use scenarios, which run live, are @ACC-CU-...
+    const scenarioIds = tags.filter(tag => tag.startsWith("@ACC-SA-") || tag.startsWith("@ACC-CU-"));
     if (scenarioIds.length !== 1 || ids.has(scenarioIds[0])) throw new Error(`${path}: duplicate or missing scenario identity`);
     ids.add(scenarioIds[0]);
     if (tags.filter(tag => tag === "@confirmed" || tag === "@proposed").length !== 1) throw new Error(`${path}: missing approval classification`);

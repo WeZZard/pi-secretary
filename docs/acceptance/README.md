@@ -18,7 +18,7 @@
 - The `@proposed` tag identifies a scenario that depends on a detailed policy proposed in the design. These scenarios must not be treated as additional user approvals.
 - Every scenario has exactly one of `@confirmed` or `@proposed`.
 - The `@SA-01` through `@SA-13` tags identify the corresponding requirement where covered by these specifications.
-- The `@ACC-SA-...` tags provide stable scenario identifiers for review and later automation.
+- The `@ACC-SA-...` tags provide stable scenario identifiers for review and later automation. Computer-use scenarios use `@ACC-CU-...`, and the `@CU-01` through `@CU-07` tags identify the computer-use requirement they cover.
 - The `@ui`, `@concurrency`, `@recovery`, and `@compatibility` tags classify scenarios without changing their approval status.
 - `npm run test:acceptance` executes the compiled scenarios and all Examples rows through the scenario-specific adapters in `tests/acceptance/`.
 - The adapters exercise production services, installed tools, real SDK sessions, Git repositories, and UI state/effect boundaries as appropriate. They are not a generic natural-language step interpreter.
@@ -41,6 +41,7 @@
 | [goal-integration.feature](goal-integration.feature) | SA-08. | The scenarios cover attributed usage, automatic goal authority, completion, and continuation. |
 | [goal-agent-composition.feature](goal-agent-composition.feature) | SA-08. | The scenarios cover fresh delegated recovery while a goal remains blocked and standalone delegation without goal management. |
 | [output-and-headless.feature](output-and-headless.feature) | SA-01, SA-02, and SA-09. | The scenarios cover output retrieval, truncation, waiting, and behavior without a terminal. |
+| [computer-use.feature](computer-use.feature) | CU-01 to CU-07, and decision PS-D11. | The scenarios cover a completed delegated task, a result already on screen, a missing control, a refused destructive step, an application that is not open, an unavailable decision service, the main agent without computer tools, and cancellation. They run live in relay machines through `scripts/computer-use/acceptance-live.ts`, not through `npm run test:acceptance`; results are in the [computer-use verification report](../testing/computer-use-verification.md). |
 
 ## 4. Scenario Conventions
 
