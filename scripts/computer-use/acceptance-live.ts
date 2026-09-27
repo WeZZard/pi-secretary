@@ -30,6 +30,7 @@ for (const id of ids) {
   const started = new Date().toISOString();
   const result = await delegate({ name: `acceptance-${id.toLowerCase()}`, task: scenario.task, prepare: scenario.prepare, check: scenario.check,
     modelId: flags.get("model") ?? "qwen3.8-27b", executorUrl: scenario.executorUrl ?? flags.get("executor") ?? "http://jev.home.arpa", timeoutMs: 20 * 60_000,
+    ...(scenario.duringRun ? { duringRun: scenario.duringRun } : {}),
     ...(flags.has("relay-server") ? { relayCommand: [process.execPath, flags.get("relay-server")!] } : {}) });
   const facts = collectFacts(result.artifacts, result.runs as RunRecord[], result.checks);
   const then = [...scenario.then(facts), ...lifecycleThen(facts)];

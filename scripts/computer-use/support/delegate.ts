@@ -28,6 +28,8 @@ export interface DelegationInput {
   timeoutMs?: number;
   /** The relay server command; the published package by default. */
   relayCommand?: string[];
+  /** A message sent to the parent, as a user would, once a child run has been running for `afterMs`. */
+  duringRun?: { afterMs: number; message: string };
 }
 
 export interface Run { status?: string; background?: boolean; output?: string; subagentType?: string }
@@ -105,11 +107,19 @@ export async function delegate(input: DelegationInput): Promise<DelegationResult
     const dir = join(root, "checks");
     return existsSync(dir) ? readdirSync(dir).map(name => join(dir, name)) : [];
   });
-  let finishedAt: number | undefined, endsAtFinish = 0, lastStatus = "";
+  let finishedAt: number | undefined, endsAtFinish = 0, lastStatus = "", runningSince: number | undefined, sentDuringRun = false;
   while (Date.now() - started < (input.timeoutMs ?? 20 * 60_000)) {
     await wait(5000);
     // The parent may delegate again after a run ends, so every run must end, not only the first.
     const all = runs();
+    if (input.duringRun && !sentDuringRun && all.some(run => run.status === "running")) {
+      runningSince ??= Date.now();
+      if (Date.now() - runningSince >= input.duringRun.afterMs) {
+        child.stdin.write(JSON.stringify({ id: "during-run", type: "prompt", message: input.duringRun.message }) + "\n");
+        sentDuringRun = true;
+        log(`${Math.round((Date.now() - started) / 1000)}s sent the parent: ${input.duringRun.message}`);
+      }
+    }
     const status = all.map(run => run.status ?? "none").join(", ") || "none";
     if (status !== lastStatus) { log(`${Math.round((Date.now() - started) / 1000)}s run status: ${status}`); lastStatus = status; }
     const ended = all.length > 0 && all.every(run => TERMINAL.includes(run.status ?? ""));
