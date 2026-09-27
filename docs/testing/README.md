@@ -29,6 +29,7 @@ The default `npm test` and `npm run verify` commands do not include the paid-pro
 - Read the [acceptance specification index](../../doc/acceptance/README.md) for scenario identities, source-hash checks, and approval tags.
 - Follow the [test artifact policy](test-artifacts.md) when recording, sharing, retaining, or deleting generated output.
 - Read the [verification report](subagent-verification.md) for the tested implementation baseline and known gaps.
+- Computer use has its own live acceptance: `scripts/computer-use/acceptance-live.ts` runs the scenarios of [computer-use.feature](../acceptance/computer-use.feature) in relay machines with the real planner and executor, and the [computer-use verification report](computer-use-verification.md) records the dated results and limits.
 
 ## Request-context verification
 

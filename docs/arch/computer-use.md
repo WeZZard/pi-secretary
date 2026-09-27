@@ -779,7 +779,7 @@ Step wall time includes the relay's screenshot captures, so it must not be compa
 - Standalone scripts ran the harness modules once each in a relay virtual machine, with Pi stubbed, hand-written plans and the live executor ([research Section 10](../research/computer-use-s0-s1.md#10-standalone-script-checks-in-a-macos-virtual-machine-2026-09-23)).
 - These script runs are not live checks. A live check counts only when Pi loads the extension and runs the task.
 - Pi ran three Calculator tasks and two TextEdit tasks in a relay virtual machine, each once, with the local driver backend inside the guest ([research Sections 11](../research/computer-use-s0-s1.md#11-first-checks-through-pi-2026-09-23) and [12](../research/computer-use-s0-s1.md#12-fix-checks-through-pi-2026-09-23)). The step pictures from those runs have not been reviewed by a person.
-- Live acceptance with the relay client has not been executed, because that backend is not built. The remaining claims of this document are design, not verified behavior.
+- Live acceptance ran on 2026-09-27: the eight scenarios of `docs/acceptance/computer-use.feature`, each once or twice, through Pi, the real planner and executor, and relay machines ([verification report](../testing/computer-use-verification.md)). Seven scenarios passed every Then step. ACC-CU-04 could not be shown live, because the agent could not close a TextEdit window and no step was judged destructive; its refusal is shown by the harness tests. The relay was an unreleased local build, and nobody has reviewed the evidence.
 
 ## 15. References
 
