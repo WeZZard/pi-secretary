@@ -241,6 +241,23 @@ test("the relay server's standard error is kept in a log file", async t => {
   assert.match(await readFile(stderrLog, "utf8").catch(() => ""), /"event":"operation-failed","leaseRetained":true/);
 });
 
+test("a start cancelled during acquisition still sends a release, because a cancelled acquire's result never reaches the client", async () => {
+  // The relay keeps a lease that arrives after the cancel (its R4), and the MCP SDK drops the result of a cancelled request.
+  const actions: string[] = [];
+  const controller = new AbortController();
+  const connection: RelayConnection = {
+    async call(tool, _args, { signal }) {
+      actions.push(tool);
+      if (tool === "relay_acquire") { controller.abort(); signal?.throwIfAborted(); }
+      return { text: "{}", isError: false };
+    },
+    async close() { actions.push("closed"); },
+  };
+  const backend = new RelayBackend({ connect: async () => connection, image: "macos26", ttlHours: 1, maxTreeNodes: 2000, foregroundDelivery: false, actionIntervalMs: 0 });
+  await assert.rejects(backend.readWindow({ app: "Finder" }, { screenshot: false, signal: controller.signal }));
+  assert.deepEqual(actions, ["relay_acquire", "relay_release", "closed"]);
+});
+
 test("checks run on the leased machine before the finish, and a failing check is recorded without stopping the others (evaluation design §3)", async () => {
   const actions: string[] = [];
   const connection: RelayConnection = {

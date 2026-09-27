@@ -98,3 +98,61 @@ test("a parent delegates a desktop task to the computer-use template, which runs
   assert.equal(run()!.status, "succeeded");
   assert.match(run()!.output, /Verified by code: "Clear" is on screen/, "The parent receives the child's report");
 });
+
+/**
+ * A backend whose close takes longer than the subagent runner's 5 s shutdown bound, as a relay
+ * finish does (about a minute). It records when a close of a used backend completed.
+ */
+class SlowCloseBackend extends FakeBackend {
+  closedAfterUse?: number;
+  override async close(): Promise<void> {
+    const used = this.reads.length > 0;
+    await new Promise(done => setTimeout(done, 5500));
+    await super.close();
+    if (used) this.closedAfterUse ??= Date.now();
+  }
+}
+
+test("a computer-use run ends only after its backend is closed, so its machine is released before the run is reported (PS-D11)", async t => {
+  const window = calculator(["All Clear", "7"]);
+  const backend = new SlowCloseBackend({ Calculator: [window, window] });
+  const telemetryRoot = await mkdtemp(join(tmpdir(), "secretary-cu-"));
+  (globalThis as { computerUseDelegationFixture?: unknown }).computerUseDelegationFixture = { backend, executor, root: telemetryRoot };
+  t.after(async () => {
+    delete (globalThis as { computerUseDelegationFixture?: unknown }).computerUseDelegationFixture;
+    await rm(telemetryRoot, { recursive: true, force: true });
+  });
+  const h = await discoverySession(t, {
+    mode: "rpc",
+    modelIds: ["main", "planner"],
+    setup: async (_root, agentDir) => {
+      await mkdir(join(agentDir, "agents"));
+      await writeFile(join(agentDir, "agents", "computer-use.md"), await readFile(template, "utf8"));
+      await mkdir(join(agentDir, "extensions"));
+      await writeFile(join(agentDir, "extensions", "computer-use-fixture.ts"), `export { default } from ${JSON.stringify(fixtureModule)};\n`);
+      await writeFile(join(agentDir, "secretary.json"), JSON.stringify({
+        agents: { modelFallbackLists: { "computer-use": ["discovery-test/planner"] }, subagentModels: { "computer-use": "computer-use" } },
+        computerUse: { backend: "local", allowLocalDesktop: true, executorUrl: "http://127.0.0.1:1/never" },
+      }));
+    },
+    extension: delegationFixtureExtension,
+    respond: async (_context, index) => index === 0
+      ? [{ type: "toolCall", name: "Agent", id: "launch", arguments: {
+        subagent_type: "computer-use", description: "Read Calculator", prompt: "Read the Calculator window.", run_in_background: true } }]
+      : [{ type: "text", text: "Delegated." }],
+    respondChild: async (_context, index) => index === 0
+      ? [{ type: "toolCall", name: "computer_observe", id: "observe", arguments: { app: "Calculator", window_title: "Calculator" } }]
+      : [{ type: "text", text: "Completed. The window shows All Clear." }],
+  });
+  await h.session.prompt("Read the calculator.");
+  const repo = new AgentRepository(h.engine.db.connection);
+  const run = () => repo.runs(h.manager.getSessionId())[0];
+  const deadline = Date.now() + 15_000;
+  while (!["succeeded", "failed", "cancelled", "partial"].includes(run()?.status ?? "")) {
+    assert.ok(Date.now() < deadline, "the computer-use run did not finish");
+    await new Promise(done => setTimeout(done, 5));
+  }
+  const endedAt = Date.now();
+  assert.equal(run()!.status, "succeeded");
+  assert.ok(backend.closedAfterUse !== undefined && backend.closedAfterUse <= endedAt, "The backend was closed before the run was reported as ended");
+});
