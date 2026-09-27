@@ -6,8 +6,10 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { FakeBackend } from "../../extensions/secretary/computer-use/backend/fake-backend.ts";
 import { installComputerUse } from "../../extensions/secretary/computer-use/installation.ts";
-import { runInChildSession } from "../../extensions/secretary/agents/child-context.ts";
 import { textEditRead } from "./fixtures/trees.ts";
+
+/** Only a delegated session registers the computer-use tools (decision PS-D11). */
+const delegatedInstall = (pi: ExtensionAPI, options: Parameters<typeof installComputerUse>[1]) => installComputerUse(pi, { ...options, delegated: true });
 
 function host(t: TestContext, config: unknown, existingTools: string[] = []) {
   const root = mkdtempSync(join(tmpdir(), "secretary-cu-install-"));
@@ -31,7 +33,7 @@ function host(t: TestContext, config: unknown, existingTools: string[] = []) {
 
 test("nothing is registered without a configured backend", async (t) => {
   const h = host(t, undefined);
-  installComputerUse(h.pi, { root: h.root, agentDir: () => h.agentDir });
+  delegatedInstall(h.pi, { root: h.root, agentDir: () => h.agentDir });
   await h.emit("session_start");
   assert.equal(h.tools.length, 0);
   assert.deepEqual(h.notices, []);
@@ -40,7 +42,7 @@ test("nothing is registered without a configured backend", async (t) => {
 test("a configured backend registers computer_observe once, and shutdown closes the backend", async (t) => {
   const h = host(t, { computerUse: { backend: "local", allowLocalDesktop: true } });
   const backends: FakeBackend[] = [];
-  installComputerUse(h.pi, { root: h.root, agentDir: () => h.agentDir, backendFactory: () => {
+  delegatedInstall(h.pi, { root: h.root, agentDir: () => h.agentDir, backendFactory: () => {
     const backend = new FakeBackend({ TextEdit: [textEditRead()] });
     backends.push(backend);
     return backend;
@@ -58,13 +60,13 @@ test("a configured backend registers computer_observe once, and shutdown closes 
 
 test("invalid configuration and a tool-name collision disable computer use with a diagnostic", async (t) => {
   const invalid = host(t, { computerUse: { backend: "local" } });
-  installComputerUse(invalid.pi, { root: invalid.root, agentDir: () => invalid.agentDir });
+  delegatedInstall(invalid.pi, { root: invalid.root, agentDir: () => invalid.agentDir });
   await invalid.emit("session_start");
   assert.equal(invalid.tools.length, 0);
   assert.match(invalid.notices[0]!, /computer use is disabled: .*allowLocalDesktop/);
 
   const collision = host(t, { computerUse: { backend: "local", allowLocalDesktop: true } }, ["computer_observe"]);
-  installComputerUse(collision.pi, { root: collision.root, agentDir: () => collision.agentDir, backendFactory: () => new FakeBackend({}) });
+  delegatedInstall(collision.pi, { root: collision.root, agentDir: () => collision.agentDir, backendFactory: () => new FakeBackend({}) });
   await collision.emit("session_start");
   assert.equal(collision.tools.length, 0);
   assert.match(collision.notices[0]!, /another extension provides computer_observe/);
@@ -72,7 +74,7 @@ test("invalid configuration and a tool-name collision disable computer use with 
 
 test("computer_run_plan is registered only when the executor is configured", async (t) => {
   const h = host(t, { computerUse: { backend: "local", allowLocalDesktop: true, executorUrl: "http://jev.home.arpa" } });
-  installComputerUse(h.pi, { root: h.root, agentDir: () => h.agentDir, backendFactory: () => new FakeBackend({}),
+  delegatedInstall(h.pi, { root: h.root, agentDir: () => h.agentDir, backendFactory: () => new FakeBackend({}),
     executorFactory: () => ({ decide: async () => { throw new Error("unused"); } }) });
   await h.emit("session_start");
   assert.deepEqual(h.tools.map(tool => tool.name), ["computer_observe", "computer_run_plan"]);
@@ -85,7 +87,7 @@ test("the start check accepts our previous plan's last read only when that plan 
   // Reads in order: observe A; plan 1 before and after its press; plan 2 before and after; observe B; plan 3's first read.
   const backend = new FakeBackend({ Form: [read("Submit"), read("Submit"), read("Done"), read("Done"), read("Submit"), read("Submit"), read("Done")] });
   const h = host(t, { computerUse: { backend: "local", allowLocalDesktop: true, executorUrl: "http://jev.home.arpa", settleMs: 0 } });
-  installComputerUse(h.pi, { root: h.root, agentDir: () => h.agentDir, backendFactory: () => backend,
+  delegatedInstall(h.pi, { root: h.root, agentDir: () => h.agentDir, backendFactory: () => backend,
     executorFactory: () => ({ decide: async () => ({ roundTripMs: 1, answers: { element_1: { choice: "A", confidence: 0.99 }, operation: { choice: "click", confidence: 0.99 }, risk: { choice: "safe", confidence: 0.99 } } }) }) });
   await h.emit("session_start");
   const [observeTool, runPlanTool] = h.tools;
@@ -107,15 +109,15 @@ test("the main session registers no computer tools and creates no backend, and o
   let created = 0;
   const parent = host(t, config);
   const offer = installComputerUse(parent.pi, { root: parent.root, agentDir: () => parent.agentDir,
-    backendFactory: () => { created++; return new FakeBackend({}); }, executorFactory }) as unknown as { childTools?: (tools: readonly string[]) => readonly string[] } | undefined;
+    backendFactory: () => { created++; return new FakeBackend({}); }, executorFactory });
   await parent.emit("session_start");
   assert.deepEqual(parent.tools.map(tool => tool.name), [], "The main agent cannot observe or act, so it cannot acquire a machine");
   assert.equal(created, 0, "The main session creates no backend");
-  assert.deepEqual(offer?.childTools?.(["read"]), ["read", "computer_observe", "computer_run_plan"], "Delegated agents may still be given the tools");
+  assert.deepEqual(offer.childTools(["read"]), ["read", "computer_observe", "computer_run_plan"], "Delegated agents may still be given the tools");
 
   const child = host(t, config);
-  runInChildSession({ agentId: "computer-use-1", depth: 1 }, () => installComputerUse(child.pi, { root: child.root, agentDir: () => child.agentDir,
-    backendFactory: () => new FakeBackend({}), executorFactory }));
+  installComputerUse(child.pi, { root: child.root, agentDir: () => child.agentDir, delegated: true,
+    backendFactory: () => new FakeBackend({}), executorFactory });
   await child.emit("session_start");
   assert.deepEqual(child.tools.map(tool => tool.name), ["computer_observe", "computer_run_plan"], "A delegated session registers the tools");
 });

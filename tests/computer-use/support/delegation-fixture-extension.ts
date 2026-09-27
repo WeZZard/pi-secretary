@@ -3,6 +3,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { ExecutionBackend } from "../../../extensions/secretary/computer-use/backend/backend.ts";
 import type { Executor } from "../../../extensions/secretary/computer-use/harness.ts";
 import { installComputerUse } from "../../../extensions/secretary/computer-use/installation.ts";
+import { inChildSession } from "../../../extensions/secretary/agents/child-context.ts";
 
 /**
  * Installs computer use with a test's fakes, and a stand-in for pi-mcp-adapter's direct `relay`
@@ -14,7 +15,7 @@ export interface DelegationFixture { backend: ExecutionBackend; executor: Execut
 export default function delegationFixtureExtension(pi: ExtensionAPI) {
   const fixture = (globalThis as { computerUseDelegationFixture?: DelegationFixture }).computerUseDelegationFixture;
   if (!fixture) throw new Error("the delegation fixture is not set");
-  const computerUse = installComputerUse(pi, { root: fixture.root, backendFactory: () => fixture.backend, executorFactory: () => fixture.executor });
+  const computerUse = installComputerUse(pi, { root: fixture.root, delegated: inChildSession(), backendFactory: () => fixture.backend, executorFactory: () => fixture.executor });
   pi.registerTool({ name: "relay", label: "Relay", description: "Model-facing VM relay.", parameters: Type.Object({}),
     async execute() { throw new Error("a computer-use child must not reach the relay tool"); } });
   return computerUse;

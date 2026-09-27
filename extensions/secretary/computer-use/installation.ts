@@ -30,6 +30,8 @@ export interface ComputerUseInstallOptions {
   /** Test seam: replaces the executor client. */
   executorFactory?: (config: ComputerUseConfiguration) => Executor;
   agentDir?: () => string;
+  /** Whether this session runs a delegated agent. Only a delegated session registers the tools (decision PS-D11). */
+  delegated?: boolean;
 }
 
 export function createBackend(config: ComputerUseConfiguration, cwd: string, telemetry?: Telemetry): ExecutionBackend {
@@ -42,7 +44,15 @@ export function createBackend(config: ComputerUseConfiguration, cwd: string, tel
   throw new Error(`computerUse.backend ${config.backend} has no execution backend`);
 }
 
-export function installComputerUse(pi: ExtensionAPI, options: ComputerUseInstallOptions): void {
+/** The tools the main session offers to delegated agents, which alone register them (decision PS-D11). */
+export interface ComputerUseInstallation { childTools: (tools: readonly string[]) => readonly string[] }
+
+export function installComputerUse(pi: ExtensionAPI, options: ComputerUseInstallOptions): ComputerUseInstallation {
+  // Decision PS-D11: all computer use is delegated, and the delegated agent owns its machine. The
+  // main session registers no tools and creates no backend, so it cannot acquire a machine; it only
+  // offers the tool names, because a child's tools are the parent's tools that its definition allows.
+  const delegated = options.delegated === true;
+  let offered: string[] = [];
   let ctx: ExtensionContext | undefined;
   let backend: ExecutionBackend | undefined;
   let config: ComputerUseConfiguration | undefined;
@@ -63,10 +73,14 @@ export function installComputerUse(pi: ExtensionAPI, options: ComputerUseInstall
       config = loadComputerUseConfiguration(context.cwd, (options.agentDir ?? getAgentDir)(), context.isProjectTrusted());
     } catch (error) {
       config = undefined;
+      offered = [];
       diagnostic(`Secretary computer use is disabled: ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
+    offered = [];
     if (!observationAvailable(config)) return;
+    offered = planExecutionAvailable(config) ? ["computer_observe", "computer_run_plan"] : ["computer_observe"];
+    if (!delegated) return;
     try { await backend?.close(); }
     catch (error) { diagnostic(`Secretary computer use: ${error instanceof Error ? error.message : String(error)}`); }
     const session = createHash("sha256").update(context.sessionManager.getSessionId()).digest("hex");
@@ -136,4 +150,5 @@ export function installComputerUse(pi: ExtensionAPI, options: ComputerUseInstall
     await closeBackend();
     backend = undefined;
   });
+  return { childTools: tools => delegated ? tools : [...tools, ...offered.filter(name => !tools.includes(name))] };
 }

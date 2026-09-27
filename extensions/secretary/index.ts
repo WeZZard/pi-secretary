@@ -13,19 +13,25 @@ import { installAgentSupport } from "./agents/installation.ts";
 import { RequestContextComposer } from "./context/index.ts";
 import { composeGoalAgents } from "./composition/goal-agents.ts";
 import { installComputerUse } from "./computer-use/installation.ts";
+import { inChildSession } from "./agents/child-context.ts";
 
 export default function secretaryExtension(pi: ExtensionAPI): void {
   // Child sessions install too (SA-12): the delegation tools are gated by nesting depth at
   // session_start, and the session tool allowlist keeps goal tools out of delegated work.
   const dir = process.env.PI_SECRETARY_DB_DIR ?? path.join(process.env.HOME ?? "", ".pi", "secretary");
   mkdirSync(dir, { recursive: true });
-  installSecretary(pi, new GoalEngine({ dbPath: path.join(dir, "pi-secretary-goals.sqlite"), enabled: true }), { agentsRoot: dir });
-  // Independent capability (docs/arch/computer-use.md §4.2); it registers nothing unless configured.
-  installComputerUse(pi, { root: dir });
+  let computerUse: ReturnType<typeof installComputerUse> | undefined;
+  installSecretary(pi, new GoalEngine({ dbPath: path.join(dir, "pi-secretary-goals.sqlite"), enabled: true }), { agentsRoot: dir,
+    childTools: tools => computerUse?.childTools(tools) ?? tools });
+  // Independent capability (docs/arch/computer-use.md §4.2); it registers nothing unless configured,
+  // and only in delegated sessions (decision PS-D11).
+  // A delegated session is created inside the child-session marker, so it is read at installation.
+  computerUse = installComputerUse(pi, { root: dir, delegated: inChildSession() });
 }
 
 /** Injectable storage permits tests to exercise the actual installer without touching user goals. */
-export function installSecretary(pi: ExtensionAPI, engine: GoalEngine, options: { agentsRoot?: string } = {}): GoalSynchronization {
+export function installSecretary(pi: ExtensionAPI, engine: GoalEngine,
+  options: { agentsRoot?: string; /** Tools another capability offers to delegated agents. */ childTools?: (tools: readonly string[]) => readonly string[] } = {}): GoalSynchronization {
   const ui = registerGoalUI(pi, engine);
   const sync = new GoalSynchronization(pi, engine, ui);
   let composition: ReturnType<typeof composeGoalAgents> | undefined;
@@ -61,7 +67,7 @@ export function installSecretary(pi: ExtensionAPI, engine: GoalEngine, options: 
   composition = options.agentsRoot ? composeGoalAgents(pi, engine, sync) : undefined;
   const agents = options.agentsRoot && composition ? installAgentSupport(composition.api, {
     root: options.agentsRoot, composer, repository: composition.repository,
-    childTools: composition.childTools, events: composition.events,
+    childTools: tools => composition!.childTools(options.childTools?.(tools) ?? tools), events: composition.events,
   }) : undefined;
   if (agents) composition!.attach(agents.service);
   let activationEpoch = 0;
