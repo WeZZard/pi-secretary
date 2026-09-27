@@ -20,6 +20,8 @@ mkdirSync(workspace, { recursive: true });
 if (process.env.SCRIPTED_RELAY_PID_FILE) writeFileSync(process.env.SCRIPTED_RELAY_PID_FILE, String(process.pid));
 // The real server keeps its machine when its input closes, waiting for an explicit finish or release.
 if (process.env.SCRIPTED_RELAY_OUTLIVE_INPUT) setInterval(() => {}, 1000);
+// The real server writes its operation events and failures to standard error.
+if (process.env.SCRIPTED_RELAY_STDERR) process.stderr.write(`${process.env.SCRIPTED_RELAY_STDERR}\n`);
 
 const executed = (execution: Record<string, unknown>) =>
   `${JSON.stringify({ imageDelivery: { status: "attached" }, executionFailed: false })}\n${JSON.stringify({ executionId: "e", ...execution }, null, 2)}`;

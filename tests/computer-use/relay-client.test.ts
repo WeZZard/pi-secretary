@@ -209,6 +209,38 @@ test("a failed finish releases the machine and reports that the package was not 
   assert.deepEqual(actions.slice(-3), ["relay_finish", "relay_release", "closed"]);
 });
 
+test("a finish that throws, as on a timeout or a closed connection, still releases the machine", async () => {
+  const actions: string[] = [];
+  const connection: RelayConnection = {
+    async call(tool, args) {
+      if (args.diagnostic) { actions.push(DAEMON_WAIT); return { text: COMPLETED, isError: false }; }
+      actions.push(tool);
+      if (tool === "relay_finish") throw new Error("MCP error -32001: Request timed out");
+      if (RUN_TOOLS.has(tool)) return { text: COMPLETED, isError: false };
+      return { text: "{}", isError: false };
+    },
+    async close() { actions.push("closed"); },
+  };
+  const backend = new RelayBackend({ connect: async () => connection, image: "macos26", ttlHours: 1, maxTreeNodes: 2000, foregroundDelivery: false, actionIntervalMs: 0 });
+  await backend.readWindow({ app: "Finder" }, { screenshot: false }).catch(() => undefined);
+  await assert.rejects(backend.close(), /evidence package was not delivered: relay_finish failed: .*Request timed out.*The machine was released\./);
+  assert.deepEqual(actions.slice(-3), ["relay_finish", "relay_release", "closed"]);
+});
+
+test("the relay server's standard error is kept in a log file", async t => {
+  const root = await mkdtemp(join(tmpdir(), "secretary-relay-stderr-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const env = { SCRIPTED_RELAY_WORKSPACE: join(root, "workspace"), SCRIPTED_RELAY_LOG: join(root, "calls.jsonl"), SCRIPTED_RELAY_DRIVER: "/bin/false",
+    SCRIPTED_RELAY_STDERR: "{\"event\":\"operation-failed\",\"leaseRetained\":true}" };
+  Object.assign(process.env, env);
+  t.after(() => { for (const name of Object.keys(env)) delete process.env[name]; });
+  const stderrLog = join(root, "relay", "relay-server.log");
+  const connection = await stdioRelayConnect({ command: [process.execPath, "--experimental-strip-types", "--no-warnings", server], cwd: root, stderrLog })();
+  await connection.call("relay_acquire", { task: "computer-use", image: "macos26", ttlHours: 1 }, { timeoutMs: 10_000 });
+  await connection.close();
+  assert.match(await readFile(stderrLog, "utf8").catch(() => ""), /"event":"operation-failed","leaseRetained":true/);
+});
+
 test("checks run on the leased machine before the finish, and a failing check is recorded without stopping the others (evaluation design §3)", async () => {
   const actions: string[] = [];
   const connection: RelayConnection = {

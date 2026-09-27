@@ -14,6 +14,7 @@ import { useGlobalLiteLLM } from "../../../tests/e2e/environment/global-litellm.
 import { DEFAULT_RELAY_COMMAND } from "../../../extensions/secretary/computer-use/configuration.ts";
 import type { CheckResult } from "../../../extensions/secretary/computer-use/backend/relay-client.ts";
 import { writeRunReport } from "../../../extensions/secretary/computer-use/report.ts";
+import { stopPi } from "./stop-pi.ts";
 
 export interface DelegationInput {
   /** Artifact directory name under test-results/e2e/. */
@@ -117,17 +118,13 @@ export async function delegate(input: DelegationInput): Promise<DelegationResult
     const checked = !input.check?.length || checkRecords().length > 0 || Date.now() - finishedAt > 6 * 60_000;
     if (reported && checked) break;
   }
-  child.stdin.end();
-  child.kill("SIGTERM");
-  await wait(3000);
-  writeFileSync(join(environment.artifacts, "stdout.jsonl"), environment.redact(stdout));
-  writeFileSync(join(environment.artifacts, "stderr.log"), environment.redact(stderr));
   const evidence = join(environment.project, "relay-evidence");
-  // The relay server finishes a lease after the agent's session ends, which can outlast Pi by minutes.
   // A lease that acquired a machine has the relay's host configuration; a refused acquisition has only events.
   const leases = () => existsSync(evidence) ? readdirSync(evidence).filter(name => existsSync(join(evidence, name, "host", "mcp-host-config.json"))) : [];
   const unfinished = () => leases().filter(name => !existsSync(join(evidence, `${name}.lifecycle.json`)));
-  for (const deadline = Date.now() + 10 * 60_000; unfinished().length && Date.now() < deadline;) await wait(5000);
+  await stopPi(child, { unfinished, leaseWaitMs: 10 * 60_000, exitGraceMs: 30_000, pollMs: 5000 });
+  writeFileSync(join(environment.artifacts, "stdout.jsonl"), environment.redact(stdout));
+  writeFileSync(join(environment.artifacts, "stderr.log"), environment.redact(stderr));
   log(unfinished().length ? `Relay leases not finished within 10 minutes of stopping Pi: ${unfinished().join(", ")}.` : `Every relay lease was finished (${leases().length}).`);
   if (existsSync(evidence)) cpSync(evidence, join(environment.artifacts, "relay-evidence"), { recursive: true });
   const all = runs();
