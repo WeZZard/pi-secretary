@@ -120,12 +120,20 @@ export function installComputerUse(pi: ExtensionAPI, options: ComputerUseInstall
     }));
   });
 
-  pi.on("session_shutdown", async () => {
+  const closeBackend = async () => {
     try { await backend?.close(); }
     catch (error) { diagnostic(`Secretary computer use: ${error instanceof Error ? error.message : String(error)}`); }
-    backend = undefined;
+    // Observations name windows of the machine that was just released.
     observations.clear();
     observedAt.clear();
     lastPlanRead = undefined;
+  };
+  // Decision PS-D11: the agent that acquired the machine releases it before its run ends. Pi awaits
+  // this handler before the run settles, so a child run is not reported as ended, and a cancelled or
+  // stopped run does not finish stopping, until the lease is finished or released.
+  pi.on("agent_settled", closeBackend);
+  pi.on("session_shutdown", async () => {
+    await closeBackend();
+    backend = undefined;
   });
 }

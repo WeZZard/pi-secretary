@@ -19,7 +19,7 @@ function fixture(t: TestContext) {
 
 test("configuration defaults, trusted overlay, and nonmutation", (t) => {
   const { cwd, agentDir, put } = fixture(t);
-  assert.deepEqual(loadAgentConfiguration(cwd, agentDir, false), { modelFallbackLists: {}, subagentModels: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, maxNestingDepth: 3, ui: { fleetViewPlacement: "belowEditor", fleetKeybindings: {} } });
+  assert.deepEqual(loadAgentConfiguration(cwd, agentDir, false), { modelFallbackLists: {}, subagentModels: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 600000, maxNestingDepth: 3, ui: { fleetViewPlacement: "belowEditor", fleetKeybindings: {} } });
   const global = join(agentDir, "secretary.json"), project = join(cwd, CONFIG_DIR_NAME, "secretary.json");
   const content = JSON.stringify({ unrelated: true, agents: { modelFallbackLists: { fast: ["p/one", "p/two"], cheap: [] }, maxConcurrent: 2 } });
   put(global, content);

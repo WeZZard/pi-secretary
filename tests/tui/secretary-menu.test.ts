@@ -337,7 +337,7 @@ test("headless modes receive the configuration path and a list summary as text",
   assert.match(text, /empty: \(no models\)/);
   assert.match(text, /does not accept edits|interactive session/, "Headless output does not accept edits");
   assert.match(text, /Max concurrent: 4/);
-  assert.match(text, /Shutdown timeout: 5000 ms/);
+  assert.match(text, /Shutdown timeout: 600000 ms/);
   const none = fixture(t);
   assert.match(headlessSecretaryConfig(none.agentDir), /No model fallback lists configured/);
   const broken = fixture(t, { seedFile: '{"agents":{"modelFallbackLists":{"bad name":[]}}}' });
@@ -390,7 +390,7 @@ test("the runtime limits page shows the effective values and the user-global bou
   assert.match(f.view(), /Edits the user-global configuration only\./);
   assert.match(f.view(), /Max Concurrent {2}4/);
   assert.match(f.view(), /Max Queued {2}16/);
-  assert.match(f.view(), /Shutdown Timeout {2}5000 ms/);
+  assert.match(f.view(), /Shutdown Timeout {2}600000 ms/);
   assert.match(f.view(), /Max Nesting Depth {2}3/);
 });
 

@@ -46,7 +46,7 @@ test("layout baseline: runtime limits", (t) => {
   menu.handleInput("\x1b[B");
   menu.handleInput("\x1b[B");
   menu.handleInput("\x1b[C");
-  assert.equal(normalize(menu.render(60)), "────────────────────────────────────────────────────────────\n\nSecretary › Subagents › Runtime Limits\nEdits the user-global configuration only.\n\n→ Max Concurrent  4\n  Max Queued  16\n  Shutdown Timeout  5000 ms\n  Max Nesting Depth  3\n\n  ↑/↓ select · Enter edit · ← back · Esc dismiss\n────────────────────────────────────────────────────────────");
+  assert.equal(normalize(menu.render(60)), "────────────────────────────────────────────────────────────\n\nSecretary › Subagents › Runtime Limits\nEdits the user-global configuration only.\n\n→ Max Concurrent  4\n  Max Queued  16\n  Shutdown Timeout  600000 ms\n  Max Nesting Depth  3\n\n  ↑/↓ select · Enter edit · ← back · Esc dismiss\n────────────────────────────────────────────────────────────");
 });
 
 test("layout baseline: runtime limit value prompt", (t) => {

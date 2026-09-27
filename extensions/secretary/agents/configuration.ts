@@ -95,7 +95,7 @@ function applyAgentsConfiguration(agents: Record<string, unknown>, path: string,
   }
 }
 
-export const defaultAgentConfiguration = (): AgentConfiguration => ({ modelFallbackLists: {}, subagentModels: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 5000, maxNestingDepth: 3, ui: defaultAgentUi() });
+export const defaultAgentConfiguration = (): AgentConfiguration => ({ modelFallbackLists: {}, subagentModels: {}, maxConcurrent: 4, maxQueued: 16, shutdownTimeoutMs: 10 * 60_000, maxNestingDepth: 3, ui: defaultAgentUi() });
 
 export function loadAgentConfiguration(cwd: string, agentDir: string, trusted: boolean): AgentConfiguration {
   const result = defaultAgentConfiguration();

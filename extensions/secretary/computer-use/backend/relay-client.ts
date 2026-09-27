@@ -164,12 +164,10 @@ export class RelaySession {
     if (this.#ready) return this.#ready;
     const ready = (async () => {
       const connection = await this.#connect();
-      let acquired = false;
       try {
         for (const [tool, args] of [["relay_acquire", this.#acquire], ["relay_stage", {}]] as const) {
           const result = await this.#call(connection, tool, args, 15 * 60_000, signal);
           if (result.isError) throw new BackendError("driver_failed", `${tool} failed: ${result.text.slice(0, 500)}`);
-          acquired = true;
         }
         await this.#waitForDriver(connection, signal);
         // Configured preparation, such as opening the application a task needs, runs once after staging.
@@ -185,7 +183,10 @@ export class RelaySession {
         return connection;
       } catch (error) {
         // The next attempt starts a new server, which would acquire a second machine; this one is released.
-        if (acquired) await connection.call("relay_release", {}, { timeoutMs: 5 * 60_000 }).catch(() => undefined);
+        // It is released even when the acquisition seemed to fail: a cancelled acquire's result never
+        // reaches the client, while the relay keeps the lease that arrives after the cancel. A release
+        // that finds no lease is harmless.
+        await connection.call("relay_release", {}, { timeoutMs: 5 * 60_000 }).catch(() => undefined);
         await connection.close().catch(() => undefined);
         throw error;
       }

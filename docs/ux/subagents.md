@@ -484,7 +484,7 @@ Edits the user-global configuration only.
 
 → Max Concurrent  4
   Max Queued  16
-  Shutdown Timeout  5000 ms
+  Shutdown Timeout  600000 ms
   Max Nesting Depth  3
 
   ↑/↓ select · Enter edit · ← back · Esc dismiss
