@@ -3,6 +3,8 @@
  * design §3). A lease is finished when the relay has written its lifecycle record.
  */
 import type { ChildProcess } from "node:child_process";
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 
 export interface StopOptions {
   /** The relay leases that have not finished yet. */
@@ -12,6 +14,16 @@ export interface StopOptions {
   /** How long Pi gets to exit after SIGTERM. */
   exitGraceMs: number;
   pollMs: number;
+}
+
+/**
+ * The relay leases in a project's relay-evidence folder, and whether each has its lifecycle record.
+ * A lease that acquired a machine has the relay's host configuration; a refused acquisition has only events.
+ */
+export function relayLeases(evidence: string): { name: string; finished: boolean }[] {
+  if (!existsSync(evidence)) return [];
+  return readdirSync(evidence).filter(name => existsSync(join(evidence, name, "host", "mcp-host-config.json")))
+    .map(name => ({ name, finished: existsSync(join(evidence, `${name}.lifecycle.json`)) }));
 }
 
 const wait = (ms: number) => new Promise(done => setTimeout(done, ms));

@@ -14,7 +14,7 @@ import { useGlobalLiteLLM } from "../../../tests/e2e/environment/global-litellm.
 import { DEFAULT_RELAY_COMMAND } from "../../../extensions/secretary/computer-use/configuration.ts";
 import type { CheckResult } from "../../../extensions/secretary/computer-use/backend/relay-client.ts";
 import { writeRunReport } from "../../../extensions/secretary/computer-use/report.ts";
-import { stopPi } from "./stop-pi.ts";
+import { relayLeases, stopPi } from "./stop-pi.ts";
 
 export interface DelegationInput {
   /** Artifact directory name under test-results/e2e/. */
@@ -121,9 +121,8 @@ export async function delegate(input: DelegationInput): Promise<DelegationResult
     if (reported && checked) break;
   }
   const evidence = join(environment.project, "relay-evidence");
-  // A lease that acquired a machine has the relay's host configuration; a refused acquisition has only events.
-  const leases = () => existsSync(evidence) ? readdirSync(evidence).filter(name => existsSync(join(evidence, name, "host", "mcp-host-config.json"))) : [];
-  const unfinished = () => leases().filter(name => !existsSync(join(evidence, `${name}.lifecycle.json`)));
+  const leases = () => relayLeases(evidence).map(lease => lease.name);
+  const unfinished = () => relayLeases(evidence).filter(lease => !lease.finished).map(lease => lease.name);
   await stopPi(child, { unfinished, leaseWaitMs: 10 * 60_000, exitGraceMs: 30_000, pollMs: 5000 });
   writeFileSync(join(environment.artifacts, "stdout.jsonl"), environment.redact(stdout));
   writeFileSync(join(environment.artifacts, "stderr.log"), environment.redact(stderr));
