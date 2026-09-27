@@ -4,9 +4,10 @@
  * It makes model calls.
  *
  *   node --experimental-strip-types scripts/computer-use/macarena-run.ts [--open-app] [--runs=N] [--out=DIR]
- *     [--model=qwen3.8-27b] [--executor=http://jev.home.arpa] <task.json>...
+ *     [--model=qwen3.8-27b] [--executor=http://jev.home.arpa] [--relay-server=PATH] <task.json>...
  *
  * `--open-app` opens the task's one application after its setup (the ship gate's variant, §5).
+ * `--relay-server` runs a local build of mcp-vm-relay's `dist/server.mjs` instead of the published package.
  * Runs go round by round: every task's run 1, then every task's run 2, so a partial result covers
  * every task. Output: DIR (default a new test-results/computer-use/macarena-<time>/) gets
  * results.jsonl, one line per run, and deferred.jsonl, one line per attempt that got no machine.
@@ -20,7 +21,7 @@ import { delegate } from "./support/delegate.ts";
 
 const flags = new Map(process.argv.slice(2).filter(arg => arg.startsWith("--")).map(arg => { const [key, value] = arg.slice(2).split("="); return [key!, value ?? "true"]; }));
 const taskFiles = process.argv.slice(2).filter(arg => !arg.startsWith("--"));
-if (!taskFiles.length) { console.error("usage: macarena-run.ts [--open-app] [--runs=N] [--out=DIR] [--model=M] [--executor=URL] <task.json>..."); process.exit(2); }
+if (!taskFiles.length) { console.error("usage: macarena-run.ts [--open-app] [--runs=N] [--out=DIR] [--model=M] [--executor=URL] [--relay-server=PATH] <task.json>..."); process.exit(2); }
 const runsPerTask = Number(flags.get("runs") ?? 1);
 const out = flags.get("out") ?? join(import.meta.dirname, "../../test-results/computer-use", `macarena-${new Date().toISOString().replace(/[:.]/g, "-")}`);
 mkdirSync(out, { recursive: true });
@@ -45,7 +46,8 @@ for (let run = 1; run <= runsPerTask; run++) {
     for (let attempt = 1; ; attempt++) {
       const started = new Date().toISOString();
       const result = await delegate({ name: `macarena-${task.id.slice(0, 8)}`, task: instructionFor(task.instruction, openApp), prepare, check,
-        modelId: flags.get("model") ?? "qwen3.8-27b", executorUrl: flags.get("executor") ?? "http://jev.home.arpa", timeoutMs: 25 * 60_000 });
+        modelId: flags.get("model") ?? "qwen3.8-27b", executorUrl: flags.get("executor") ?? "http://jev.home.arpa", timeoutMs: 25 * 60_000,
+        ...(flags.has("relay-server") ? { relayCommand: [process.execPath, flags.get("relay-server")!] } : {}) });
       const state = join(result.artifacts, "extension-state");
       // A run that never had a machine says nothing about the agent, so it runs again once one is free.
       if (machineUnavailable({ checks: result.checks, state }) && attempt < CAPACITY_TRIES) {

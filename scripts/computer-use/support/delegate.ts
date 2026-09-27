@@ -26,6 +26,8 @@ export interface DelegationInput {
   modelId: string;
   executorUrl: string;
   timeoutMs?: number;
+  /** The relay server command; the published package by default. */
+  relayCommand?: string[];
 }
 
 export interface Run { status?: string; background?: boolean; output?: string; subagentType?: string }
@@ -60,7 +62,7 @@ export async function delegate(input: DelegationInput): Promise<DelegationResult
     computerUse: {
       backend: "relay", relayImage: "macos26", relayEnv: "default", relayTtlHours: 1,
       // The isolated Pi environment replaces HOME; the relay keeps its state and credential packs under the real one.
-      relayCommand: ["/usr/bin/env", `HOME=${homedir()}`, ...DEFAULT_RELAY_COMMAND],
+      relayCommand: ["/usr/bin/env", `HOME=${homedir()}`, ...(input.relayCommand ?? DEFAULT_RELAY_COMMAND)],
       relayPrepare: input.prepare,
       ...(input.check?.length ? { relayCheck: input.check } : {}),
       executorUrl: input.executorUrl, executorTimeoutMs: 60_000,
