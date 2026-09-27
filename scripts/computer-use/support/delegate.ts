@@ -123,7 +123,9 @@ export async function delegate(input: DelegationInput): Promise<DelegationResult
   const evidence = join(environment.project, "relay-evidence");
   const leases = () => relayLeases(evidence).map(lease => lease.name);
   const unfinished = () => relayLeases(evidence).filter(lease => !lease.finished).map(lease => lease.name);
-  await stopPi(child, { unfinished, leaseWaitMs: 10 * 60_000, exitGraceMs: 30_000, pollMs: 5000 });
+  // A child run that has not ended may still acquire a lease, so it is waited for too.
+  const running = () => runs().flatMap((run, index) => TERMINAL.includes(run.status ?? "") ? [] : [`run ${index + 1} (${run.status ?? "no status"})`]);
+  await stopPi(child, { unfinished: () => [...unfinished(), ...running()], leaseWaitMs: 10 * 60_000, exitGraceMs: 30_000, pollMs: 5000 });
   writeFileSync(join(environment.artifacts, "stdout.jsonl"), environment.redact(stdout));
   writeFileSync(join(environment.artifacts, "stderr.log"), environment.redact(stderr));
   log(unfinished().length ? `Relay leases not finished within 10 minutes, when Pi was stopped: ${unfinished().join(", ")}.` : `Every relay lease was finished (${leases().length}).`);
