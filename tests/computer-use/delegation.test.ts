@@ -87,6 +87,7 @@ test("a parent delegates a desktop task to the computer-use template, which runs
   assert.deepEqual(h.childModels, Array(3).fill("discovery-test/planner"), "agents.subagentModels resolves the computer-use fallback list");
   assert.match(h.childCalls[0]!.systemPrompt ?? "", /only the items the tool listed under "Verified by code after the step"/, "The template's instructions reach the child");
   assert.ok(h.parentCalls[0]!.tools?.some(tool => tool.name === "relay"), "The relay tool exists in the user's sessions");
+  assert.ok(!h.parentCalls[0]!.tools?.some(tool => tool.name.startsWith("computer_")), "The main agent has no computer tools (PS-D11)");
   for (const call of h.childCalls) {
     assert.deepEqual(call.tools?.map(tool => tool.name).sort(), ["computer_observe", "computer_run_plan"], "The allowlist bounds the child");
   }

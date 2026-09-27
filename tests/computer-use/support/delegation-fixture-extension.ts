@@ -11,10 +11,11 @@ import { installComputerUse } from "../../../extensions/secretary/computer-use/i
  */
 export interface DelegationFixture { backend: ExecutionBackend; executor: Executor; root: string }
 
-export default function delegationFixtureExtension(pi: ExtensionAPI): void {
+export default function delegationFixtureExtension(pi: ExtensionAPI) {
   const fixture = (globalThis as { computerUseDelegationFixture?: DelegationFixture }).computerUseDelegationFixture;
   if (!fixture) throw new Error("the delegation fixture is not set");
-  installComputerUse(pi, { root: fixture.root, backendFactory: () => fixture.backend, executorFactory: () => fixture.executor });
+  const computerUse = installComputerUse(pi, { root: fixture.root, backendFactory: () => fixture.backend, executorFactory: () => fixture.executor });
   pi.registerTool({ name: "relay", label: "Relay", description: "Model-facing VM relay.", parameters: Type.Object({}),
     async execute() { throw new Error("a computer-use child must not reach the relay tool"); } });
+  return computerUse;
 }

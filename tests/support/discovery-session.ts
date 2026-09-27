@@ -16,7 +16,8 @@ export async function discoverySession(t: TestContext, options: {
   respond?: (context: Context, index: number) => Promise<AssistantMessage["content"]>;
   respondChild?: (context: Context, index: number, signal?: AbortSignal) => Promise<AssistantMessage["content"]>;
   mode?: "print" | "rpc";
-  extension?: (pi: ExtensionAPI) => void;
+  /** A test extension. It may return a hook that adds the tools it offers to delegated agents, as computer use does. */
+  extension?: (pi: ExtensionAPI) => void | { childTools?: (tools: readonly string[]) => readonly string[] };
   trusted?: boolean;
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), "secretary-discovery-"));
@@ -70,8 +71,9 @@ export async function discoverySession(t: TestContext, options: {
           })().catch(error => { errors.push(error); stream.end(); });
           return stream;
         } });
-      installSecretary(pi, engine, { agentsRoot: join(root, "state") });
-      options.extension?.(pi);
+      let offered: ((tools: readonly string[]) => readonly string[]) | undefined;
+      installSecretary(pi, engine, { agentsRoot: join(root, "state"), childTools: tools => offered?.(tools) ?? tools });
+      offered = options.extension?.(pi)?.childTools;
     }] });
   await loader.reload();
   assert.deepEqual(loader.getExtensions().errors, []);
