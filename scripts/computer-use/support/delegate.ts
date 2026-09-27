@@ -115,7 +115,8 @@ export async function delegate(input: DelegationInput): Promise<DelegationResult
     if (input.duringRun && !sentDuringRun && all.some(run => run.status === "running")) {
       runningSince ??= Date.now();
       if (Date.now() - runningSince >= input.duringRun.afterMs) {
-        child.stdin.write(JSON.stringify({ id: "during-run", type: "prompt", message: input.duringRun.message }) + "\n");
+        // A busy parent rejects a plain prompt, so the message is queued as a steer.
+        child.stdin.write(JSON.stringify({ id: "during-run", type: "prompt", message: input.duringRun.message, streamingBehavior: "steer" }) + "\n");
         sentDuringRun = true;
         log(`${Math.round((Date.now() - started) / 1000)}s sent the parent: ${input.duringRun.message}`);
       }
