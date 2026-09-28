@@ -6,7 +6,7 @@
  */
 
 export interface ChoiceQuestion { type: "choice"; instructions: string; criteria: Record<string, string | null> }
-/** `seed` is the deployed fork's extension; it defaults to 42 on the server, so omitting it makes a request deterministic. */
+/** `seed` is the deployed fork's extension. The service does not apply it: identical requests, with or without a seed, get different answers (research §18.1). */
 export interface DecisionRequestBody { state: Record<string, unknown> | string; questions: Record<string, ChoiceQuestion>; samples: 1; seed?: number }
 export interface ChoiceAnswer { choice: string; confidence: number }
 export interface DecisionResponse {

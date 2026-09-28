@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
-  buildGuardianRequest, expectedVerdict, GUARDIAN_QUESTIONS, guardianVerdict,
+  buildGuardianRequest, buildGuardianRequests, expectedVerdict, GUARDIAN_QUESTIONS, guardianVerdict, guardianVerdictAll,
   type Effect, type Environment, type GuardedAction, type PermissionMode, type Reach,
 } from "../../extensions/secretary/computer-use/guardian.ts";
 
@@ -49,6 +49,19 @@ test("strings drop bidirectional marks, collapse white space and are cut with an
 test("no planner text reaches the guardian", () => {
   const state = buildGuardianRequest(deleteDialog).state as Record<string, unknown>;
   for (const key of ["goal", "step", "intent", "plan"]) assert.ok(!(key in state));
+});
+
+test("window text can only raise caution: an action with shown text is also judged without it", () => {
+  const [withText, withoutText, ...rest] = buildGuardianRequests(deleteDialog);
+  assert.equal(rest.length, 0);
+  assert.ok("shown_text" in (withText!.state as object));
+  assert.ok(!("shown_text" in (withoutText!.state as object)));
+  assert.deepEqual({ ...(withText!.state as object), shown_text: undefined }, { ...(withoutText!.state as object), shown_text: undefined });
+  assert.equal(buildGuardianRequests({ ...deleteDialog, shownText: [" "] }).length, 1, "blank text sends one request");
+  assert.equal(guardianVerdictAll([answers("none", "local"), answers("destroy", "outside")], "auto", "ephemeral"), "ask");
+  assert.equal(guardianVerdictAll([answers("none", "local"), answers("change", "local")], "auto", "persistent"), "proceed");
+  assert.equal(guardianVerdictAll([], "auto", "ephemeral"), "ask");
+  assert.equal(guardianVerdictAll([undefined], "bypass", "persistent"), "proceed");
 });
 
 const table: [Reach, Effect, Environment, "proceed" | "ask"][] = [
