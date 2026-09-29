@@ -2,7 +2,7 @@
 
 **Document type:** Software design specification.
 
-**Status:** Being built, 2026-09-29 ([PS-D15](../decisions.md)). The guardian failed the proposed pass criteria of Section 6.3 ([research §18](../research/computer-use-s0-s1.md#18-the-executor-as-permission-guardian-2026-09-29)), and so did the planner's declarations combined with it (Section 7.2). The owner decided to ship the modes and the guardian and to improve them from failures collected in real runs. Settings marked *provisional* were chosen without an owner's answer and change when run data argues for it.
+**Status:** Being built, 2026-09-29 ([PS-D15](../decisions.md)). The guardian failed the proposed pass criteria of Section 6.3 ([research §18](../research/computer-use-s0-s1.md#18-the-executor-as-permission-guardian-2026-09-29)), and so did the planner's declarations combined with it (Section 7.2). With the shipped settings, revision 4 and `think: 256`, needless asks fell to 3 and 4 percent, but one sharing action proceeded in every sample ([research §18.7](../research/computer-use-s0-s1.md#187-held-out-set-with-the-shipped-settings-revision-4-and-thought)). The owner decided to ship the modes and the guardian and to improve them from failures collected in real runs. Settings marked *provisional* were chosen without an owner's answer and change when run data argues for it.
 
 **Decisions:** [PS-D13 to PS-D16](../decisions.md), 2026-09-29.
 
