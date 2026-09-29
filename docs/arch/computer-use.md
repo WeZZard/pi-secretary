@@ -257,7 +257,7 @@ The planner calls this tool with a complete plan. The tool returns only when the
 | `goal` | It is the task-level goal in one sentence. The executor sees it in every request. |
 | `based_on` | It is optional. It names the observation the plan was written against. The plan acts on that observation's window. An unknown or expired identifier rejects the plan, and the session keeps the last 16 observations. |
 | `steps` | It is an ordered list of at most 50 steps. |
-| `allow_destructive` | It is a list of step identifiers that may perform destructive actions. It is empty by default. |
+| `ask_before` | It is optional, at most 300 characters: the actions that the task says a person must approve first, in the task's words. It can only add approvals ([permissions §5](computer-use-permissions.md#5-guardian-request)). The plan cannot approve any action. |
 
 **Step fields:**
 
@@ -279,7 +279,7 @@ The harness checks the whole plan before any observation. The check follows one 
 **A plan that cannot run is rejected when:**
 
 - It has no steps or more than 50 steps.
-- A step identifier is repeated, or `allow_destructive` names an unknown step.
+- A step identifier is repeated.
 - A postcondition is malformed, or a `control` has an empty name or a role that is not an accessibility role.
 - A `type` step has no `text`, or a `key` step has no `keys`.
 - An `action` is not in the allowlist of any platform.
@@ -472,7 +472,7 @@ The harness sends one `POST /v1/systemone` request per step with `samples` set t
 | `region` | The table has more than one group. | One alternative per group name. Each alternative's description lists the names of the group's elements and states how many more are hidden beyond the visible area. |
 | `element_<n>` | Always, with one question per group. | The group's element letters, plus `none`, described as "None of these controls carries out the step." |
 | `operation` | The step does not fix the operation. | The operations that the step allows ([Section 7.2](#72-actions)), plus `reobserve` and `abstain`. |
-| `risk` | Always. | `safe`, `reversible` and `destructive`. |
+| `risk` | Always. Its answer is recorded and decides nothing. | `safe`, `reversible` and `destructive`. |
 
 - The request never uses `depends_on` or `alone` ([research Section 4.3](../research/computer-use-s0-s1.md#43-question-coupling-on-a-mixed-role-list-of-26-candidates-n--48)).
 - The `reobserve` alternative means that the window is changing or loading. The `abstain` alternative means that no listed element fits the step. Every question's instructions describe these meanings explicitly, because conventions must be stated rather than assumed.
@@ -514,7 +514,7 @@ The harness sends one `POST /v1/systemone` request per step with `samples` set t
 - Only a step with none of these is offered its platform's pointer and scroll actions: `click`, `double_click`, `right_click`, `scroll_up` and `scroll_down` on macOS, and `tap`, `swipe_up` and `swipe_down` on iOS.
 - The reason is a Pi run in which a step with the key "Backspace" was answered with a click, which clicked the text area instead of pressing the key ([research Section 14](../research/computer-use-s0-s1.md#14-pi-task-batch-2026-09-23)).
 - When the step fixes the action, the request has no `operation` question. Through Pi, the executor answered `abstain` to such a question for a clear text-entry step. A missing target is still reported through each element question's `none`.
-- The `risk` question is always asked, so a key combination is still judged for destructive risk.
+- The `risk` question stays because the executor's measurements were made with it. Whether an action may be sent is decided by the permission guardian in its own requests, after the policy has chosen the action ([permissions §9](computer-use-permissions.md#9-in-the-harness)).
 
 ### 7.3 Token budget
 
@@ -536,7 +536,7 @@ The policy runs in code after each response. It applies the following rules in o
 3. If `operation` is `abstain`, or the routed element question answers `none`, the policy returns `target_not_found`.
 4. If the table has several groups, the policy reads the element answer from the question of the group chosen by `region`. It never compares confidences across questions ([research Section 4.7](../research/computer-use-s0-s1.md#47-merging-independent-heads-by-confidence-n--8)).
 5. If the chosen element and operation are incompatible, the policy returns `uncertain`. For example, `type` on an element that is not a text field is incompatible.
-6. If `risk` is `destructive` and the step is not listed in `allow_destructive`, the policy returns `approval_required`. The risk answer can only add caution. It never authorizes an action.
+6. The permission check of [permissions §9](computer-use-permissions.md#9-in-the-harness) runs after the policy has selected an action (rule 8) and before any input is sent. It returns `approval_required` or `approval_denied` when a person's approval is needed and not given.
 7. If the confidence of the used `region`, element or `operation` answer is below the configured gate, the policy returns `uncertain` and includes the answers as a prior. The default gate is 0.4, which is taken from prior art and is not validated here.
 8. Otherwise, the policy selects the element and operation for execution.
 
@@ -624,7 +624,8 @@ An escalation ends the `computer_run_plan` call and returns control to the plann
 | `already_satisfied` | The postcondition held before the step, and the step is not marked `idempotent`. No action was taken. | Write a postcondition that is false before the step, or mark the step `idempotent` when repeating it does no harm. |
 | `postcondition_failed` | The postcondition still fails after all attempts. | Revise the step or the postcondition. |
 | `no_progress` | An action changed nothing in the tree, or the window keeps changing. | Inspect the returned screenshot and revise the approach. |
-| `approval_required` | A destructive action was chosen for a step not listed in `allow_destructive`. | Add the step to `allow_destructive` only when the delegated task authorizes it. |
+| `approval_required` | The permission mode requires a person's approval for the action, and nobody could be asked, or nobody answered in time ([permissions §8](computer-use-permissions.md#8-approval-by-a-person)). Nothing was sent. | Stop and report that a person must approve the step. |
+| `approval_denied` | A person declined the action. Nothing was sent. | Stop and report it. Do not reach the goal another way. |
 | `budget_exhausted` | The action limit was reached. | Report partial progress to the parent. |
 | `executor_unavailable` | The executor service failed or timed out. | Report the failure. The planner must not perform the steps itself in this release. |
 | `backend_failed` | The relay refused an action, reported an uncertain outcome, or lost the lease. | Report the failure. The harness never replays an uncertain action. |

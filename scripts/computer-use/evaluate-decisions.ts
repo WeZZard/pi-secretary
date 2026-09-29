@@ -67,7 +67,7 @@ for (const target of targets) {
     if (!response) continue;
     if (retries) trimmed++;
     latencies.push(response.roundTripMs);
-    const decision = decide({ response, questions: built.questions, observation, step, allowDestructive: false, confidenceGate: config.confidenceGate });
+    const decision = decide({ response, questions: built.questions, observation, step, confidenceGate: config.confidenceGate });
     const confidences = Object.entries(decision.prior.confidences).map(([k, v]) => `${k} ${v.toFixed(2)}`).join(", ");
     let described: string, outcome: string;
     if (decision.kind === "act") {

@@ -3,6 +3,7 @@ import { ActuatorError, actionsFor, parseKeyCombo } from "./actuator.ts";
 import { BackendError, type ExecutionBackend, type WindowRead, type WindowTarget } from "./backend/backend.ts";
 import type { ComputerUseConfiguration } from "./configuration.ts";
 import { ExecutorError, type DecisionRequestBody, type DecisionResponse } from "./executor-client.ts";
+import { judgeAction, type Environment, type GuardedAction, type Judgment } from "./guardian.ts";
 import { ActionHistory, type ActionRecord } from "./history.ts";
 import { observe, platformView, renderPlannerTable, type ObservedElement, type Observation, type ObservationFailure } from "./observer.ts";
 import { decide, type Decision, type EscalationReason, type Prior } from "./policy.ts";
@@ -39,7 +40,9 @@ export function controlMatches(observation: Observation, control: ControlRef): O
   return inRegion.length ? inRegion : found;
 }
 export interface Plan {
-  target: WindowTarget; goal: string; steps: PlanStep[]; allowDestructive: string[];
+  target: WindowTarget; goal: string; steps: PlanStep[];
+  /** The actions the task says a person must approve first, in the task's words (permissions design §5). It only adds approvals. */
+  askBefore?: string;
   /** The `based_on` observation, which the first read must still match (design §9, start check). */
   basedOn?: WindowComparison;
   /** The last read of the previous plan, when it ran after `basedOn`: a change this harness made itself. */
@@ -75,6 +78,15 @@ export interface PlanResult {
 
 export interface Executor { decide(body: DecisionRequestBody, signal?: AbortSignal): Promise<DecisionResponse> }
 
+/** A person's answer to an approval request (permissions design §8). */
+export type ApprovalAnswer = "approved" | "declined" | "no_interface" | "timeout";
+export interface ApprovalRequest { goal: string; intent: string; action: GuardedAction; judgment: Judgment }
+/** Asks a person; the harness never asks the planner or the parent agent (permissions design §8). */
+export type Approver = (request: ApprovalRequest, signal?: AbortSignal) => Promise<ApprovalAnswer>;
+
+/** Permissions design §3: the environment is a fact of the backend, never a model's judgment. */
+export const environmentOf = (backend: ExecutionBackend): Environment => backend.kind === "local" ? "persistent" : "ephemeral";
+
 export interface HarnessDependencies {
   backend: ExecutionBackend;
   executor: Executor;
@@ -82,6 +94,8 @@ export interface HarnessDependencies {
   config: ComputerUseConfiguration;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   newId?: () => string;
+  /** Absent when no person can be asked, such as in a session without an interface. */
+  approve?: Approver;
 }
 
 const REOBSERVE_LIMIT = 2;
@@ -142,7 +156,6 @@ export function validatePlan(plan: Plan, maxSteps: number): PlanProblem | undefi
       if (step.control.role !== undefined && !ROLE.test(step.control.role)) return problem("control", `step ${step.id}: control role ${JSON.stringify(step.control.role)} is not an accessibility role such as Button or TextField`);
     }
   }
-  for (const id of plan.allowDestructive) if (!ids.has(id)) return problem("unknown_destructive_step", `allowDestructive names unknown step ${JSON.stringify(id)}`);
   return undefined;
 }
 
@@ -253,8 +266,7 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
           }
         }
         decisions++;
-        const decision: Decision = decide({ response, questions: built.questions, observation: offeredView, step,
-          allowDestructive: plan.allowDestructive.includes(step.id), confidenceGate: config.confidenceGate });
+        const decision: Decision = decide({ response, questions: built.questions, observation: offeredView, step, confidenceGate: config.confidenceGate });
         await telemetry.recordStep({ runId, stepId: step.id, attempt: attempts + 1, estimatedTokens: built.estimatedTokens,
           inputTokens: response.inputTokens, outputTokens: response.outputTokens, historyUsed: built.historyUsed, roundTripMs: response.roundTripMs, request: built.body, answers: response.answers, decision: summarize(decision) });
         if (decision.kind === "reobserve") {
@@ -269,6 +281,9 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
         if (named && decision.element && !named.some(element => element.index === decision.element!.index)) {
           escalate(step.id, "uncertain", `the executor chose ${JSON.stringify(decision.element.name)} in ${decision.element.group}, not the control the step names, ${describeControl(step.control!)}; no action was taken`, decision.prior);
         }
+
+        // Permissions design §9: the chosen action is judged before any input is sent. Scrolls only move the view.
+        if (!isScroll(decision.operation)) await permit(step, decision, observation, attempts + 1);
 
         let backendActions;
         try { backendActions = actionsFor(decision.request); }
@@ -371,6 +386,39 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
   }
 
   function escalateAfter(stepId: string, reason: EscalationReason, detail: string): never { return escalate(stepId, reason, detail); }
+
+  /** Permissions design §8 to §10: judge the action, ask a person when the verdict is ask, and record both. */
+  async function permit(step: PlanStep, decision: Extract<Decision, { kind: "act" }>, observation: Observation, attempt: number): Promise<void> {
+    const action: GuardedAction = {
+      app: observation.window.app, window: observation.window.title ?? "", action: decision.operation as GuardedAction["action"],
+      ...(decision.element ? { control: { role: decision.element.role, name: decision.element.fullName, ...(decision.element.value !== undefined ? { value: decision.element.value } : {}) } } : {}),
+      ...(decision.operation === "type" && step.text !== undefined ? { text: step.text } : {}),
+      ...(decision.operation === "key" && step.keys !== undefined ? { keys: step.keys } : {}),
+      ...(observation.texts?.length ? { shownText: observation.texts } : {}),
+    };
+    let judgment: Judgment;
+    try {
+      judgment = await judgeAction(executor, action, { mode: config.permissionMode, environment: environmentOf(backend), gate: config.permissionGate,
+        think: config.permissionThink, ...(plan.askBefore ? { askBefore: plan.askBefore } : {}), ...(signal ? { signal } : {}) });
+    } catch (error) {
+      if (error instanceof ExecutorError && error.code === "aborted") throw new Stop(undefined, true);
+      throw error;
+    }
+    let approval: { answer: ApprovalAnswer; ms: number } | undefined;
+    if (judgment.verdict === "ask") {
+      const started = Date.now();
+      checkCancelled();
+      const answer = deps.approve ? await deps.approve({ goal: plan.goal, intent: step.intent, action, judgment }, signal) : "no_interface";
+      approval = { answer, ms: Date.now() - started };
+    }
+    await telemetry.recordPermission({ runId, stepId: step.id, attempt, redact: config.redactTypedText, action, judgment, ...(approval ? { approval } : {}) });
+    checkCancelled();
+    if (!approval || approval.answer === "approved") return;
+    const what = `${decision.operation}${decision.element ? ` ${JSON.stringify(decision.element.name)}` : step.keys ? ` ${step.keys}` : ""}`;
+    const why = describeJudgment(judgment);
+    if (approval.answer === "declined") escalate(step.id, "approval_denied", `a person declined ${what} (${why}). Nothing was sent; do not reach the goal another way`, decision.prior);
+    escalate(step.id, "approval_required", `${what} needs a person's approval (${why}), and ${approval.answer === "timeout" ? "nobody answered in time" : "nobody could be asked in this session"}. Nothing was sent`, decision.prior);
+  }
 }
 
 /** True when a postcondition checks text content somewhere, as a type step must (fix plan F-3). */
@@ -378,6 +426,17 @@ function checksText(condition: Postcondition): boolean {
   if ("all" in condition) return condition.all.some(checksText);
   if ("any" in condition) return condition.any.every(checksText);
   return "text" in condition || "value" in condition;
+}
+
+/** Why a person is asked, in the words the escalation and the approval dialog show (permissions design §8). */
+export function describeJudgment(judgment: Judgment): string {
+  if (judgment.reason === "ask_before") return "the task asked for approval before this kind of action";
+  if (judgment.reason === "doubt") return "the permission guardian could not judge it with confidence";
+  const answers = judgment.requests.find(request => request.purpose === "with_text")?.answers;
+  const effect = answers?.effect?.choice, reach = answers?.reach?.choice;
+  if (reach === "outside") return "the permission guardian judged that its effect leaves this machine";
+  if (effect === "destroy") return `the permission guardian judged that it destroys data${judgment.environment === "persistent" ? " on a machine that persists" : ""}`;
+  return "the permission guardian judged it needs approval";
 }
 
 function summarize(decision: Decision): Record<string, unknown> {

@@ -45,12 +45,14 @@ As a user, I want a wrong or uncertain action to stop the task with a stated rea
 - A step whose success cannot be shown, because its check already held before the step, stops the task unless the step is marked safe to repeat.
 - An unavailable decision service stops the task. The planning model does not take over the steps.
 
-### CU-04: Never act destructively without authority
+### CU-04: Never act beyond the permission I set
 
-As a user, I want the agent never to delete, send, buy, overwrite or close without saving unless the delegated task allowed that step.
+As a user, I want the agent to send nothing to another person, service or account, and to destroy nothing on a machine that persists, unless I approved that action or chose to bypass approvals.
 
-- A step judged destructive stops the task before any input unless the plan names that step as allowed.
-- A plan can name a step as allowed only when the delegated task authorizes it.
+- In the default mode, an action that leaves the machine, or that destroys data on a machine that persists, stops before any input until a person approves it.
+- In a relay machine, which is discarded after the task, destroying data inside the machine proceeds and is recorded.
+- Neither the plan nor the agent that delegated the task can approve an action.
+- The task can name further actions that need my approval, such as adding items to a cart.
 
 ### CU-05: Report results from this task's own actions
 

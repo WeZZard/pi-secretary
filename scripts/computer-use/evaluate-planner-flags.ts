@@ -14,6 +14,7 @@
  * - Reads with thought: samples in which the two verdicts differ in at least one environment, over all samples.
  * - Planner turn time: from sending the request to the full response, median.
  */
+import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -42,8 +43,10 @@ for (const dir of Object.values(RECORDED)) for (const line of readFileSync(join(
   recorded.set(row.case, [...(recorded.get(row.case) ?? []), row.answers]);
 }
 
-// The agent's instructions, with the allow_destructive rule replaced by the declaration rule (design §7).
-const template = readFileSync("extensions/secretary/computer-use/templates/computer-use.md", "utf8").replace(/^---[\s\S]*?---\n/, "");
+// The agent's instructions as evaluated (research §18.6), with the allow_destructive rule replaced by the declaration rule (design §7).
+// The template has since replaced allow_destructive with the permission check, so the evaluated revision is read from git.
+const EVALUATED = "645dc8e";
+const template = execFileSync("git", ["show", `${EVALUATED}:extensions/secretary/computer-use/templates/computer-use.md`], { encoding: "utf8" }).replace(/^---[\s\S]*?---\n/, "");
 const OLD_RULE = /- List a step in `allow_destructive`[^\n]*\n[^\n]*\n/;
 const OLD_ESCALATION = "- `approval_required`: stop unless the task authorizes the step.";
 if (!OLD_RULE.test(template) || !template.includes(OLD_ESCALATION)) throw new Error("the template no longer has the rules this evaluation replaces");
@@ -53,7 +56,7 @@ const system = template
 
 const describeOptions = (question: typeof GUARDIAN_QUESTIONS.effect) => Object.entries(question.criteria).map(([name, text]) => `${name}: ${text}`).join(" ");
 const planParameters = structuredClone(runPlanSchema) as unknown as { properties: Record<string, any> };
-delete planParameters.properties.allow_destructive;
+delete planParameters.properties.ask_before; // Not offered when this was evaluated.
 const step = planParameters.properties.steps.items;
 step.properties.effect = { type: "string", enum: ["none", "change", "destroy"], description: `What the step does to data or work. ${describeOptions(GUARDIAN_QUESTIONS.effect)}` };
 step.properties.reach = { type: "string", enum: ["local", "outside"], description: `Whether anything leaves this computer. ${describeOptions(GUARDIAN_QUESTIONS.reach)}` };

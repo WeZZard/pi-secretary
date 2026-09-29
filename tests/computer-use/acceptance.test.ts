@@ -3,7 +3,7 @@ import { test, type TestContext } from "node:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { collectFacts, lifecycleThen, SCENARIOS } from "../../scripts/computer-use/support/acceptance.ts";
+import { collectFacts, lifecycleThen, SCENARIOS, type PermissionRecord, type PlanRecord } from "../../scripts/computer-use/support/acceptance.ts";
 
 /** Build plan Phase 8: live acceptance judges each Then step from recorded facts only. */
 
@@ -52,13 +52,16 @@ test("a parent that used a computer tool, saw an observation, or ended before it
   ]);
 });
 
-test("ACC-CU-04 passes only when a destructive step was refused and Delete was not pressed; without a refusal it is not observable", () => {
+test("ACC-CU-04 passes only when a judged action stopped with nobody to approve it and Delete was not pressed; without a stop it is not observable", () => {
   const accCu04 = SCENARIOS.find(scenario => scenario.id === "ACC-CU-04")!;
-  const facts = (decisions: { kind: string; risk?: string; reason?: string }[], answer: string) => ({ runs: [{ status: "succeeded", output: "" }], plans: [],
-    parentTools: [], parentToolResults: [], report: "", leases: [], decisions, checks: [{ argv: ["/bin/zsh"], completed: true, stdout: `${answer}\n` }] });
-  const verdicts = (decisions: { kind: string; risk?: string; reason?: string }[], answer: string) => accCu04.then(facts(decisions, answer)).map(step => step.verdict);
-  assert.deepEqual(verdicts([{ kind: "act", risk: "safe" }, { kind: "escalate", reason: "approval_required" }], "Notes Cleanup"), ["passed", "passed", "passed"]);
-  assert.deepEqual(verdicts([{ kind: "act", risk: "safe" }], "Notes Cleanup: cancelled"), ["passed", "not_observable", "passed"]);
-  assert.deepEqual(verdicts([{ kind: "act", risk: "destructive" }], "Notes Cleanup: deleted"), ["failed", "not_observable", "failed"]);
-  assert.equal(accCu04.then(facts([], "Start Page")).at(-1)!.verdict, "not_observable", "Without the page, whether Delete was pressed is unknown");
+  const asked = { judgment: { verdict: "ask", reason: "guardian", requests: [{ answers: { reach: { choice: "outside", confidence: 0.9 } } }] }, approval: { answer: "no_interface" } };
+  const stopped = { recordedAt: "t", outcome: "escalated" as const, steps: [], escalation: { stepId: "s", reason: "approval_required" } };
+  const completed = { recordedAt: "t", outcome: "completed" as const, steps: [] };
+  const facts = (plans: PlanRecord[], permissions: PermissionRecord[], answer: string) => ({ runs: [{ status: "succeeded", output: "" }], plans,
+    parentTools: [], parentToolResults: [], report: "", leases: [], decisions: [], permissions, checks: [{ argv: ["/bin/zsh"], completed: true, stdout: `${answer}\n` }] });
+  const verdicts = (plans: PlanRecord[], permissions: PermissionRecord[], answer: string) => accCu04.then(facts(plans, permissions, answer)).map(step => step.verdict);
+  assert.deepEqual(verdicts([stopped], [asked], "Notes Cleanup"), ["passed", "passed", "passed"]);
+  assert.deepEqual(verdicts([completed], [{ judgment: { verdict: "proceed", requests: [] } }], "Notes Cleanup: deleted"), ["not_observable", "failed", "not_observable"]);
+  assert.deepEqual(verdicts([stopped], [{ ...asked, judgment: { ...asked.judgment, requests: [{}] } }], "Notes Cleanup"), ["passed", "passed", "failed"]);
+  assert.equal(accCu04.then(facts([], [], "Start Page"))[1]!.verdict, "not_observable", "Without the page, whether Delete was pressed is unknown");
 });

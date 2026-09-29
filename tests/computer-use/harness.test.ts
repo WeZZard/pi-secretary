@@ -10,6 +10,7 @@ import { ExecutorError, type DecisionRequestBody, type DecisionResponse } from "
 import { runPlan, validatePlan, type Plan } from "../../extensions/secretary/computer-use/harness.ts";
 import { observe } from "../../extensions/secretary/computer-use/observer.ts";
 import { Telemetry } from "../../extensions/secretary/computer-use/telemetry.ts";
+import { withGuardian, type GuardAnswers } from "./support/guardian-answers.ts";
 
 type Read = Omit<WindowRead, "readMs">;
 /** A small window: every listed control is a kept element in one group, lettered in reading order. */
@@ -21,9 +22,10 @@ function window(controls: { role?: string; name: string; value?: string }[]): Re
 }
 
 /** A scripted executor: answers name an element by its name, which the test maps to a letter. */
-function executor(script: (body: DecisionRequestBody, call: number) => { element?: string; operation: string; risk?: string; confidence?: number } | Error) {
+function executor(script: (body: DecisionRequestBody, call: number) => { element?: string; operation: string; risk?: string; confidence?: number } | Error,
+  guard?: (body: DecisionRequestBody) => GuardAnswers) {
   const bodies: DecisionRequestBody[] = [];
-  return { bodies, decide: async (body: DecisionRequestBody): Promise<DecisionResponse> => {
+  return withGuardian({ bodies, decide: async (body: DecisionRequestBody): Promise<DecisionResponse> => {
     bodies.push(body);
     const answer = script(body, bodies.length);
     if (answer instanceof Error) throw answer;
@@ -31,7 +33,7 @@ function executor(script: (body: DecisionRequestBody, call: number) => { element
     const table = String((body.state as { elements: string }).elements);
     const letter = answer.element ? table.split("\n").find(line => /^ {2}[A-Z] \S+ (".*?")(?: |$)/.exec(line)?.[1] === JSON.stringify(answer.element))?.trim()[0] ?? "none" : "none";
     return { roundTripMs: 1, answers: { element_1: { choice: letter, confidence }, operation: { choice: answer.operation, confidence }, risk: { choice: answer.risk ?? "safe", confidence } } };
-  } };
+  } }, guard);
 }
 
 function setup(t: TestContext, reads: (Read | Error)[], overrides: Partial<ReturnType<typeof defaultComputerUseConfiguration>> = {}) {
@@ -42,7 +44,7 @@ function setup(t: TestContext, reads: (Read | Error)[], overrides: Partial<Retur
   return { backend, root, deps: (exec: ReturnType<typeof executor>) => ({ backend, executor: exec, telemetry: new Telemetry(root), config, sleep: async () => {}, newId: () => "run-1" }) };
 }
 
-const plan = (steps: Plan["steps"], allowDestructive: string[] = []): Plan => ({ target: { app: "Form" }, goal: "Fill the form", steps, allowDestructive });
+const plan = (steps: Plan["steps"], askBefore?: string): Plan => ({ target: { app: "Form" }, goal: "Fill the form", steps, ...(askBefore ? { askBefore } : {}) });
 const submitted = window([{ name: "Done" }]);
 const form = window([{ name: "Submit" }, { name: "Cancel" }]);
 
@@ -153,14 +155,102 @@ test("policy escalations stop the plan with their reason and prior", async (t) =
   const abstain = setup(t, [form]);
   const notFound = await runPlan(abstain.deps(executor(() => ({ operation: "abstain" }))), plan([{ id: "s", intent: "Open settings", postcondition: { exists: { name: "Settings" } } }]));
   assert.equal(notFound.escalation!.reason, "target_not_found");
-  const risky = setup(t, [form]);
-  const approval = await runPlan(risky.deps(executor(() => ({ element: "Submit", operation: "click", risk: "destructive" }))),
+  const risky = setup(t, [form, submitted]);
+  const done = await runPlan(risky.deps(executor(() => ({ element: "Submit", operation: "click", risk: "destructive" }))),
     plan([{ id: "s", intent: "Submit", postcondition: { exists: { name: "Done" } } }]));
-  assert.deepEqual([approval.escalation!.reason, approval.escalation!.prior?.element, risky.backend.actions.length], ["approval_required", "Submit", 0]);
-  const allowed = setup(t, [form, submitted]);
-  const done = await runPlan(allowed.deps(executor(() => ({ element: "Submit", operation: "click", risk: "destructive" }))),
-    plan([{ id: "s", intent: "Submit", postcondition: { exists: { name: "Done" } } }], ["s"]));
-  assert.equal(done.outcome, "completed", "allowDestructive authorizes the named step");
+  assert.equal(done.outcome, "completed", "The executor's risk answer is recorded and decides nothing (permissions design §9)");
+});
+
+const submit = { id: "s", intent: "Submit", postcondition: { exists: { name: "Done" } } };
+const clickSubmit = () => ({ element: "Submit", operation: "click" });
+const permissionRecords = (root: string) => readdirSync(join(root, "runs", "run-1")).filter(file => file.startsWith("permission-"))
+  .map(file => JSON.parse(readFileSync(join(root, "runs", "run-1", file), "utf8")));
+
+test("an action whose effect leaves the machine waits for a person; with nobody to ask it stops before any input (permissions design §8)", async (t) => {
+  const { backend, root, deps } = setup(t, [form]);
+  const exec = executor(clickSubmit, () => ({ effect: ["change", 0.9], reach: ["outside", 0.9] }));
+  const result = await runPlan(deps(exec), plan([submit]));
+  assert.deepEqual([result.escalation?.reason, result.escalation?.prior?.element, backend.actions.length], ["approval_required", "Submit", 0]);
+  assert.match(result.escalation!.detail, /leaves this machine.*nobody could be asked in this session\. Nothing was sent/);
+  const [record] = permissionRecords(root);
+  assert.equal(record.schema, "secretary.computer-use.permission/1");
+  assert.deepEqual([record.judgment.verdict, record.judgment.reason, record.judgment.environment, record.approval.answer], ["ask", "guardian", "ephemeral", "no_interface"]);
+  assert.deepEqual(record.judgment.requests[0].answers.reach, { choice: "outside", confidence: 0.9 }, "The record holds the guardian's answers");
+  assert.deepEqual(exec.guardBodies[0]!.state, { app: "Form", window: "Form", action: "click", control: 'Button "Submit"' });
+  assert.equal(exec.guardBodies[0]!.think, 256);
+});
+
+test("a person's answer decides an action the guardian asks about, and only that action", async (t) => {
+  const outside = () => ({ effect: ["change", 0.9], reach: ["outside", 0.9] }) as const;
+  const answers: string[] = [];
+  const approved = setup(t, [form, submitted]);
+  const done = await runPlan({ ...approved.deps(executor(clickSubmit, outside)), approve: async request => { answers.push(request.intent); return "approved"; } }, plan([submit]));
+  assert.deepEqual([done.outcome, approved.backend.actions.length, answers], ["completed", 1, ["Submit"]]);
+  const declined = setup(t, [form]);
+  const refused = await runPlan({ ...declined.deps(executor(clickSubmit, outside)), approve: async () => "declined" }, plan([submit]));
+  assert.deepEqual([refused.escalation?.reason, declined.backend.actions.length], ["approval_denied", 0]);
+  assert.match(refused.escalation!.detail, /a person declined click "Submit".*do not reach the goal another way/);
+  const late = setup(t, [form]);
+  const unanswered = await runPlan({ ...late.deps(executor(clickSubmit, outside)), approve: async () => "timeout" }, plan([submit]));
+  assert.deepEqual([unanswered.escalation?.reason, late.backend.actions.length], ["approval_required", 0]);
+  assert.match(unanswered.escalation!.detail, /nobody answered in time/);
+  const safe = setup(t, [form, submitted]);
+  let asked = 0;
+  await runPlan({ ...safe.deps(executor(clickSubmit)), approve: async () => { asked++; return "approved"; } }, plan([submit]));
+  assert.equal(asked, 0, "An action the guardian lets proceed is not shown to a person");
+});
+
+test("local destruction proceeds in an ephemeral machine and asks on a persistent one (permissions design §4)", async (t) => {
+  const destroy = () => ({ effect: ["destroy", 0.9], reach: ["local", 0.9] }) as const;
+  const relay = setup(t, [form, submitted]);
+  assert.equal((await runPlan(relay.deps(executor(clickSubmit, destroy)), plan([submit]))).outcome, "completed");
+  const local = setup(t, [form]);
+  Object.defineProperty(local.backend, "kind", { value: "local" });
+  const stopped = await runPlan(local.deps(executor(clickSubmit, destroy)), plan([submit]));
+  assert.equal(stopped.escalation?.reason, "approval_required");
+  assert.match(stopped.escalation!.detail, /destroys data on a machine that persists/);
+  assert.equal(permissionRecords(local.root)[0].judgment.environment, "persistent");
+});
+
+test("an answer below the gate asks, and so does a guardian that cannot answer", async (t) => {
+  const unsure = setup(t, [form]);
+  const doubt = await runPlan(unsure.deps(executor(clickSubmit, () => ({ reach: ["local", 0.4] }))), plan([submit]));
+  assert.equal(doubt.escalation?.reason, "approval_required");
+  assert.match(doubt.escalation!.detail, /could not judge it with confidence/);
+  assert.equal(permissionRecords(unsure.root)[0].judgment.reason, "doubt");
+  const down = setup(t, [form]);
+  const failing = executor(clickSubmit);
+  const decide = failing.decide;
+  failing.decide = async (body: DecisionRequestBody) => "reach" in body.questions ? Promise.reject(new ExecutorError("timeout", "no answer")) : decide(body);
+  const failed = await runPlan(down.deps(failing), plan([submit]));
+  assert.deepEqual([failed.escalation?.reason, down.backend.actions.length], ["approval_required", 0]);
+  assert.match(permissionRecords(down.root)[0].judgment.requests[0].error, /no answer/);
+});
+
+test("the task's ask_before adds an approval the guardian would not ask for (decision PS-D16)", async (t) => {
+  const { backend, root, deps } = setup(t, [form]);
+  const exec = executor(clickSubmit, body => "listed" in body.questions ? { listed: ["yes", 0.9] } : {});
+  const result = await runPlan(deps(exec), plan([submit], "adding anything to the cart"));
+  assert.deepEqual([result.escalation?.reason, backend.actions.length], ["approval_required", 0]);
+  assert.match(result.escalation!.detail, /the task asked for approval before this kind of action/);
+  const listed = exec.guardBodies.find(body => "listed" in body.questions)!;
+  assert.equal((listed.state as { ask_before: string }).ask_before, "adding anything to the cart");
+  assert.equal(permissionRecords(root)[0].judgment.reason, "ask_before");
+  const plain = setup(t, [form, submitted]);
+  const noList = executor(clickSubmit);
+  await runPlan(plain.deps(noList), plan([submit]));
+  assert.ok(!noList.guardBodies.some(body => "listed" in body.questions), "Without ask_before the question is not asked");
+});
+
+test("bypass sends no guardian request, and a scroll is not judged", async (t) => {
+  const bypass = setup(t, [form, submitted], { permissionMode: "bypass" });
+  const exec = executor(clickSubmit, () => ({ reach: ["outside", 0.9] }));
+  assert.equal((await runPlan(bypass.deps(exec), plan([submit]))).outcome, "completed");
+  assert.deepEqual([exec.guardBodies.length, permissionRecords(bypass.root)[0].judgment.reason], [0, "mode"]);
+  const scroll = setup(t, [form, window([{ name: "Zoning" }])]);
+  const scrolling = executor(() => ({ operation: "scroll_down" }), () => ({ reach: ["outside", 0.9] }));
+  const scrolled = await runPlan(scroll.deps(scrolling), plan([{ id: "z", intent: "Scroll to Zoning", action: "scroll_down", postcondition: { exists: { name: "Zoning" } } }]));
+  assert.deepEqual([scrolled.outcome, scrolling.guardBodies.length], ["completed", 0]);
 });
 
 test("executor failure, untypeable text and backend failure escalate without replaying an action", async (t) => {
@@ -239,7 +329,6 @@ test("a plan that cannot run is rejected before any observation or action, and t
   assert.equal(rule(plan([{ ...step, action: "key" }])), "needs_keys");
   assert.equal(rule(plan([{ id: "b", intent: "Both", text: "a", keys: "cmd+a", postcondition: { text: { contains: "a" } } }])), "text_and_keys");
   assert.match(validatePlan(plan([{ id: "k", intent: "Erase", keys: "Hyper+x", postcondition: { changed: true } }]), 50)?.message ?? "", /step k: "Hyper\+x" is not a key combination/);
-  assert.equal(rule(plan([step], ["b"])), "unknown_destructive_step");
   assert.equal(rule(plan([{ id: "r", intent: "Send", maxAttempts: 3, postcondition: { exists: { name: "Sent" } } }])), "unsafe_repeat");
 });
 

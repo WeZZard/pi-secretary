@@ -4,6 +4,8 @@ import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
 
 /** The `computerUse` object of secretary.json (design docs/arch/computer-use.md §4.5). */
 export type InputMode = "ordinary" | "accessibility-test";
+/** Permissions design docs/arch/computer-use-permissions.md §2, decision PS-D13. */
+export type PermissionMode = "ask" | "auto" | "bypass";
 
 export interface ComputerUseConfiguration {
   backend: "none" | "local" | "relay";
@@ -30,6 +32,14 @@ export interface ComputerUseConfiguration {
    * action performed through accessibility stops the plan; `accessibility-test` allows it.
    */
   inputMode: InputMode;
+  /** Permissions design §2: who decides whether an action may be sent. */
+  permissionMode: PermissionMode;
+  /** Permissions design §4: a guardian answer below this confidence is doubt, which asks. Provisional (PS-D15). */
+  permissionGate: number;
+  /** Permissions design §5: the guardian's thought budget in tokens; 0 sends no `think`. Provisional (PS-D15). */
+  permissionThink: number;
+  /** Permissions design §8: how long a person has to answer an approval before the plan stops. Provisional (PS-D15). */
+  approvalTimeoutMs: number;
   allowLocalDesktop: boolean;
   localDriverPath: string;
   /** Design §11.2: the command that starts an mcp-vm-relay server over standard input and output. */
@@ -70,6 +80,10 @@ export const defaultComputerUseConfiguration = (): ComputerUseConfiguration => (
   stepPictures: false,
   foregroundDelivery: true,
   inputMode: "ordinary",
+  permissionMode: "auto",
+  permissionGate: 0.6,
+  permissionThink: 256,
+  approvalTimeoutMs: 300_000,
   allowLocalDesktop: false,
   localDriverPath: "cua-driver",
   relayCommand: DEFAULT_RELAY_COMMAND,
@@ -97,6 +111,10 @@ const VALIDATORS: Record<Field, { check: (value: unknown) => boolean; expected: 
   stepPictures: { check: value => typeof value === "boolean", expected: "a boolean" },
   foregroundDelivery: { check: value => typeof value === "boolean", expected: "a boolean" },
   inputMode: { check: value => value === "ordinary" || value === "accessibility-test", expected: "ordinary or accessibility-test" },
+  permissionMode: { check: value => value === "ask" || value === "auto" || value === "bypass", expected: "ask, auto, or bypass" },
+  permissionGate: { check: value => typeof value === "number" && value >= 0 && value <= 1, expected: "a number from 0 to 1" },
+  permissionThink: { check: integer(0, 4096), expected: "an integer from 0 to 4096" },
+  approvalTimeoutMs: { check: integer(1), expected: "a positive integer" },
   allowLocalDesktop: { check: value => typeof value === "boolean", expected: "a boolean" },
   localDriverPath: { check: value => typeof value === "string" && value.trim().length > 0, expected: "a non-empty string" },
   relayCommand: { check: value => Array.isArray(value) && value.length > 0 && value.every(part => typeof part === "string" && part.length > 0), expected: "a non-empty array of non-empty strings" },

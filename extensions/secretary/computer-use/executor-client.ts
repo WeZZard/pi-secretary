@@ -7,7 +7,8 @@
 
 export interface ChoiceQuestion { type: "choice"; instructions: string; criteria: Record<string, string | null> }
 /** `seed` is the deployed fork's extension. The service does not apply it: identical requests, with or without a seed, get different answers (research §18.1). */
-export interface DecisionRequestBody { state: Record<string, unknown> | string; questions: Record<string, ChoiceQuestion>; samples: 1; seed?: number }
+/** `think` lets the model write up to that many tokens of thought before it answers (research §18.5). */
+export interface DecisionRequestBody { state: Record<string, unknown> | string; questions: Record<string, ChoiceQuestion>; samples: 1; seed?: number; think?: number }
 export interface ChoiceAnswer { choice: string; confidence: number }
 export interface DecisionResponse {
   answers: Record<string, ChoiceAnswer | null>;

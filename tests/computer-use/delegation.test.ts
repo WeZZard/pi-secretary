@@ -9,6 +9,7 @@ import type { DecisionRequestBody, DecisionResponse } from "../../extensions/sec
 import { AgentRepository } from "../../extensions/secretary/agents/storage/agent-repository.ts";
 import { discoverySession } from "../support/discovery-session.ts";
 import delegationFixtureExtension from "./support/delegation-fixture-extension.ts";
+import { withGuardian } from "./support/guardian-answers.ts";
 
 /** Plan Phase 6: a parent delegates to the computer-use definition template through the real SDK. */
 
@@ -23,13 +24,13 @@ function calculator(controls: string[]): Omit<WindowRead, "readMs"> {
 }
 
 /** Answers every element question with the control named "All Clear", and chooses click. */
-const executor = { decide: async (body: DecisionRequestBody): Promise<DecisionResponse> => {
+const executor = withGuardian({ decide: async (body: DecisionRequestBody): Promise<DecisionResponse> => {
   const table = String((body.state as { elements: string }).elements);
   const letter = table.split("\n").find(line => line.includes("All Clear"))?.trim()[0] ?? "none";
   const answers: DecisionResponse["answers"] = { operation: { choice: "click", confidence: 0.9 }, risk: { choice: "safe", confidence: 0.9 } };
   for (const id of Object.keys(body.questions)) if (id.startsWith("element")) answers[id] = { choice: letter, confidence: 0.9 };
   return { roundTripMs: 1, answers };
-} };
+} });
 
 test("a parent delegates a desktop task to the computer-use template, which runs with only the computer-use tools", async t => {
   const before = calculator(["All Clear", "7"]), after = calculator(["Clear", "7"]);

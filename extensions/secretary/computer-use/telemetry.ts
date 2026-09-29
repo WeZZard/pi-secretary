@@ -85,6 +85,22 @@ export class Telemetry {
     return path;
   }
 
+  /**
+   * Permissions design §10: one record per judged action, with the guardian's requests and answers,
+   * the verdict and a person's answer. Typed text is replaced by its length when redaction is on.
+   */
+  async recordPermission(record: { runId: string; stepId: string; attempt: number; redact: boolean; action: { text?: string }; judgment: { requests: { state: Record<string, unknown> }[] } } & Record<string, unknown>): Promise<string> {
+    const directory = join(this.root, "runs", record.runId);
+    await mkdir(directory, { recursive: true });
+    const { redact, action, judgment, ...rest } = record;
+    const hide = (text: unknown) => typeof text === "string" && redact ? `<${[...text].length} characters>` : text;
+    const requests = judgment.requests.map(request => "text" in request.state ? { ...request, state: { ...request.state, text: hide(request.state.text) } } : request);
+    const path = join(directory, `permission-${record.stepId.replace(/[^A-Za-z0-9_-]/g, "_")}-${record.attempt}-${Date.now()}.json`);
+    await writeFile(path, `${JSON.stringify({ schema: "secretary.computer-use.permission/1", recordedAt: new Date().toISOString(), ...rest,
+      action: action.text !== undefined ? { ...action, text: hide(action.text) } : action, judgment: { ...judgment, requests } }, null, 1)}\n`, { mode: 0o600 });
+    return path;
+  }
+
   /** One summary per plan call. Typed literals are replaced by their length when redaction is on. */
   async recordPlan(record: { runId: string; redact: boolean; plan: { steps: { text?: string }[] } } & Record<string, unknown>): Promise<string> {
     const directory = join(this.root, "runs", record.runId);

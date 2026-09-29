@@ -36,7 +36,7 @@ export function toPlan(params: Static<typeof runPlanSchema>, basedOn?: Observati
   return {
     target: { app: params.app, ...(params.window_title ? { windowTitle: params.window_title } : {}), ...(basedOn ? { windowId: basedOn.window.windowId } : {}) },
     goal: params.goal,
-    allowDestructive: params.allow_destructive ?? [],
+    ...(params.ask_before ? { askBefore: params.ask_before } : {}),
     steps: params.steps.map(step => ({ id: step.id, intent: step.intent, postcondition: step.postcondition as Postcondition,
       ...(toAction(step.action ?? step.operation) ? { action: toAction(step.action ?? step.operation)! } : {}), ...(step.text !== undefined ? { text: step.text } : {}),
       ...(step.keys !== undefined ? { keys: step.keys } : {}), ...(step.max_attempts !== undefined ? { maxAttempts: step.max_attempts } : {}),

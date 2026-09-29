@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { ExecutorError, type DecisionRequestBody, type DecisionResponse } from "../../extensions/secretary/computer-use/executor-client.ts";
 import {
-  buildGuardianRequest, buildGuardianRequests, expectedVerdict, GUARDIAN_QUESTIONS, guardianVerdict, guardianVerdictAll,
+  buildAskBeforeRequest, buildGuardianRequest, buildGuardianRequests, expectedVerdict, GUARDIAN_QUESTIONS, guardianVerdict, guardianVerdictAll, judgeAction,
   type Effect, type Environment, type GuardedAction, type PermissionMode, type Reach,
 } from "../../extensions/secretary/computer-use/guardian.ts";
 
@@ -116,4 +117,60 @@ test("the guardian cases are well formed, unique, and both sets cover every cate
     const verdicts = new Set(cases.filter(c => c.set === set).map(c => expectedVerdict(c.effect ?? "none", c.reach, mode, environment)));
     assert.deepEqual([...verdicts].sort(), ["ask", "proceed"], `${set} ${environment} needs both verdicts`);
   }
+});
+
+/** Answers each request by its purpose: `with` for the request with window text, `without` for the one without, `listed` for ask_before. */
+function service(by: { with?: ReturnType<typeof answers>; without?: ReturnType<typeof answers>; listed?: [string, number]; fail?: Error }) {
+  const bodies: DecisionRequestBody[] = [];
+  return { bodies, decide: async (body: DecisionRequestBody): Promise<DecisionResponse> => {
+    bodies.push(body);
+    if (by.fail) throw by.fail;
+    if ("listed" in body.questions) return { roundTripMs: 2, answers: by.listed ? { listed: { choice: by.listed[0], confidence: by.listed[1] } } : {} as DecisionResponse["answers"] };
+    const withText = "shown_text" in (body.state as Record<string, unknown>);
+    return { roundTripMs: 2, answers: (withText ? by.with : by.without ?? by.with) ?? {} };
+  } };
+}
+const judge = { mode: "auto" as const, environment: "ephemeral" as const, gate: 0.6, think: 256 };
+
+test("a judgment sends both requests when the window shows text, with the thought budget, and asks if either asks", async () => {
+  const both = service({ with: answers("destroy", "local"), without: answers("change", "outside") });
+  const judgment = await judgeAction(both, deleteDialog, judge);
+  assert.deepEqual(both.bodies.map(body => [body.think, "shown_text" in (body.state as object)]), [[256, true], [256, false]]);
+  assert.deepEqual([judgment.verdict, judgment.reason, judgment.requests.map(request => request.purpose)], ["ask", "guardian", ["with_text", "without_text"]]);
+  const calm = await judgeAction(service({ with: answers("destroy", "local") }), deleteDialog, judge);
+  assert.deepEqual([calm.verdict, calm.reason], ["proceed", "guardian"], "Local destruction proceeds in an ephemeral machine");
+  const noThought = service({ with: answers("none", "local") });
+  await judgeAction(noThought, deleteDialog, { ...judge, think: 0 });
+  assert.ok(noThought.bodies.every(body => !("think" in body)));
+});
+
+test("doubt asks: an answer below the gate, a missing answer, or a failed request", async () => {
+  assert.equal((await judgeAction(service({ with: answers("none", "local", 0.5) }), deleteDialog, judge)).reason, "doubt");
+  assert.equal((await judgeAction(service({}), deleteDialog, judge)).reason, "doubt");
+  const failed = await judgeAction(service({ fail: new ExecutorError("timeout", "no answer in 60000 ms") }), deleteDialog, judge);
+  assert.deepEqual([failed.verdict, failed.reason, failed.requests[0]!.error], ["ask", "doubt", "no answer in 60000 ms"]);
+  await assert.rejects(judgeAction(service({ fail: new ExecutorError("aborted", "cancelled") }), deleteDialog, judge), /cancelled/, "A cancelled run is not doubt");
+});
+
+test("ask_before is judged apart from the window text, and can only add an approval (decision PS-D16)", async () => {
+  const body = buildAskBeforeRequest(deleteDialog, "  deleting anything  ", { think: 256 });
+  assert.deepEqual(Object.keys(body.questions), ["listed"]);
+  assert.equal((body.state as Record<string, unknown>).ask_before, "deleting anything");
+  assert.ok(!("shown_text" in (body.state as object)));
+  assert.ok(String((buildAskBeforeRequest(deleteDialog, "x".repeat(400)).state as Record<string, unknown>).ask_before).length <= 300);
+  const listed = await judgeAction(service({ with: answers("none", "local"), listed: ["yes", 0.9] }), deleteDialog, { ...judge, askBefore: "deleting anything" });
+  assert.deepEqual([listed.verdict, listed.reason], ["ask", "ask_before"]);
+  const unlisted = await judgeAction(service({ with: answers("change", "outside"), listed: ["no", 0.9] }), deleteDialog, { ...judge, askBefore: "deleting anything" });
+  assert.deepEqual([unlisted.verdict, unlisted.reason], ["ask", "guardian"], "A no cannot approve what the guardian asks about");
+  const unsure = await judgeAction(service({ with: answers("none", "local"), listed: ["no", 0.3] }), deleteDialog, { ...judge, askBefore: "deleting anything" });
+  assert.equal(unsure.reason, "doubt");
+});
+
+test("bypass sends nothing; ask mode asks for local destruction even in an ephemeral machine (design §2)", async () => {
+  const none = service({ with: answers("change", "outside") });
+  assert.deepEqual(await judgeAction(none, deleteDialog, { ...judge, mode: "bypass" }), { verdict: "proceed", reason: "mode", mode: "bypass", environment: "ephemeral", requests: [] });
+  assert.equal(none.bodies.length, 0);
+  const asking = await judgeAction(service({ with: answers("destroy", "local") }), deleteDialog, { ...judge, mode: "ask" });
+  assert.deepEqual([asking.verdict, asking.reason], ["ask", "guardian"]);
+  assert.equal((await judgeAction(service({ with: answers("change", "local") }), deleteDialog, { ...judge, mode: "ask" })).verdict, "proceed");
 });

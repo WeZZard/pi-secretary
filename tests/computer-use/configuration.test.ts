@@ -46,6 +46,13 @@ test("unknown fields, invalid values, and an unacknowledged local desktop are re
   assert.throws(() => loadComputerUseConfiguration(cwd, agentDir, false), /computerUse.inputMode must be ordinary or accessibility-test/);
   put(global, { computerUse: { inputMode: "accessibility-test" } });
   assert.equal(loadComputerUseConfiguration(cwd, agentDir, false).inputMode, "accessibility-test");
+  put(global, { computerUse: { permissionMode: "never" } });
+  assert.throws(() => loadComputerUseConfiguration(cwd, agentDir, false), /computerUse.permissionMode must be ask, auto, or bypass/);
+  put(global, { computerUse: { permissionThink: 1.5 } });
+  assert.throws(() => loadComputerUseConfiguration(cwd, agentDir, false), /computerUse.permissionThink/);
+  put(global, { computerUse: { permissionMode: "bypass", permissionGate: 0.8 } });
+  assert.deepEqual((({ permissionMode, permissionGate, permissionThink, approvalTimeoutMs }) => ({ permissionMode, permissionGate, permissionThink, approvalTimeoutMs }))(loadComputerUseConfiguration(cwd, agentDir, false)),
+    { permissionMode: "bypass", permissionGate: 0.8, permissionThink: 256, approvalTimeoutMs: 300_000 });
   put(global, { computerUse: { executorUrl: "jev.home.arpa" } });
   assert.throws(() => loadComputerUseConfiguration(cwd, agentDir, false), /must be an http or https URL/);
   put(global, { computerUse: { backend: "local" } });

@@ -6,7 +6,7 @@ import type { QuestionMap, StepSpec } from "./request-builder.ts";
 /** Decision policy (design §8): rules applied in order after each executor response. */
 
 export type EscalationReason = "needs_text" | "state_too_large" | "uncertain" | "already_satisfied" | "target_not_found" | "postcondition_failed" | "no_progress"
-  | "approval_required" | "budget_exhausted" | "executor_unavailable" | "backend_failed" | "window_unclear" | "window_changed" | "input_mode";
+  | "approval_required" | "approval_denied" | "budget_exhausted" | "executor_unavailable" | "backend_failed" | "window_unclear" | "window_changed" | "input_mode";
 
 export interface Prior { region?: string; element?: string; operation?: string; confidences: Record<string, number> }
 
@@ -19,7 +19,7 @@ const TEXT_ROLES = new Set(["AXTextField", "AXTextArea", "AXComboBox", "AXSearch
 
 export function decide(input: {
   response: DecisionResponse; questions: QuestionMap; observation: Observation; step: StepSpec;
-  allowDestructive: boolean; confidenceGate: number;
+  confidenceGate: number;
 }): Decision {
   const { response, questions, observation, step } = input;
   const answer = (id: string | undefined): ChoiceAnswer | undefined => (id ? response.answers[id] ?? undefined : undefined);
@@ -69,12 +69,10 @@ export function decide(input: {
     return { kind: "escalate", reason: "uncertain", detail: `the ${group.name} region cannot be scrolled`, prior };
   }
 
-  // Rule 6: the risk answer only adds caution.
+  // Rule 6 is the permission check, which the harness runs on the chosen action (permissions design §9).
+  // The risk answer is recorded and decides nothing: the executor's measurements were made with the question.
   const risk = answer(questions.risk);
   note("risk", risk);
-  if (risk?.choice === "destructive" && !input.allowDestructive) {
-    return { kind: "escalate", reason: "approval_required", detail: "the executor judged this step destructive, and the plan does not allow it", prior };
-  }
 
   // Rule 7: confidence is a safety gate on the answers actually used.
   const used = [...(questions.fixedOperation ? [] : ["operation"]), ...(questions.region !== undefined ? ["region"] : []), ...(needsElement ? ["element"] : [])];

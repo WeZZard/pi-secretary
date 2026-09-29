@@ -64,7 +64,7 @@ test("a step that fixes its operation acts without an operation answer, and the 
   const step = { id: "s", intent: "Search this folder", action: "click" as const };
   const built = ready(buildDecisionRequest({ goal: "g", step, observation, recent: [] }));
   assert.equal(built.body.questions.operation, undefined);
-  const decision = decide({ observation, step, questions: built.questions, allowDestructive: false, confidenceGate: 0.4,
+  const decision = decide({ observation, step, questions: built.questions, confidenceGate: 0.4,
     response: response({ region: ["toolbar", 0.9], element_1: ["F", 0.8], risk: ["safe", 0.9] }) });
   assert.equal(decision.kind, "act");
   assert.equal((decision as { operation: string }).operation, "click");
@@ -73,7 +73,7 @@ test("a step that fixes its operation acts without an operation answer, and the 
 test("the policy routes on the region answer and never uses a confident answer from an unchosen group", () => {
   const observation = finder();
   const built = ready(buildDecisionRequest({ goal: "g", step: { id: "s", intent: "Search this folder" }, observation, recent: [] }));
-  const decision = decide({ observation, step: { id: "s", intent: "Search" }, questions: built.questions, allowDestructive: false, confidenceGate: 0.4,
+  const decision = decide({ observation, step: { id: "s", intent: "Search" }, questions: built.questions, confidenceGate: 0.4,
     response: response({ region: ["toolbar", 0.9], element_1: ["F", 0.8], element_2: ["A", 0.99], element_3: ["B", 0.99], operation: ["click", 0.9], risk: ["safe", 0.9] }) });
   assert.equal(decision.kind, "act");
   assert.equal((decision as { element: { name: string } }).element.name, "Search");
@@ -84,15 +84,15 @@ test("each policy rule produces its outcome", () => {
   const step = { id: "s", intent: "i" };
   const { questions } = ready(buildDecisionRequest({ goal: "g", step, observation, recent: [] }));
   const run = (answers: Record<string, [string, number]>, extra: Partial<Parameters<typeof decide>[0]> = {}) =>
-    decide({ observation, step, questions, allowDestructive: false, confidenceGate: 0.4, response: response(answers), ...extra });
+    decide({ observation, step, questions, confidenceGate: 0.4, response: response(answers), ...extra });
   const base = { region: ["toolbar", 0.9], element_1: ["A", 0.9], operation: ["click", 0.9], risk: ["safe", 0.9] } as Record<string, [string, number]>;
   assert.equal(run({ ...base, operation: ["reobserve", 0.9] }).kind, "reobserve");
   assert.equal((run({ ...base, operation: ["abstain", 0.9] }) as { reason: string }).reason, "target_not_found");
-  assert.equal((run({ ...base, risk: ["destructive", 0.6] }) as { reason: string }).reason, "approval_required");
-  assert.equal(run({ ...base, risk: ["destructive", 0.6] }, { allowDestructive: true }).kind, "act");
+  const risky = run({ ...base, risk: ["destructive", 0.9] });
+  assert.deepEqual([risky.kind, (risky as { risk: string }).risk], ["act", "destructive"], "The risk answer is recorded and decides nothing (permissions design §9)");
   const low = run({ ...base, element_1: ["A", 0.3] });
   assert.deepEqual([low.kind, (low as { reason: string }).reason, low.prior.element], ["escalate", "uncertain", "Back"], "A low-confidence answer is returned as a prior");
-  const text = decide({ observation, step: { id: "s", intent: "i", text: "x" }, questions, allowDestructive: false, confidenceGate: 0.4, response: response({ ...base, operation: ["type", 0.9] }) });
+  const text = decide({ observation, step: { id: "s", intent: "i", text: "x" }, questions, confidenceGate: 0.4, response: response({ ...base, operation: ["type", 0.9] }) });
   assert.match((text as { detail: string }).detail, /type does not fit Button "Back"/);
   const scroll = run({ ...base, region: ["list", 0.9], operation: ["scroll_down", 0.9], element_3: ["A", 0.1] });
   assert.equal(scroll.kind, "act", "A scroll ignores the element answer, including its confidence");

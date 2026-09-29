@@ -72,12 +72,12 @@ test("a plan whose step names an iOS control is rejected before any action", asy
 
 test("at run time a step naming an iOS control stops, and the executor never sees the iOS screen", async (t) => {
   const { deps, backend, bodies } = tools(t, [simulatorRead()]);
-  const stopped = await runPlan(deps, { target: { app: "Simulator" }, goal: "g", allowDestructive: [],
+  const stopped = await runPlan(deps, { target: { app: "Simulator" }, goal: "g",
     steps: [{ id: "s", intent: "Tap Settings", control: { name: "Settings", role: "Button" }, postcondition: { exists: { name: "General" } } }] });
   assert.equal(stopped.escalation?.reason, "target_not_found");
   assert.match(stopped.escalation!.detail, /iOS targets are not supported yet/);
   assert.equal(bodies.length, 0);
-  await runPlan(deps, { target: { app: "Simulator" }, goal: "g", allowDestructive: [],
+  await runPlan(deps, { target: { app: "Simulator" }, goal: "g",
     steps: [{ id: "s", intent: "Go home", postcondition: { exists: { name: "Maps" } } }] });
   assert.doesNotMatch(String((bodies[0]!.state as Record<string, unknown>).elements), /Search Engine/);
   assert.match(String((bodies[0]!.state as Record<string, unknown>).elements), /"Home"/);

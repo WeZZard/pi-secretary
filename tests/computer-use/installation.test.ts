@@ -7,6 +7,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { FakeBackend } from "../../extensions/secretary/computer-use/backend/fake-backend.ts";
 import { installComputerUse } from "../../extensions/secretary/computer-use/installation.ts";
 import { textEditRead } from "./fixtures/trees.ts";
+import { withGuardian } from "./support/guardian-answers.ts";
 
 /** Only a delegated session registers the computer-use tools (decision PS-D11). */
 const delegatedInstall = (pi: ExtensionAPI, options: Parameters<typeof installComputerUse>[1]) => installComputerUse(pi, { ...options, delegated: true });
@@ -88,7 +89,7 @@ test("the start check accepts our previous plan's last read only when that plan 
   const backend = new FakeBackend({ Form: [read("Submit"), read("Submit"), read("Done"), read("Done"), read("Submit"), read("Submit"), read("Done")] });
   const h = host(t, { computerUse: { backend: "local", allowLocalDesktop: true, executorUrl: "http://jev.home.arpa", settleMs: 0 } });
   delegatedInstall(h.pi, { root: h.root, agentDir: () => h.agentDir, backendFactory: () => backend,
-    executorFactory: () => ({ decide: async () => ({ roundTripMs: 1, answers: { element_1: { choice: "A", confidence: 0.99 }, operation: { choice: "click", confidence: 0.99 }, risk: { choice: "safe", confidence: 0.99 } } }) }) });
+    executorFactory: () => withGuardian({ decide: async () => ({ roundTripMs: 1, answers: { element_1: { choice: "A", confidence: 0.99 }, operation: { choice: "click", confidence: 0.99 }, risk: { choice: "safe", confidence: 0.99 } } }) }) });
   await h.emit("session_start");
   const [observeTool, runPlanTool] = h.tools;
   const observation = async () => /Observation: (\S+)/.exec((await observeTool.execute("o", { app: "Form" }, undefined, undefined, h.ctx)).content[0].text)![1]!;

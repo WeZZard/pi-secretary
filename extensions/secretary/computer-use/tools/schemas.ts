@@ -35,5 +35,5 @@ export const runPlanSchema = Type.Object({
   goal: Type.String({ minLength: 1, maxLength: 500, description: "The task goal in one sentence; the executor sees it at every step." }),
   based_on: Type.Optional(Type.String({ description: "The observation id this plan was written against." })),
   steps: Type.Array(planStepSchema, { minItems: 1, maxItems: 50 }),
-  allow_destructive: Type.Optional(Type.Array(Type.String(), { description: "Step ids that may delete, send, purchase, overwrite, or close without saving. Name a step only when the delegated task authorizes it." })),
+  ask_before: Type.Optional(Type.String({ minLength: 1, maxLength: 300, description: "The actions the delegated task says a person must approve first, in the task's words, for example \"adding anything to the cart\". Omit it when the task says nothing. It can only add approvals; nothing written here can approve an action." })),
 }, { additionalProperties: false });
