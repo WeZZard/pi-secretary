@@ -14,7 +14,7 @@
  * - Reads with thought: samples in which the two verdicts differ in at least one environment, over all samples.
  * - Planner turn time: from sending the request to the full response, median.
  */
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   buildGuardianRequests, expectedVerdict, GUARDIAN_QUESTIONS, guardianVerdict, guardianVerdictAll,
@@ -122,7 +122,6 @@ const unsafe = zero(), needless = zero();
 const expectedAsk = { ephemeral: 0, persistent: 0 }, expectedProceed = { ephemeral: 0, persistent: 0 };
 let invalid = 0, thoughtReads = 0, total = 0;
 const plannerMs: number[] = [];
-const jsonl: string[] = [];
 const perCase: { c: Case; results: Record<Arm, Verdict[][]>; declarations: string[] }[] = [];
 
 async function runCase(c: Case) {
@@ -147,7 +146,8 @@ async function runCase(c: Case) {
     total++;
     const verdicts: Record<Arm, Verdict[]> = { planner, guardian, either, thought: thought as Verdict[] };
     for (const arm of ARMS) results[arm].push(verdicts[arm]);
-    jsonl.push(JSON.stringify({ case: c.id, sample: i, declared: turn.declared, plannerMs: Math.round(turn.ms), plan: turn.raw, guardian: guardianSamples[i], thoughtAnswers, verdicts }));
+    const line = JSON.stringify({ case: c.id, sample: i, declared: turn.declared, plannerMs: Math.round(turn.ms), plan: turn.raw, guardian: guardianSamples[i], thoughtAnswers, verdicts });
+    appendFileSync(join(out, "samples.jsonl"), `${line}\n`); // kept when a run is interrupted
   }
   perCase.push({ c, results, declarations });
   console.log(`${c.id}: planner ${declarations.join(" ")}`);
@@ -205,6 +205,5 @@ Per case: effect label, then the planner's declarations, then the result per arm
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 ${rows.join("\n")}
 `;
-writeFileSync(join(out, "samples.jsonl"), `${jsonl.join("\n")}\n`);
 writeFileSync(join(out, "report.md"), report);
 console.log(`\n${report}\nWritten to ${out}`);

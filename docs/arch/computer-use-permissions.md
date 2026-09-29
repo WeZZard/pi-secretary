@@ -2,7 +2,7 @@
 
 **Document type:** Software design specification.
 
-**Status:** Draft, 2026-09-29. The guardian request (Section 5) and its evaluation (Section 6) are built. The evaluation ran on 2026-09-29 and failed the proposed pass criteria ([research §18](../research/computer-use-s0-s1.md#18-the-executor-as-permission-guardian-2026-09-29)), so the modes (Section 2) and the decision rule (Section 4) are not wired into the harness; the owner decides the next step (Section 6.4).
+**Status:** Draft, 2026-09-29. The guardian request (Section 5) and its evaluation (Section 6) are built. The evaluation ran on 2026-09-29 and failed the proposed pass criteria ([research §18](../research/computer-use-s0-s1.md#18-the-executor-as-permission-guardian-2026-09-29)), and so did the planner's declarations combined with it (Section 7.2), so the modes (Section 2) and the decision rule (Section 4) are not wired into the harness; the owner decides the next step.
 
 **Decisions:** [PS-D13 and PS-D14](../decisions.md), 2026-09-29.
 
@@ -157,6 +157,20 @@ Two ways to combine it with the guardian are evaluated:
 - Each case is sampled 6 times. A missing or invalid declaration counts as no caution, and is counted separately.
 - The guardian's answers without thought are the first 6 recorded samples of each case (research §18.2 revision 2 and §18.3). Answers with thought are requested live, only for disagreements.
 - The measures are those of Section 6.2, per arm: the planner alone, the guardian alone, planner or guardian, and thought on disagreement; and, for the last arm, the share of actions that needed a read with thought.
+
+### 7.2 Result of 2026-09-29
+
+| Arm | Held-out unsafe proceed, ephemeral / persistent | Held-out needless ask, ephemeral / persistent |
+| --- | --- | --- |
+| Planner alone | 22 of 54 / 40 of 96 | 4 % / 6 % |
+| Guardian alone | 1 of 54 / 7 of 96 | 18 % / 23 % |
+| Planner or guardian | 1 of 54 / 5 of 96 | 18 % / 23 % |
+| Thought on disagreement | 1 of 54 / 5 of 96 | 7 % / 12 % |
+
+- No arm meets the criteria of Section 6.3 ([research §18.6](../research/computer-use-s0-s1.md#186-the-planner-declares-each-steps-effect)).
+- The planner alone misses a third of the actions that should ask, so it cannot be the gate.
+- The remaining misses are mostly shared by the planner and the guardian: "Revert", "Replace", `git reset --hard` and shortcuts. Because the two agree on these, a thought read is never requested for them.
+- A read with thought reduced needless asks to about the 10-percent bound. In a quarter of the actions it costs 2 to 3 s.
 
 ## 8. Open questions
 
