@@ -184,7 +184,8 @@ Two ways to combine it with the guardian are evaluated:
 ## 8. Approval by a person
 
 - A verdict of ask stops the step before any input is sent. When the main Pi session has an interface, the harness asks there with a confirmation dialog, "Computer use needs approval". The dialog shows the application, the window, the action with its control, keys or text, the window's shown text, and why it asks: the guardian's effect and reach, or the user's `ask_before`.
-- The delegated agent runs without an interface. It reaches the main session's interface through an approval channel that the main session's installation registers in the same process. The parent agent never answers an approval: no tool offers it one.
+- The delegated agent runs without an interface. It reaches the main session's interface through an approval channel that the main session's installation registers in the same process (`extensions/secretary/computer-use/approval.ts`) and removes when that session ends. The parent agent never answers an approval: no tool offers it one.
+- The dialog lists the facts of the action before the agent's step and goal, because the agent's words describe what it intends, not what the action does.
 - **Approved:** the action is sent. The approval covers that one action; a later attempt or a new plan asks again.
 - **Declined:** the plan stops with `approval_denied`. The planner reports it and does not reach the goal another way.
 - **Nobody to ask:** in a session without an interface (print mode, RPC, a benchmark), or when nobody answers within 5 minutes (*provisional*, `computerUse.approvalTimeoutMs`), the plan stops with `approval_required`. The planner reports that a person must approve the step. Nothing was sent.
@@ -203,7 +204,7 @@ Each judged action writes one record, `permission-<step>-<attempt>-<time>.json` 
 - the mode, the environment, and the guarded action, with typed text replaced by its length when `redactTypedText` is on;
 - each request's state and answers, and its round trip;
 - the verdict and why: `guardian`, `ask_before`, `doubt` or `mode`;
-- when a person was asked: `approved`, `declined`, `no_interface` or `timeout`, and how long the answer took.
+- when a person was asked: `approved`, `declined`, `no_interface`, `timeout` or `cancelled` (the run was cancelled while the dialog was open), and how long the answer took.
 
 A person's answer shows what they wanted, not whether the guardian read the action correctly. A proceed that should have asked is found only when a person reviews the run; the records hold what that review needs.
 

@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { defineTool, getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { channelApprover, confirmApprover, openApprovalChannel } from "./approval.ts";
 import type { ExecutionBackend } from "./backend/backend.ts";
 import { cuaDriverRunner, LocalDriverBackend, lsappinfoFrontmost } from "./backend/local-backend.ts";
 import { RelayBackend, stdioRelayConnect, type CheckResult } from "./backend/relay-client.ts";
 import { loadComputerUseConfiguration, observationAvailable, planExecutionAvailable, type ComputerUseConfiguration } from "./configuration.ts";
 import { ExecutorClient } from "./executor-client.ts";
-import type { Executor } from "./harness.ts";
+import { describeJudgment, type Executor } from "./harness.ts";
 import type { Observation } from "./observer.ts";
 import { Telemetry } from "./telemetry.ts";
 import { executeObserve, type ObserveDetails } from "./tools/observe.ts";
@@ -66,6 +67,8 @@ export function installComputerUse(pi: ExtensionAPI, options: ComputerUseInstall
   const observedAt = new Map<string, number>();
   let lastPlanRead: { observation: Observation; at: number } | undefined;
   const diagnostic = (message: string) => { if (ctx?.hasUI) ctx.ui.notify(message, "error"); };
+  // Permissions design §8: the main session, when it has an interface, answers the delegated agents' approvals.
+  let closeApprovals: (() => void) | undefined;
 
   pi.on("session_start", async (_event, context) => {
     ctx = context;
@@ -80,7 +83,12 @@ export function installComputerUse(pi: ExtensionAPI, options: ComputerUseInstall
     offered = [];
     if (!observationAvailable(config)) return;
     offered = planExecutionAvailable(config) ? ["computer_observe", "computer_run_plan"] : ["computer_observe"];
-    if (!delegated) return;
+    if (!delegated) {
+      closeApprovals?.();
+      closeApprovals = context.hasUI && planExecutionAvailable(config)
+        ? openApprovalChannel(confirmApprover(context.ui, config.approvalTimeoutMs, request => describeJudgment(request.judgment))) : undefined;
+      return;
+    }
     try { await backend?.close(); }
     catch (error) { diagnostic(`Secretary computer use: ${error instanceof Error ? error.message : String(error)}`); }
     const session = createHash("sha256").update(context.sessionManager.getSessionId()).digest("hex");
@@ -126,7 +134,7 @@ export function installComputerUse(pi: ExtensionAPI, options: ComputerUseInstall
       async execute(_id, params, signal) {
         if (!backend || !config || !telemetry || !executor) throw new Error("Computer use plan execution is not configured for this session.");
         const limit = config.maxEscalationsPerRun;
-        return executeRunPlan({ deps: { backend, executor, telemetry, config }, observation: id => observations.get(id),
+        return executeRunPlan({ deps: { backend, executor, telemetry, config, approve: channelApprover }, observation: id => observations.get(id),
           previousPlanRead: id => lastPlanRead && lastPlanRead.at > (observedAt.get(id) ?? Infinity) ? lastPlanRead.observation : undefined,
           recordPlanRead: observation => { lastPlanRead = { observation, at: ++sequence }; },
           escalations: { used: escalationsUsed, limit, record: () => { escalationsUsed++; } } }, params, signal);
@@ -147,6 +155,8 @@ export function installComputerUse(pi: ExtensionAPI, options: ComputerUseInstall
   // stopped run does not finish stopping, until the lease is finished or released.
   pi.on("agent_settled", closeBackend);
   pi.on("session_shutdown", async () => {
+    closeApprovals?.();
+    closeApprovals = undefined;
     await closeBackend();
     backend = undefined;
   });

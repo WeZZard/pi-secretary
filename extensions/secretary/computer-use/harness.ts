@@ -79,7 +79,7 @@ export interface PlanResult {
 export interface Executor { decide(body: DecisionRequestBody, signal?: AbortSignal): Promise<DecisionResponse> }
 
 /** A person's answer to an approval request (permissions design §8). */
-export type ApprovalAnswer = "approved" | "declined" | "no_interface" | "timeout";
+export type ApprovalAnswer = "approved" | "declined" | "no_interface" | "timeout" | "cancelled";
 export interface ApprovalRequest { goal: string; intent: string; action: GuardedAction; judgment: Judgment }
 /** Asks a person; the harness never asks the planner or the parent agent (permissions design §8). */
 export type Approver = (request: ApprovalRequest, signal?: AbortSignal) => Promise<ApprovalAnswer>;

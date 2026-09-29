@@ -122,3 +122,38 @@ test("the main session registers no computer tools and creates no backend, and o
   await child.emit("session_start");
   assert.deepEqual(child.tools.map(tool => tool.name), ["computer_observe", "computer_run_plan"], "A delegated session registers the tools");
 });
+
+test("a delegated agent's approval reaches the main session's dialog, and without an interface nobody is asked (permissions design §8)", async (t) => {
+  const config = { computerUse: { backend: "local", allowLocalDesktop: true, executorUrl: "http://jev.home.arpa", settleMs: 0, approvalTimeoutMs: 60_000 } };
+  const read = (label: string) => ({ window: { pid: 1, windowId: 1, app: "Form", title: "Form" }, appActive: true, truncated: false, elements: [
+    { element_index: 0, role: "AXWindow", label: "Form", depth: 0, frame: { x: 0, y: 0, w: 800, h: 600 } },
+    { element_index: 1, role: "AXButton", label, parent_index: 0, depth: 1, frame: { x: 100, y: 50, w: 80, h: 20 } }] });
+  const dialogs: { title: string; message: string; timeout?: number }[] = [];
+  const parent = host(t, config);
+  (parent.ctx.ui as Record<string, unknown>).confirm = async (title: string, message: string, opts?: { timeout?: number }) => {
+    dialogs.push({ title, message, ...(opts?.timeout ? { timeout: opts.timeout } : {}) }); return true;
+  };
+  installComputerUse(parent.pi, { root: parent.root, agentDir: () => parent.agentDir });
+  await parent.emit("session_start");
+
+  const backend = new FakeBackend({ Form: [read("Send"), read("Sent"), read("Send")] });
+  const child = host(t, config);
+  child.ctx.hasUI = false;
+  const executor = withGuardian({ decide: async () => ({ roundTripMs: 1, answers: { element_1: { choice: "A", confidence: 0.99 }, operation: { choice: "click", confidence: 0.99 }, risk: { choice: "safe", confidence: 0.99 } } }) },
+    () => ({ effect: ["change", 0.9], reach: ["outside", 0.9] }));
+  delegatedInstall(child.pi, { root: child.root, agentDir: () => child.agentDir, backendFactory: () => backend, executorFactory: () => executor });
+  await child.emit("session_start");
+  const runPlanTool = child.tools.find(tool => tool.name === "computer_run_plan");
+  const run = () => runPlanTool.execute("r", { app: "Form", goal: "Send the form", steps: [{ id: "send", intent: "Send it", postcondition: { exists: { name: "Sent" } } }] }, undefined);
+  assert.equal((await run()).details.outcome, "completed");
+  assert.equal(dialogs.length, 1);
+  assert.equal(dialogs[0]!.title, "Computer use needs approval");
+  assert.equal(dialogs[0]!.timeout, 60_000);
+  assert.match(dialogs[0]!.message, /Action: click Button "Send"\nWhy it asks: the permission guardian judged that its effect leaves this machine\./);
+
+  await parent.emit("session_shutdown");
+  const stopped = await run();
+  assert.equal(stopped.details.escalation, "approval_required", "After the main session ends, nobody can be asked");
+  assert.equal(dialogs.length, 1);
+  assert.equal(backend.actions.length, 1);
+});
