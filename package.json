@@ -68,6 +68,6 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
-    "@wezzard/mcp-vm-relay": "0.7.0"
+    "@wezzard/mcp-vm-relay": "0.8.0"
   }
 }
