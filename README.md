@@ -105,7 +105,7 @@ model: inherit
 
 ## Computer use
 
-Secretary can delegate a task in one open macOS application window to a computer-use agent. The agent observes the window through its accessibility tree, a structured-decision executor chooses each control, real pointer and keyboard input performs it, and code checks every step. The requirements are CU-01 to CU-07 in the [computer-use requirements](docs/user-stories/computer-use.md), and the design is the [computer-use design](docs/arch/computer-use.md).
+Secretary can delegate a task in one open macOS application window to a computer-use agent. The agent observes the window through its accessibility tree, a structured-decision grounder chooses each control, and the executor, `computer_run_plan`, performs it with real pointer and keyboard input; the agent judges the result from the window after each plan. The requirements are CU-01 to CU-07 in the [computer-use requirements](docs/user-stories/computer-use.md), and the design is the [computer-use design](docs/arch/computer-use.md).
 
 - The `relay` backend runs the task in a fresh virtual machine through its own `mcp-vm-relay` server. Set `relayImage` to the relay image key, and `relayEnv` to the credential pack if the image needs one. A four-step Calculator plan completed through it in a relay virtual machine, and each read takes about 5 seconds there.
 - The development backend, `local`, operates this machine's desktop through `cua-driver`, so use it only in a disposable virtual machine or against disposable windows.
@@ -130,7 +130,7 @@ cp extensions/secretary/computer-use/templates/computer-use.md ~/.pi/agent/agent
   "computerUse": {
     "backend": "local",
     "allowLocalDesktop": true,
-    "executorUrl": "http://your-executor-host"
+    "executorUrl": "http://your-grounder-host"
   }
 }
 ```

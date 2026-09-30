@@ -20,9 +20,9 @@ test("the report shows each step's intent, answers, input path and the relay scr
   await write(join(records, "runs", "run-1", "plan.json"), {
     recordedAt: "2026-09-26T08:00:00.000Z", runId: "run-1", outcome: "completed",
     plan: { goal: "Open <Agenda>", target: { app: "Finder", windowTitle: "Documents" }, steps: [
-      { id: "open", intent: "Double-click Agenda.txt", action: "double_click", control: { name: "Agenda.txt" }, postcondition: { exists: { name: "Agenda" } } },
+      { id: "open", intent: "Double-click Agenda.txt", action: "double_click", ui_element: { name: "Agenda.txt" } },
     ] },
-    steps: [{ id: "open", result: "verified", action: "double_click", element: "Agenda.txt", evidence: ["cu-0001", "cu-0002", "cu-0003"], inputPaths: ["cgevent_hid"] }],
+    steps: [{ id: "open", result: "acted", action: "double_click", element: "Agenda.txt", evidence: ["cu-0001", "cu-0002", "cu-0003"], inputPaths: ["cgevent_hid"] }],
   });
   await write(join(records, "runs", "run-1", "step-open-1-1.json"), {
     recordedAt: "2026-09-26T08:00:01.000Z", runId: "run-1", stepId: "open", attempt: 1,

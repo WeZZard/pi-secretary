@@ -36,7 +36,7 @@ function pngOfWidth(width: number): Buffer {
   return png;
 }
 
-test("the backend converts screen points to window-local screenshot pixels with a learned scale, never an element index", async () => {
+test("the backend converts screen points to window-local screenshot pixels with a learned scale, never a UI element index", async () => {
   assert.equal(pngWidth(pngOfWidth(1312)), 1312);
   const calls: { tool: string; args: Record<string, unknown> }[] = [];
   let x = 309;

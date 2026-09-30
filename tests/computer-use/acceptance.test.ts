@@ -13,7 +13,7 @@ async function artifacts(t: TestContext, options: { parentTools?: string[]; pare
   const run = join(root, "extension-state", "computer-use", "session", "runs", "plan-1");
   await mkdir(run, { recursive: true });
   await writeFile(join(run, "plan.json"), JSON.stringify({ recordedAt: "2026-09-27T09:00:00.000Z", outcome: "completed",
-    steps: [{ id: "press-7", result: "verified", evidence: ["cu-0004", "cu-0005"] }, { id: "equals", result: "verified", evidence: ["cu-0008"] }] }));
+    steps: [{ id: "press-7", result: "acted", evidence: ["cu-0004", "cu-0005"] }, { id: "equals", result: "acted", evidence: ["cu-0008"] }] }));
   const events = [
     ...(options.parentTools ?? ["Agent", "TaskOutput"]).map(toolName => ({ type: "tool_execution_start", toolName })),
     { type: "message_end", message: { role: "toolResult", content: [{ type: "text", text: options.parentResult ?? "Completed. The display shows 10." }] } },
@@ -30,7 +30,7 @@ const ENDED = Date.parse("2026-09-27T09:02:00.000Z");
 const accCu01 = SCENARIOS.find(scenario => scenario.id === "ACC-CU-01")!;
 
 test("a completed task with released machines passes every Then step of ACC-CU-01 and ACC-CU-07", async t => {
-  const facts = collectFacts(await artifacts(t), [{ status: "succeeded", output: "The display shows 10, verified by code.", endedAt: ENDED }],
+  const facts = collectFacts(await artifacts(t), [{ status: "succeeded", output: "The display shows 10.", endedAt: ENDED }],
     [{ argv: ["/bin/zsh"], completed: true, stdout: "7+3\n10\n" }]);
   const then = [...accCu01.then(facts), ...lifecycleThen(facts)];
   assert.deepEqual(then.filter(step => step.verdict !== "passed"), []);
@@ -46,7 +46,7 @@ test("a parent that used a computer tool, saw an observation, or ended before it
     leaseFinishedAt: "2026-09-27T09:05:00.000Z" }), [{ status: "succeeded", output: "10", endedAt: ENDED }]);
   const failed = [...accCu01.then(facts), ...lifecycleThen(facts)].filter(step => step.verdict === "failed").map(step => step.step);
   assert.deepEqual(failed, [
-    "the parent's conversation contains no observation or element table of any step",
+    "the parent's conversation contains no observation or UI element table of any step",
     "the parent never called computer_observe or computer_run_plan",
     "each lease was released before the run that used it was recorded as ended",
   ]);

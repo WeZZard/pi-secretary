@@ -3,7 +3,7 @@ import type { BackendAction, Frame } from "./backend/backend.ts";
 
 /**
  * Allowlist actions (design docs/arch/computer-use.md §7.2) expanded into real-input backend actions.
- * Targets are frames from the latest snapshot; an element index is never sent to the driver.
+ * Targets are frames from the latest snapshot; a UI element index is never sent to the driver.
  */
 export type Operation = Action;
 

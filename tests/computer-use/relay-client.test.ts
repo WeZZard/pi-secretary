@@ -4,7 +4,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { BackendError } from "../../extensions/secretary/computer-use/backend/backend.ts";
-import { RelayBackend, desktopScaleOf, readProgram, stdioRelayConnect, type CheckResult, type RelayConnection } from "../../extensions/secretary/computer-use/backend/relay-client.ts";
+import { RelayBackend, acquiredLease, desktopScaleOf, readProgram, stdioRelayConnect, type CheckResult, type RelayConnection } from "../../extensions/secretary/computer-use/backend/relay-client.ts";
 
 /** Plan Phase 7: the relay client's contract with an mcp-vm-relay server (design §11.2). */
 
@@ -282,6 +282,29 @@ test("checks run on the leased machine before the finish, and a failing check is
   assert.equal(recorded.length, 1);
   assert.deepEqual(recorded[0]!.map(result => [result.completed, result.stdout]), [[false, ""], [true, "True\n"]]);
   assert.match(recorded[0]![0]!.error!, /Check: \/bin\/zsh -c fails/);
+});
+
+test("the acquired machine's package is reported, so the trajectory finds this session's evidence (design §12.3)", async () => {
+  const status = { task: "computer-use", active: true, purpose: "relay-computer-use-5502959b", output: "/work/relay-evidence/relay-computer-use-5502959b" };
+  assert.deepEqual(acquiredLease(JSON.stringify(status, null, 2)), { package: status.purpose, output: status.output });
+  assert.equal(acquiredLease("No capacity"), undefined);
+  const leases: unknown[] = [];
+  const connection: RelayConnection = {
+    async call(tool, args) {
+      if (args.diagnostic || RUN_TOOLS.has(tool)) return { text: COMPLETED, isError: false };
+      return { text: tool === "relay_acquire" ? JSON.stringify(status) : "{}", isError: false };
+    },
+    async close() {},
+  };
+  const actions: string[] = [];
+  const logged: RelayConnection = { async call(tool, args, options) { actions.push(tool); return connection.call(tool, args, options); }, async close() {} };
+  const logging = new RelayBackend({ connect: async () => logged, image: "macos26", ttlHours: 1, maxTreeNodes: 2000, foregroundDelivery: false, actionIntervalMs: 0,
+    onAcquire: lease => { leases.push(lease); throw new Error("A failed record does not stop the machine"); } });
+  await logging.readWindow({ app: "Reminders" }, { screenshot: false }).catch(() => undefined);
+  await logging.close();
+  assert.deepEqual(leases, [{ package: status.purpose, output: status.output }]);
+  assert.ok(!actions.includes("relay_release"), "a failed lease record does not release the machine");
+  assert.equal(actions.at(-1), "relay_finish");
 });
 
 test("preparation runs once after staging and the daemon wait, and a failed preparation releases the machine and is final", async () => {

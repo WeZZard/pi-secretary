@@ -20,10 +20,10 @@ test("the planner reads every action's definition in the tool schema", () => {
 
 test("a plan step's action comes from action, or from the older operation field and names", () => {
   const plan = toPlan({ app: "TextEdit", goal: "g", steps: [
-    { id: "a", intent: "Open", action: "double_click", postcondition: { changed: true } },
-    { id: "b", intent: "Type", operation: "enter_text", text: "Hi", postcondition: { changed: true } },
-    { id: "c", intent: "Save", operation: "key", keys: "cmd+s", postcondition: { changed: true } },
-    { id: "d", intent: "Look", postcondition: { changed: true } },
+    { id: "a", intent: "Open", action: "double_click" },
+    { id: "b", intent: "Type", operation: "enter_text", text: "Hi" },
+    { id: "c", intent: "Save", operation: "key", keys: "cmd+s" },
+    { id: "d", intent: "Look" },
   ] } as Parameters<typeof toPlan>[0]);
   assert.deepEqual(plan.steps.map(step => step.action), ["double_click", "type", "key", undefined]);
 });

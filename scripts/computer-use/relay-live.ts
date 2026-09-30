@@ -1,9 +1,9 @@
 /**
  * Plan Phase 7 live check: the relay client in a fresh relay virtual machine. It opens Calculator,
- * times reads and clicks, and runs a scripted plan through the real harness and executor.
+ * times reads and clicks, and runs a scripted plan through the real executor and grounder.
  * Records go to a new directory under test-results/.
  *
- *   node --experimental-strip-types scripts/computer-use/relay-live.ts [image] [reads] [executor-url]
+ *   node --experimental-strip-types scripts/computer-use/relay-live.ts [image] [reads] [grounder-url]
  *
  * Formulas, one per quantity:
  * - relay read time, ms: wall clock from calling readWindow to its return, with a screenshot, on a
@@ -16,7 +16,7 @@ import { join, resolve } from "node:path";
 import type { ExecutionBackend } from "../../extensions/secretary/computer-use/backend/backend.ts";
 import { RelayBackend, stdioRelayConnect } from "../../extensions/secretary/computer-use/backend/relay-client.ts";
 import { DEFAULT_RELAY_COMMAND, defaultComputerUseConfiguration } from "../../extensions/secretary/computer-use/configuration.ts";
-import { ExecutorClient } from "../../extensions/secretary/computer-use/executor-client.ts";
+import { DecisionServiceClient } from "../../extensions/secretary/computer-use/decision-service-client.ts";
 import { Telemetry } from "../../extensions/secretary/computer-use/telemetry.ts";
 import { executeRunPlan } from "../../extensions/secretary/computer-use/tools/run-plan.ts";
 
@@ -45,19 +45,19 @@ try {
   await driver.readWindow({ app: "Calculator" }, { screenshot: true });
   for (let i = 0; i < Number(readCount); i++) {
     const read = await backend.readWindow({ app: "Calculator" }, { screenshot: true });
-    log(`read ${i + 1}: ${Math.round(readMs.at(-1)!)} ms, ${read.elements.length} elements, screenshot ${read.screenshot ? Buffer.from(read.screenshot.data, "base64").length : 0} bytes, active ${read.appActive}`);
+    log(`read ${i + 1}: ${Math.round(readMs.at(-1)!)} ms, ${read.elements.length} UI elements, screenshot ${read.screenshot ? Buffer.from(read.screenshot.data, "base64").length : 0} bytes, active ${read.appActive}`);
   }
   readMs.length = 0;
   for (let i = 0; i < Number(readCount); i++) await backend.readWindow({ app: "Calculator" }, { screenshot: true });
   const plan = { app: "Calculator", goal: "Compute 7 plus 3", steps: [
-    { id: "seven", intent: "Press 7", postcondition: { text: { endsWith: "7" } } },
-    { id: "plus", intent: "Press Add", postcondition: { changed: true } },
-    { id: "three", intent: "Press 3", postcondition: { text: { endsWith: "3" } } },
-    { id: "equals", intent: "Press Equals", postcondition: { text: { endsWith: "10" } } },
+    { id: "seven", intent: "Press 7" },
+    { id: "plus", intent: "Press Add" },
+    { id: "three", intent: "Press 3" },
+    { id: "equals", intent: "Press Equals" },
   ] };
   const readsBeforePlan = readMs.length;
   const result = await executeRunPlan({
-    deps: { backend, executor: new ExecutorClient({ baseUrl: url, timeoutMs: config.executorTimeoutMs }), telemetry: new Telemetry(out), config },
+    deps: { backend, grounder: new DecisionServiceClient({ baseUrl: url, timeoutMs: config.executorTimeoutMs }), telemetry: new Telemetry(out), config },
     observation: () => undefined, escalations: { used: 0, limit: config.maxEscalationsPerRun, record: () => {} },
   }, plan as never);
   const text = (result.content[0] as { text: string }).text;

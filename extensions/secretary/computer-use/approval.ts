@@ -1,7 +1,7 @@
-import type { ApprovalAnswer, ApprovalRequest, Approver } from "./harness.ts";
+import type { ApprovalAnswer, ApprovalRequest, Approver } from "./executor.ts";
 
 /**
- * The approval channel (design docs/arch/computer-use-permissions.md §8). The delegated agent runs
+ * The approval channel (design docs/arch/computer-use.md §8.5). The delegated agent runs
  * without an interface, so the main session's installation registers the person's confirmation
  * dialog here, in the same process. The parent agent has no tool that reaches it.
  */
@@ -35,7 +35,7 @@ const cut = (text: string) => { const flat = text.replace(/\s+/g, " ").trim(); r
 /** The dialog's message: the facts of the action first, then why it asks, then the planner's own words. */
 export function approvalMessage(request: ApprovalRequest, reason: string, timeoutMs: number): string {
   const { action } = request;
-  const target = action.control ? ` ${action.control.role.replace(/^AX/, "")} ${JSON.stringify(cut(action.control.name))}`
+  const target = action.ui_element ? ` ${action.ui_element.role.replace(/^AX/, "")} ${JSON.stringify(cut(action.ui_element.name))}`
     : action.keys !== undefined ? ` ${action.keys}` : "";
   const lines = [
     `Application: ${cut(action.app)}`,

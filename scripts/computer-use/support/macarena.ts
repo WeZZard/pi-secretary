@@ -1,5 +1,5 @@
 /**
- * MacArena tasks in relay machines (evaluation design docs/arch/computer-use-evaluation.md §3 and §4):
+ * MacArena tasks in relay machines (evaluation design docs/testing/computer-use-evaluation.md §3 and §4):
  * turn a shell-checked task into setup and check commands, score the check as MacArena does, and
  * give a failed run one cause from its records.
  */
@@ -113,7 +113,7 @@ export function machineUnavailable(input: { checks: CheckResult[] | undefined; s
 }
 
 /**
- * One cause per failed run, in the order of design §4, after the two harness causes. `state` is the run's extension-state
+ * One cause per failed run, in the order of design §4, after the two causes in the evaluation setup. `state` is the run's extension-state
  * directory, which holds the computer-use records and the child agent's session.
  * "Reported success" means the last plan completed with every step checked by code: the agent's
  * own checks passed while the task's check failed.
@@ -128,7 +128,7 @@ export function classify(input: { score: number | undefined; checks: CheckResult
     .map(path => json<{ rule: string }>(path)).filter((rejection): rejection is { rule: string } => !!rejection);
   const session = sessionText(input.state);
   const last = plans.at(-1);
-  // Harness failures come first: they say nothing about the agent.
+  // Failures of the evaluation setup come first: they say nothing about the agent.
   if (/\(Prepare: [\s\S]{0,4000}?\) was (?:completed|uncertain|failed)/.test(session)) return "setup_failed";
   if (input.score === undefined || input.checks!.some(result => !result.completed && result.argv[0] !== "/bin/sleep")) return "check_failed";
   if (last?.outcome === "completed") return "false_success";

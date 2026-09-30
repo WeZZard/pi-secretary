@@ -1,5 +1,5 @@
 /**
- * cua-driver's structured `elements` array holds only indexed elements. The text that names
+ * cua-driver's structured `elements` array holds only indexed UI elements. The text that names
  * many rows and cells, such as a sidebar's "Downloads", is an unindexed AXStaticText child that
  * appears only in `tree_markdown` (observed 2026-09-23 on Finder and the TextEdit Open panel).
  * This parser attaches each unindexed static text to its nearest indexed ancestor, so the

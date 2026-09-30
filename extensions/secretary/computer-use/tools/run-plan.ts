@@ -1,26 +1,33 @@
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
+import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import type { Static } from "typebox";
 import { toAction } from "../actions.ts";
-import { controlMatches, runPlan, validatePlan, type HarnessDependencies, type Plan, type PlanResult } from "../harness.ts";
+import { uiElementMatches, runPlan, validatePlan, type ExecutorDependencies, type Plan, type PlanResult } from "../executor.ts";
 import type { Observation } from "../observer.ts";
-import type { Postcondition } from "../verifier.ts";
+import type { ObserveDetails } from "./observe.ts";
 import type { runPlanSchema } from "./schemas.ts";
 
 /** `computer_run_plan` (design docs/arch/computer-use.md §5.2 and §5.4). */
 
-export interface RunPlanDetails { outcome: PlanResult["outcome"] | "rejected"; decisions: number; actions: number; escalation?: string; error?: string; rule?: string }
+export interface RunPlanDetails {
+  outcome: PlanResult["outcome"] | "rejected"; decisions: number; actions: number; escalation?: string; error?: string; rule?: string;
+  /** The observation of the window after the plan, which a next plan can name in `based_on` (design §5.4). */
+  observationId?: string;
+}
 
 export interface RunPlanContext {
-  deps: HarnessDependencies;
+  deps: ExecutorDependencies;
   /** The remembered observation with this id; the plan acts on its window. */
   observation(id: string): Observation | undefined;
   /**
    * The last read of the previous plan in this session, when that plan ran after the observation
-   * `basedOn` names; the start check accepts it as a change this harness made itself (design §9).
+   * `basedOn` names; the start check accepts it as a change this executor made itself (design §9).
    */
   previousPlanRead?(basedOn: string): Observation | undefined;
   /** Remembers a plan's last read for the next plan's start check. */
   recordPlanRead?(observation: Observation): void;
+  /** Reads the plan's window as `computer_observe` does, for the planner to judge the result (design §5.3 and §5.4). */
+  observeAfter?(target: { app: string; window_title?: string; windowId?: number }, signal?: AbortSignal): Promise<AgentToolResult<ObserveDetails>>;
   /** Escalations already returned in this session, and the configured limit. */
   escalations: { used: number; limit: number; record(): void };
 }
@@ -37,48 +44,28 @@ export function toPlan(params: Static<typeof runPlanSchema>, basedOn?: Observati
     target: { app: params.app, ...(params.window_title ? { windowTitle: params.window_title } : {}), ...(basedOn ? { windowId: basedOn.window.windowId } : {}) },
     goal: params.goal,
     ...(params.ask_before ? { askBefore: params.ask_before } : {}),
-    steps: params.steps.map(step => ({ id: step.id, intent: step.intent, postcondition: step.postcondition as Postcondition,
+    steps: params.steps.map(step => ({ id: step.id, intent: step.intent,
       ...(toAction(step.action ?? step.operation) ? { action: toAction(step.action ?? step.operation)! } : {}), ...(step.text !== undefined ? { text: step.text } : {}),
-      ...(step.keys !== undefined ? { keys: step.keys } : {}), ...(step.max_attempts !== undefined ? { maxAttempts: step.max_attempts } : {}),
-      ...(step.idempotent !== undefined ? { idempotent: step.idempotent } : {}),
-      ...(step.control !== undefined ? { control: step.control } : {}),
+      ...(step.keys !== undefined ? { keys: step.keys } : {}),
+      ...(step.ui_element !== undefined ? { ui_element: step.ui_element } : {}),
       ...(step.position !== undefined ? { position: step.position } : {}) })),
   };
 }
 
-/**
- * Fix plan F-9: the result lists exactly what code verified, so the planner can report only that.
- * `plan` supplies each step's postcondition.
- */
-export function verifiedFacts(result: PlanResult, plan: Plan): string[] {
-  const lines: string[] = [];
-  const verified = result.steps.filter(step => step.result === "verified");
-  const unverified = result.steps.filter(step => step.result === "weakly_verified");
-  if (verified.length) {
-    lines.push("", "Verified by code after the step (report only these facts as checked):");
-    for (const step of verified) lines.push(`- ${step.id}: ${JSON.stringify(plan.steps.find(candidate => candidate.id === step.id)?.postcondition)} held`);
-  }
-  if (unverified.length) {
-    lines.push("", "Not verified (only a change on screen was seen):");
-    for (const step of unverified) lines.push(`- ${step.id}`);
-  }
-  return lines;
-}
-
-export function formatResult(result: PlanResult, plan?: Plan): string {
-  const lines = [`Outcome: ${result.outcome}. Executor decisions: ${result.decisions}. Actions: ${result.actions}.`];
+/** What each step did; `acted` says input was sent, not that the step worked (design §5.4). */
+export function formatResult(result: PlanResult): string {
+  const lines = [`Outcome: ${result.outcome}. Grounder decisions: ${result.decisions}. Actions: ${result.actions}.`];
   for (const step of result.steps) {
-    lines.push(`- ${step.id}: ${step.result.replace("_", " ")}${step.action ? `, ${step.action}${step.element ? ` ${JSON.stringify(step.element)}` : ""}` : ""}${step.detail ? ` (${step.detail})` : ""}`);
+    lines.push(`- ${step.id}: ${step.result.replace("_", " ")}${step.action ? `, ${step.action}${step.element ? ` ${JSON.stringify(step.element)}` : ""}` : ""}${step.detail && step.result !== "stopped" ? ` (${step.detail})` : ""}`);
   }
+  // A stopped step's reason is the escalation below.
   if (result.escalation) {
-    const { stepId, reason, detail, prior, observation } = result.escalation;
+    const { stepId, reason, detail, prior } = result.escalation;
     lines.push("", `Escalation at step ${stepId}: ${reason}. ${detail}`);
     if (prior && (prior.element || prior.region || prior.operation)) {
-      lines.push(`Executor prior: ${[prior.operation, prior.element && JSON.stringify(prior.element), prior.region && `in ${prior.region}`].filter(Boolean).join(" ")}.`);
+      lines.push(`Grounder prior: ${[prior.operation, prior.element && JSON.stringify(prior.element), prior.region && `in ${prior.region}`].filter(Boolean).join(" ")}.`);
     }
-    if (observation) lines.push("", "Current window:", observation);
   }
-  if (plan) lines.push(...verifiedFacts(result, plan));
   return lines.join("\n");
 }
 
@@ -96,15 +83,26 @@ export async function executeRunPlan(context: RunPlanContext, params: Static<typ
   if (problem) return rejected(context, params, problem.rule, problem.message);
   // Design §6.5: until the iOS actions of §7.2 are built, a step may not target the Simulator's device screen.
   const iosStep = basedOn && plan.steps.find(step => {
-    const matches = step.control ? controlMatches(basedOn, step.control) : [];
+    const matches = step.ui_element ? uiElementMatches(basedOn, step.ui_element) : [];
     return matches.length > 0 && matches.every(element => element.platform === "ios");
   });
   if (iosStep) {
-    return rejected(context, params, "ios_target", `step ${iosStep.id}: ${JSON.stringify(iosStep.control!.name)} is on the iOS screen of the Simulator, and iOS targets are not supported yet. Report this instead of acting another way.`);
+    return rejected(context, params, "ios_target", `step ${iosStep.id}: ${JSON.stringify(iosStep.ui_element!.name)} is on the iOS screen of the Simulator, and iOS targets are not supported yet. Report this instead of acting another way.`);
   }
   const result = await runPlan(context.deps, plan, signal);
   if (result.last) context.recordPlanRead?.(result.last);
   if (result.outcome === "escalated") context.escalations.record();
-  return { content: [{ type: "text", text: formatResult(result, plan) }],
-    details: { outcome: result.outcome, decisions: result.decisions, actions: result.actions, ...(result.escalation ? { escalation: result.escalation.reason } : {}) } };
+  const details: RunPlanDetails = { outcome: result.outcome, decisions: result.decisions, actions: result.actions, ...(result.escalation ? { escalation: result.escalation.reason } : {}) };
+  // Design §5.4: the window after the plan is what the planner judges. A cancelled call reads nothing more.
+  if (result.outcome === "cancelled" || !context.observeAfter) return { content: [{ type: "text", text: formatResult(result) }], details };
+  const after = await context.observeAfter({ app: params.app, ...(params.window_title ? { window_title: params.window_title } : {}),
+    ...(result.last ? { windowId: result.last.window.windowId } : plan.target.windowId !== undefined ? { windowId: plan.target.windowId } : {}) }, signal);
+  const [first, ...rest] = after.content as (TextContent | ImageContent)[];
+  const window = first?.type === "text" ? first.text : "";
+  // Decision PS-D20: this window is the next plan's based_on. When it could not be read, the planner observes first.
+  const section = after.details.status === "ready"
+    ? `The window after the plan. Judge the result from it; no step above was checked. The next plan's based_on is its Observation.\n${window}`
+    : `The window after the plan could not be read, so call computer_observe before the next plan.\n${window}`;
+  return { content: [{ type: "text", text: `${formatResult(result)}\n\n${section}` }, ...rest],
+    details: { ...details, ...(after.details.status === "ready" ? { observationId: after.details.observationId } : {}) } };
 }

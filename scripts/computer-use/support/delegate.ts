@@ -1,7 +1,7 @@
 /**
  * One live delegation: a real Pi parent in RPC mode delegates a desktop task to the computer-use
  * agent definition, which runs through the relay client in a fresh relay virtual machine, with the
- * real LiteLLM model and the executor. It makes model calls. Used by the live delegation script and
+ * real LiteLLM model and the grounder. It makes model calls. Used by the live delegation script and
  * the MacArena task runner (evaluation design §3).
  */
 import { spawn } from "node:child_process";
@@ -15,6 +15,7 @@ import { DEFAULT_RELAY_COMMAND } from "../../../extensions/secretary/computer-us
 import type { CheckResult } from "../../../extensions/secretary/computer-use/backend/relay-client.ts";
 import { writeRunReport } from "../../../extensions/secretary/computer-use/report.ts";
 import { relayLeases, stopPi } from "./stop-pi.ts";
+import { trajectoryInputs, viewerCommand } from "../trajectory.ts";
 
 export interface DelegationInput {
   /** Artifact directory name under test-results/e2e/. */
@@ -24,7 +25,7 @@ export interface DelegationInput {
   /** Commands run in the machine after the child run and before the lease is finished. */
   check?: string[][];
   modelId: string;
-  executorUrl: string;
+  grounderUrl: string;
   timeoutMs?: number;
   /** The relay server command; the published package by default. */
   relayCommand?: string[];
@@ -67,12 +68,12 @@ export async function delegate(input: DelegationInput): Promise<DelegationResult
       relayCommand: ["/usr/bin/env", `HOME=${homedir()}`, ...(input.relayCommand ?? DEFAULT_RELAY_COMMAND)],
       relayPrepare: input.prepare,
       ...(input.check?.length ? { relayCheck: input.check } : {}),
-      executorUrl: input.executorUrl, executorTimeoutMs: 60_000,
+      executorUrl: input.grounderUrl, executorTimeoutMs: 60_000,
     },
   }, null, 2));
 
   const prompt = `Delegate this task to the computer-use agent and do not use the computer tools yourself: ${input.task} `
-    + "When the agent finishes, tell me its result and what it verified.";
+    + "When the agent finishes, tell me its result and what the window showed.";
   const args = [join(environment.repository, "node_modules/@earendil-works/pi-coding-agent/dist/cli.js"), "--no-extensions",
     ...environment.extensions.flatMap(extension => ["--extension", extension]),
     // Pi runs on the host. Without its built-in tools, the parent cannot read or act on the host's
@@ -152,6 +153,8 @@ export async function delegate(input: DelegationInput): Promise<DelegationResult
     title: `Computer use: ${input.name}`,
   });
   log(`Report: ${report.path} (${report.plans} plans, ${report.steps} steps, ${report.screenshots} screenshots)`);
+  // The viewer shows each computer-use agent's prompts, messages, calls and machine steps (decisions PS-D17, PS-D18).
+  if (trajectoryInputs(environment.artifacts).length) log(`Trajectory viewer: ${viewerCommand(environment.artifacts)}`);
   const checkFile = checkRecords().sort().at(-1);
   const checks = checkFile ? (JSON.parse(readFileSync(checkFile, "utf8")) as { results: CheckResult[] }).results : undefined;
   return { artifacts: environment.artifacts, runs: all, ...(checks ? { checks } : {}), elapsedMs: Date.now() - started, unfinishedLeases: unfinished(), log };

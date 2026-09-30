@@ -4,7 +4,7 @@ import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
 
 /** The `computerUse` object of secretary.json (design docs/arch/computer-use.md §4.5). */
 export type InputMode = "ordinary" | "accessibility-test";
-/** Permissions design docs/arch/computer-use-permissions.md §2, decision PS-D13. */
+/** Design docs/arch/computer-use.md §8.1, decision PS-D13. */
 export type PermissionMode = "ask" | "auto" | "bypass";
 
 export interface ComputerUseConfiguration {
@@ -16,7 +16,6 @@ export interface ComputerUseConfiguration {
   maxElements: number;
   maxTreeNodes: number;
   maxNameLength: number;
-  maxActionsPerPlan: number;
   maxEscalationsPerRun: number;
   settleMs: number;
   redactTypedText: boolean;
@@ -32,13 +31,13 @@ export interface ComputerUseConfiguration {
    * action performed through accessibility stops the plan; `accessibility-test` allows it.
    */
   inputMode: InputMode;
-  /** Permissions design §2: who decides whether an action may be sent. */
+  /** Design §8.1: who decides whether an action may be sent. */
   permissionMode: PermissionMode;
-  /** Permissions design §4: a guardian answer below this confidence is doubt, which asks. Provisional (PS-D15). */
+  /** Design §8.3: a guardian answer below this confidence is doubt, which asks. Provisional (PS-D15). */
   permissionGate: number;
-  /** Permissions design §5: the guardian's thought budget in tokens; 0 sends no `think`. Provisional (PS-D15). */
+  /** Design §8.4: the guardian's thought budget in tokens; 0 sends no `think`. Provisional (PS-D15). */
   permissionThink: number;
-  /** Permissions design §8: how long a person has to answer an approval before the plan stops. Provisional (PS-D15). */
+  /** Design §8.5: how long a person has to answer an approval before the plan stops. Provisional (PS-D15). */
   approvalTimeoutMs: number;
   allowLocalDesktop: boolean;
   localDriverPath: string;
@@ -73,7 +72,6 @@ export const defaultComputerUseConfiguration = (): ComputerUseConfiguration => (
   maxElements: 240,
   maxTreeNodes: 2000,
   maxNameLength: 48,
-  maxActionsPerPlan: 100,
   maxEscalationsPerRun: 5,
   settleMs: 300,
   redactTypedText: true,
@@ -104,7 +102,6 @@ const VALIDATORS: Record<Field, { check: (value: unknown) => boolean; expected: 
   maxElements: { check: integer(1), expected: "a positive integer" },
   maxTreeNodes: { check: integer(1), expected: "a positive integer" },
   maxNameLength: { check: integer(8, 200), expected: "an integer from 8 to 200" },
-  maxActionsPerPlan: { check: integer(1), expected: "a positive integer" },
   maxEscalationsPerRun: { check: integer(0), expected: "a non-negative integer" },
   settleMs: { check: integer(0, 60_000), expected: "an integer from 0 to 60000" },
   redactTypedText: { check: value => typeof value === "boolean", expected: "a boolean" },
@@ -161,6 +158,6 @@ export function loadComputerUseConfiguration(cwd: string, agentDir: string, trus
   return result;
 }
 
-/** Observation needs only a backend; plan execution also needs the executor (design §4.3). */
+/** Observation needs only a backend; plan execution also needs the grounder (design §4.3). */
 export const observationAvailable = (config: ComputerUseConfiguration): boolean => config.backend !== "none";
 export const planExecutionAvailable = (config: ComputerUseConfiguration): boolean => observationAvailable(config) && config.executorUrl !== undefined;

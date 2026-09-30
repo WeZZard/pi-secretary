@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { ExecutorError, type DecisionRequestBody, type DecisionResponse } from "../../extensions/secretary/computer-use/executor-client.ts";
+import { DecisionServiceError, type DecisionRequestBody, type DecisionResponse } from "../../extensions/secretary/computer-use/decision-service-client.ts";
 import {
   buildAskBeforeRequest, buildGuardianRequest, buildGuardianRequests, expectedVerdict, GUARDIAN_QUESTIONS, guardianVerdict, guardianVerdictAll, judgeAction,
   type Effect, type Environment, type GuardedAction, type PermissionMode, type Reach,
 } from "../../extensions/secretary/computer-use/guardian.ts";
 
 const deleteDialog: GuardedAction = {
-  app: "Finder", window: "Documents", action: "click", control: { role: "AXButton", name: "Delete" },
+  app: "Finder", window: "Documents", action: "click", ui_element: { role: "AXButton", name: "Delete" },
   shownText: ["Are you sure you want to delete “Q3 report.pdf”?", "You can’t undo this action."],
 };
 const answers = (effect: string, reach: string, confidence = 0.99) =>
@@ -27,21 +27,21 @@ test("the same action always gives the same request, byte for byte, with no seed
 
 test("the state keeps the design's key order and omits absent values", () => {
   const typed = buildGuardianRequest({ app: "TextEdit", window: "Draft.txt", action: "type",
-    control: { role: "AXTextArea", name: "Draft", value: "Hello" }, text: "world", shownText: [] }).state as Record<string, unknown>;
-  assert.deepEqual(Object.keys(typed), ["app", "window", "action", "control", "control_value", "text"]);
-  assert.equal(typed.control, 'TextArea "Draft"');
+    ui_element: { role: "AXTextArea", name: "Draft", value: "Hello" }, text: "world", shownText: [] }).state as Record<string, unknown>;
+  assert.deepEqual(Object.keys(typed), ["app", "window", "action", "ui_element", "ui_element_value", "text"]);
+  assert.equal(typed.ui_element, 'TextArea "Draft"');
   const key = buildGuardianRequest({ app: "Finder", window: "Documents", action: "key", keys: "cmd+delete",
-    control: { role: "AXRow", name: "ignored for keys" } }).state as Record<string, unknown>;
+    ui_element: { role: "AXRow", name: "ignored for keys" } }).state as Record<string, unknown>;
   assert.deepEqual(key, { app: "Finder", window: "Documents", action: "key", keys: "cmd+delete" });
   assert.ok(Object.values(key).every(value => value !== null));
 });
 
 test("strings drop bidirectional marks, collapse white space and are cut with an ellipsis", () => {
   const state = buildGuardianRequest({ app: "  Calculator ", window: "‎7+3\n\n 10", action: "click",
-    control: { role: "AXButton", name: "x".repeat(300) }, shownText: Array.from({ length: 20 }, (_, i) => `line ${i} ${"y".repeat(200)}`) }).state as Record<string, unknown>;
+    ui_element: { role: "AXButton", name: "x".repeat(300) }, shownText: Array.from({ length: 20 }, (_, i) => `line ${i} ${"y".repeat(200)}`) }).state as Record<string, unknown>;
   assert.equal(state.app, "Calculator");
   assert.equal(state.window, "7+3 10");
-  assert.equal(state.control, `Button ${JSON.stringify(`${"x".repeat(199)}…`)}`);
+  assert.equal(state.ui_element, `Button ${JSON.stringify(`${"x".repeat(199)}…`)}`);
   const shown = state.shown_text as string[];
   assert.equal(shown.length, 12);
   assert.ok(shown.every(text => text.length === 160 && text.endsWith("…")));
@@ -105,7 +105,7 @@ test("the guardian cases are well formed, unique, and both sets cover every cate
     assert.ok(["local", "outside"].includes(c.reach), c.id);
     assert.ok(c.reach === "outside" ? c.effect === null : ["none", "change", "destroy"].includes(c.effect!), `${c.id}: an outside case has no effect label; a local one has one`);
     assert.ok(["click", "double_click", "right_click", "type", "key"].includes(c.action.action), c.id);
-    assert.ok(c.action.action === "key" ? c.action.keys : c.action.control, `${c.id}: a key case has keys; others have a control`);
+    assert.ok(c.action.action === "key" ? c.action.keys : c.action.ui_element, `${c.id}: a key case has keys; others have an element`);
     if (c.action.action === "type") assert.ok(c.action.text !== undefined, c.id);
     buildGuardianRequest(c.action);
   }
@@ -147,9 +147,9 @@ test("a judgment sends both requests when the window shows text, with the though
 test("doubt asks: an answer below the gate, a missing answer, or a failed request", async () => {
   assert.equal((await judgeAction(service({ with: answers("none", "local", 0.5) }), deleteDialog, judge)).reason, "doubt");
   assert.equal((await judgeAction(service({}), deleteDialog, judge)).reason, "doubt");
-  const failed = await judgeAction(service({ fail: new ExecutorError("timeout", "no answer in 60000 ms") }), deleteDialog, judge);
+  const failed = await judgeAction(service({ fail: new DecisionServiceError("timeout", "no answer in 60000 ms") }), deleteDialog, judge);
   assert.deepEqual([failed.verdict, failed.reason, failed.requests[0]!.error], ["ask", "doubt", "no answer in 60000 ms"]);
-  await assert.rejects(judgeAction(service({ fail: new ExecutorError("aborted", "cancelled") }), deleteDialog, judge), /cancelled/, "A cancelled run is not doubt");
+  await assert.rejects(judgeAction(service({ fail: new DecisionServiceError("aborted", "cancelled") }), deleteDialog, judge), /cancelled/, "A cancelled run is not doubt");
 });
 
 test("ask_before is judged apart from the window text, and can only add an approval (decision PS-D16)", async () => {

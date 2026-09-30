@@ -40,11 +40,11 @@
 
 | Document | Current role |
 | --- | --- |
-| [Requirements](user-stories/computer-use.md) | They are the required outcomes, CU-01 to CU-07, approved on 2026-09-24. |
-| [Technical design](arch/computer-use.md) | It is the design for a computer-use subagent in which a planner model plans, a structured-decision executor chooses one element per step, and code verifies each step. The observer, executor path, step harness and planner tools are implemented with the local driver backend. The relay backend and delegation from a parent agent are not. |
-| [Permissions](arch/computer-use-permissions.md) | It defines the permission modes for destructive actions (decision PS-D13), the guardian request that classifies an action's effect, and the evaluation that decides whether the executor service becomes the guardian (PS-D14). It is a draft; the guardian's evaluation is built first. |
-| [Evaluation design](arch/computer-use-evaluation.md) | It defines the ship gate, the benchmark run on MacArena and how counted failures choose the next change (decision PS-D9). It is a draft and is not implemented. |
-| [Planner and executor investigation](research/computer-use-s0-s1.md) | It records the measurements of the executor service from 2026-09-22 and the live checks, through standalone scripts and through Pi, from 2026-09-23, with their verification limits. |
+| [Requirements](user-stories/computer-use.md) | They are the required outcomes: CU-01 to CU-07, approved on 2026-09-24, and CU-08, added by decision PS-D17 on 2026-09-30. |
+| [Interaction design](ux/computer-use.md) | It specifies the trajectory viewer, the relay's review app moved into the extension (decisions PS-D17 and PS-D18). It is a draft. |
+| [Technical design](arch/computer-use.md) | It is the design for a computer-use subagent in which a planner model plans, the executor (`computer_run_plan`) runs the plan step by step, and a structured-decision grounder chooses one UI element and action per step (decision PS-D23). Section 8 defines the permission modes and the guardian that judges each action before input is sent (PS-D13 to PS-D16). The observer, grounder client, executor and planner tools are implemented with the local driver backend. The relay backend and delegation from a parent agent are not. |
+| [Evaluation](testing/computer-use-evaluation.md) | It defines the ship gate, the benchmark run on MacArena and how counted failures choose the next change (decision PS-D9), and the evaluation of the permission guardian (PS-D14). |
+| [Computer-use investigation](research/computer-use-s0-s1.md) | It records the measurements of the structured-decision service, which the record calls the executor and the design calls the grounder, from 2026-09-22 and the live checks, through standalone scripts and through Pi, from 2026-09-23, with their verification limits. |
 
 ## Generated test artifacts
 

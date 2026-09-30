@@ -1,5 +1,5 @@
 /**
- * Evaluation plan phase E0 (design docs/arch/computer-use-evaluation.md §8): list what every
+ * Evaluation plan phase E0 (design docs/testing/computer-use-evaluation.md §9): list what every
  * MacArena task needs, so each can be classified as runnable in a relay machine or not.
  *
  *   node --experimental-strip-types scripts/computer-use/macarena-inventory.ts <MacArena checkout> [probe.json]

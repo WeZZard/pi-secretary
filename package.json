@@ -44,7 +44,7 @@
     "typescript": "^5.9.3"
   },
   "scripts": {
-    "check": "tsc --noEmit",
+    "check": "tsc --noEmit && tsc --noEmit -p extensions/secretary/computer-use/viewer",
     "test": "node --experimental-strip-types --test --test-concurrency=1 tests/**/*.test.ts",
     "test:serial": "node --experimental-strip-types --test --test-concurrency=1 tests/**/*.test.ts",
     "test:subagents": "node --experimental-strip-types --test --test-concurrency=1 tests/agents/*.test.ts",
@@ -57,7 +57,8 @@
     "render:tui": "node --experimental-strip-types scripts/render-tui-recording.ts",
     "lint:acceptance": "node --experimental-strip-types scripts/check-acceptance.ts",
     "lint:mermaid": "mmlint $(find docs -name '*.md' -type f | sort)",
-    "verify": "npm run check && npm run test && npm run lint:mermaid && npm run lint:acceptance"
+    "verify": "npm run check && npm run test && npm run lint:mermaid && npm run lint:acceptance",
+    "dev:trajectory-viewer": "node --watch --experimental-strip-types scripts/computer-use/trajectory.ts"
   },
   "publishConfig": {
     "access": "public"
@@ -66,6 +67,7 @@
     "node": ">=22.15.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.30.0"
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@wezzard/mcp-vm-relay": "0.7.0"
   }
 }

@@ -9,7 +9,7 @@ import { buildDecisionRequest } from "../../extensions/secretary/computer-use/re
 /**
  * Trees recorded on 2026-09-23 with cua-driver 0.12.6 (plan Phase 2), redacted: closed-menu
  * item labels are replaced, and the test page's file path is neutral. They pin how the
- * observer treats real trees; they are not evidence of executor accuracy.
+ * observer treats real trees; they are not evidence of grounder accuracy.
  */
 const load = (name: string): WindowRead => ({ ...JSON.parse(readFileSync(join(import.meta.dirname, "fixtures/trees", `${name}.json`), "utf8")), readMs: 0 });
 const observed = (name: string) => {
@@ -27,7 +27,7 @@ test("Calculator in programmer mode: 106 buttons without containers split into 2
   assert.equal(discardSummary(result.discards).no_frame, 194, "Closed menu items are discarded");
 });
 
-test("Safari test page: the web area's links and form controls are kept, and closed menus dominate the raw tree", () => {
+test("Safari test page: the web area's links and form UI elements are kept, and closed menus dominate the raw tree", () => {
   const read = load("safari-support-page");
   const result = observed("safari-support-page");
   assert.deepEqual(result.groups.map(group => [group.name, group.elements.length]), [["toolbar", 8], ["content part 1", 25], ["content part 2", 25], ["content part 3", 22]]);
@@ -35,7 +35,7 @@ test("Safari test page: the web area's links and form controls are kept, and clo
   assert.ok(discardSummary(result.discards).no_frame > read.elements.length * 0.9, "Over 90 percent of the walked nodes are closed-menu items");
 });
 
-test("region descriptions list member names, and every recorded request fits the executor's limits", () => {
+test("region descriptions list member names, and every recorded request fits the grounder's limits", () => {
   for (const name of ["calculator", "safari-support-page"]) {
     const built = buildDecisionRequest({ goal: "g", step: { id: "s", intent: "i" }, observation: observed(name), recent: [] });
     assert.equal(built.status, "ready");

@@ -41,7 +41,7 @@
 | [goal-integration.feature](goal-integration.feature) | SA-08. | The scenarios cover attributed usage, automatic goal authority, completion, and continuation. |
 | [goal-agent-composition.feature](goal-agent-composition.feature) | SA-08. | The scenarios cover fresh delegated recovery while a goal remains blocked and standalone delegation without goal management. |
 | [output-and-headless.feature](output-and-headless.feature) | SA-01, SA-02, and SA-09. | The scenarios cover output retrieval, truncation, waiting, and behavior without a terminal. |
-| [computer-use.feature](computer-use.feature) | CU-01 to CU-07, and decision PS-D11. | The scenarios cover a completed delegated task, a result already on screen, a missing control, a refused destructive step, an application that is not open, an unavailable decision service, the main agent without computer tools, and cancellation. They run live in relay machines through `scripts/computer-use/acceptance-live.ts`, not through `npm run test:acceptance`; results are in the [computer-use verification report](../testing/computer-use-verification.md). |
+| [computer-use.feature](computer-use.feature) | CU-01 to CU-07, and decision PS-D11. | The scenarios cover a completed delegated task, a result already on screen, a missing UI element, a refused destructive step, an application that is not open, an unavailable decision service, the main agent without computer tools, and cancellation. They run live in relay machines through `scripts/computer-use/acceptance-live.ts`, not through `npm run test:acceptance`. |
 
 ## 4. Scenario Conventions
 

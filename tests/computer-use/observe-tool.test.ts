@@ -28,7 +28,7 @@ test("a ready observation returns the planner table, the screenshot, and a retri
   const { deps, remembered } = setup(t, { Finder: [{ ...finderRead(), screenshot: shot }] });
   const result = await executeObserve(deps, { app: "Finder" }, true);
   const text = result.content[0]!.type === "text" ? result.content[0]!.text : "";
-  assert.match(text, /Elements: 31 in 3 groups\. Discarded: container 4, collapsed_frame 1, disabled 1\./);
+  assert.match(text, /UI elements: 31 in 3 groups\. Discarded: container 4, collapsed_frame 1, disabled 1\./);
   assert.match(text, /toolbar:\n {2}A Button "Back"/);
   assert.deepEqual(result.content[1], { type: "image", ...shot });
   assert.equal(result.details.screenshot, "included");

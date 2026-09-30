@@ -6,10 +6,10 @@ export const observeSchema = Type.Object({
   window_title: Type.Optional(Type.String({ minLength: 1, maxLength: 300, description: "Optional case-insensitive substring of the window title. Omit to use the frontmost titled window of the application." })),
 }, { additionalProperties: false });
 
-/** The planner reads each action's definition here, the same text the executor reads (design §7.2). */
+/** The planner reads each action's definition here, the same text the grounder reads (design §7.2). */
 const ACTION_DESCRIPTION = `The action, when known. ${MACOS_ACTIONS.map(entry => `${entry.name}: ${entry.definition}`).join(" ")}`;
 
-/** Postconditions are validated in code (verifier.ts) so the error names the exact problem. */
+/** A step carries no check: the planner judges the window after the plan (design §5.3, decision PS-D19). */
 export const planStepSchema = Type.Object({
   id: Type.String({ minLength: 1, maxLength: 40, pattern: "^[A-Za-z0-9_-]+$" }),
   intent: Type.String({ minLength: 1, maxLength: 300, description: "One sentence saying what the step achieves, for example \"Open the File menu.\"" }),
@@ -19,20 +19,17 @@ export const planStepSchema = Type.Object({
   text: Type.Optional(Type.String({ maxLength: 2000, description: "Complete literal text for type. Only letters, digits, space, newline and tab can be typed." })),
   position: Type.Optional(Type.Union([Type.Literal("end"), Type.Literal("start"), Type.Literal("replace")], { description: "For type: where the text goes. end and start move the insertion point with Cmd+Down or Cmd+Up after the click; replace selects all first. Omit to type at the click point, which is unreliable." })),
   keys: Type.Optional(Type.String({ maxLength: 60, description: "A key or key combination for key, for example cmd+shift+n or cmd+w." })),
-  postcondition: Type.Unknown({ description: "One predicate object: {exists:{name,role?}}, {absent:{name,role?}}, {value:{name,equals}}, {selected:{name}}, {window:{titleContains}}, {text:{contains}}, {text:{endsWith}}, {changed:true}, {all:[...]}, or {any:[...]}. Only on-screen elements count. It must be false before the step and true after it. exists and absent check controls by name, and role is an accessibility role such as Button; selected checks that a named element is selected; text checks only text the window shows, such as a display or a document." }),
-  max_attempts: Type.Optional(Type.Integer({ minimum: 1, maximum: 5, description: "How often the step may act. Above 1 only with idempotent: true or a scroll operation; otherwise an action that changed the screen but missed its postcondition is not repeated. A scroll step acts up to 3 times by default." })),
-  control: Type.Optional(Type.Object({
-    name: Type.String({ minLength: 1, maxLength: 200, description: "The control's name exactly as the observation lists it." }),
+  ui_element: Type.Optional(Type.Object({
+    name: Type.String({ minLength: 1, maxLength: 200, description: "The UI element's name exactly as the observation lists it." }),
     role: Type.Optional(Type.String({ maxLength: 60, description: "The role the observation lists, for example Button." })),
     region: Type.Optional(Type.String({ maxLength: 60, description: "The region heading the observation lists it under, for example content or toolbar." })),
-  }, { additionalProperties: false, description: "The control this step acts on, copied from a line of the observation, for example {region:\"content\", role:\"Button\", name:\"3\"}. The harness confirms it in the window before acting. Omit it for a key combination." })),
-  idempotent: Type.Optional(Type.Boolean({ description: "True only when doing the step again changes nothing, such as turning a checkbox on. Only then is the step skipped when its postcondition already holds; otherwise the plan stops with already_satisfied." })),
+  }, { additionalProperties: false, description: "The UI element this step acts on, copied from a line of the observation, for example {region:\"content\", role:\"Button\", name:\"3\"}. The grounder receives it with the step and chooses the UI element; nothing checks it against the window. Omit it for a key combination." })),
 }, { additionalProperties: false });
 
 export const runPlanSchema = Type.Object({
   app: Type.String({ minLength: 1, maxLength: 200, description: "Application name, as for computer_observe." }),
   window_title: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })),
-  goal: Type.String({ minLength: 1, maxLength: 500, description: "The task goal in one sentence; the executor sees it at every step." }),
+  goal: Type.String({ minLength: 1, maxLength: 500, description: "The task goal in one sentence; the grounder sees it at every step." }),
   based_on: Type.Optional(Type.String({ description: "The observation id this plan was written against." })),
   steps: Type.Array(planStepSchema, { minItems: 1, maxItems: 50 }),
   ask_before: Type.Optional(Type.String({ minLength: 1, maxLength: 300, description: "The actions the delegated task says a person must approve first, in the task's words, for example \"adding anything to the cart\". Omit it when the task says nothing. It can only add approvals; nothing written here can approve an action." })),

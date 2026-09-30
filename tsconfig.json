@@ -3,7 +3,7 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2022"],
+    "lib": ["ES2023"],
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
@@ -14,5 +14,6 @@
     "isolatedModules": true,
     "types": ["node"]
   },
-  "include": ["extensions/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"]
+  "include": ["extensions/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"],
+  "exclude": ["extensions/secretary/computer-use/viewer/main.ts", "extensions/secretary/computer-use/viewer/behaviour.ts"]
 }

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { RawElement, WindowRead } from "../../extensions/secretary/computer-use/backend/backend.ts";
 import { FakeBackend } from "../../extensions/secretary/computer-use/backend/fake-backend.ts";
-import type { DecisionRequestBody, DecisionResponse } from "../../extensions/secretary/computer-use/executor-client.ts";
+import type { DecisionRequestBody, DecisionResponse } from "../../extensions/secretary/computer-use/decision-service-client.ts";
 import { AgentRepository } from "../../extensions/secretary/agents/storage/agent-repository.ts";
 import { discoverySession } from "../support/discovery-session.ts";
 import delegationFixtureExtension from "./support/delegation-fixture-extension.ts";
@@ -16,15 +16,15 @@ import { withGuardian } from "./support/guardian-answers.ts";
 const fixtureModule = resolve(import.meta.dirname, "support/delegation-fixture-extension.ts");
 const template = resolve(import.meta.dirname, "../../extensions/secretary/computer-use/templates/computer-use.md");
 
-function calculator(controls: string[]): Omit<WindowRead, "readMs"> {
+function calculator(buttons: string[]): Omit<WindowRead, "readMs"> {
   const elements: RawElement[] = [{ element_index: 0, role: "AXWindow", label: "Calculator", depth: 0, frame: { x: 0, y: 0, w: 400, h: 600 } }];
-  controls.forEach((name, i) => elements.push({ element_index: i + 1, role: "AXButton", label: name, parent_index: 0, depth: 1,
+  buttons.forEach((name, i) => elements.push({ element_index: i + 1, role: "AXButton", label: name, parent_index: 0, depth: 1,
     frame: { x: 20, y: 40 + i * 40, w: 60, h: 30 } }));
   return { window: { pid: 3, windowId: 9, app: "Calculator", title: "Calculator" }, appActive: true, truncated: false, elements };
 }
 
-/** Answers every element question with the control named "All Clear", and chooses click. */
-const executor = withGuardian({ decide: async (body: DecisionRequestBody): Promise<DecisionResponse> => {
+/** Answers every UI element question with the UI element named "All Clear", and chooses click. */
+const grounder = withGuardian({ decide: async (body: DecisionRequestBody): Promise<DecisionResponse> => {
   const table = String((body.state as { elements: string }).elements);
   const letter = table.split("\n").find(line => line.includes("All Clear"))?.trim()[0] ?? "none";
   const answers: DecisionResponse["answers"] = { operation: { choice: "click", confidence: 0.9 }, risk: { choice: "safe", confidence: 0.9 } };
@@ -36,7 +36,7 @@ test("a parent delegates a desktop task to the computer-use template, which runs
   const before = calculator(["All Clear", "7"]), after = calculator(["Clear", "7"]);
   const backend = new FakeBackend({ Calculator: [before, before, after] });
   const telemetryRoot = await mkdtemp(join(tmpdir(), "secretary-cu-"));
-  (globalThis as { computerUseDelegationFixture?: unknown }).computerUseDelegationFixture = { backend, executor, root: telemetryRoot };
+  (globalThis as { computerUseDelegationFixture?: unknown }).computerUseDelegationFixture = { backend, grounder, root: telemetryRoot };
   t.after(async () => {
     delete (globalThis as { computerUseDelegationFixture?: unknown }).computerUseDelegationFixture;
     await rm(telemetryRoot, { recursive: true, force: true });
@@ -70,9 +70,9 @@ test("a parent delegates a desktop task to the computer-use template, which runs
         const result = context.messages.at(-1) as { content: { type: string; text?: string }[] };
         observationId = /Observation: (obs-[0-9a-f]+)/.exec(result.content.map(part => part.text ?? "").join(""))?.[1] ?? "";
         return [{ type: "toolCall", name: "computer_run_plan", id: "plan", arguments: { app: "Calculator", window_title: "Calculator",
-          based_on: observationId, goal: "Clear the display", steps: [{ id: "clear", intent: "Press All Clear", postcondition: { exists: { name: "Clear" } } }] } }];
+          based_on: observationId, goal: "Clear the display", steps: [{ id: "clear", intent: "Press All Clear" }] } }];
       }
-      return [{ type: "text", text: "Completed. Verified by code: \"Clear\" is on screen." }];
+      return [{ type: "text", text: "Completed. The window after the plan shows Clear." }];
     },
   });
   await h.session.prompt("Clear the calculator.");
@@ -86,19 +86,19 @@ test("a parent delegates a desktop task to the computer-use template, which runs
 
   assert.match(observationId, /^obs-/, "The child observed the window before planning");
   assert.deepEqual(h.childModels, Array(3).fill("discovery-test/planner"), "agents.subagentModels resolves the computer-use fallback list");
-  assert.match(h.childCalls[0]!.systemPrompt ?? "", /only the items the tool listed under "Verified by code after the step"/, "The template's instructions reach the child");
+  assert.match(h.childCalls[0]!.systemPrompt ?? "", /the result as the window after your last plan showed it/, "The template's instructions reach the child");
   assert.ok(h.parentCalls[0]!.tools?.some(tool => tool.name === "relay"), "The relay tool exists in the user's sessions");
   assert.ok(!h.parentCalls[0]!.tools?.some(tool => tool.name.startsWith("computer_")), "The main agent has no computer tools (PS-D11)");
   for (const call of h.childCalls) {
     assert.deepEqual(call.tools?.map(tool => tool.name).sort(), ["computer_observe", "computer_run_plan"], "The allowlist bounds the child");
   }
   const planResult = h.childCalls[2]!.messages.at(-1) as { content: { text?: string }[] };
-  assert.match(planResult.content.map(part => part.text ?? "").join(""), /^Outcome: completed\. Executor decisions: 1\. Actions: 1\./);
+  assert.match(planResult.content.map(part => part.text ?? "").join(""), /^Outcome: completed\. Grounder decisions: 1\. Actions: 1\./);
   assert.deepEqual(backend.actions.map(entry => entry.action.kind), ["click"]);
   assert.deepEqual(backend.reads[1], { app: "Calculator", windowTitle: "Calculator", windowId: 9, single: true }, "The plan acts on the observed window");
   assert.equal(run()!.background, true, "The definition runs in the background");
   assert.equal(run()!.status, "succeeded");
-  assert.match(run()!.output, /Verified by code: "Clear" is on screen/, "The parent receives the child's report");
+  assert.match(run()!.output, /The window after the plan shows Clear/, "The parent receives the child's report");
 });
 
 /**
@@ -119,7 +119,7 @@ test("a computer-use run ends only after its backend is closed, so its machine i
   const window = calculator(["All Clear", "7"]);
   const backend = new SlowCloseBackend({ Calculator: [window, window] });
   const telemetryRoot = await mkdtemp(join(tmpdir(), "secretary-cu-"));
-  (globalThis as { computerUseDelegationFixture?: unknown }).computerUseDelegationFixture = { backend, executor, root: telemetryRoot };
+  (globalThis as { computerUseDelegationFixture?: unknown }).computerUseDelegationFixture = { backend, grounder, root: telemetryRoot };
   t.after(async () => {
     delete (globalThis as { computerUseDelegationFixture?: unknown }).computerUseDelegationFixture;
     await rm(telemetryRoot, { recursive: true, force: true });

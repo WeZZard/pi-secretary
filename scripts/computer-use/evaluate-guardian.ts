@@ -1,10 +1,10 @@
 /**
- * Evaluate the executor service as the permission guardian (design
- * docs/arch/computer-use-permissions.md §6, decision PS-D14). Every request is built by the
+ * Evaluate the jev structured-decision service as the permission guardian (design
+ * docs/testing/computer-use-evaluation.md §8, decision PS-D14). Every request is built by the
  * production builder, `buildGuardianRequests`: one request, or two when the window shows text
  * (design §5, revision 2). A sample is one send of that set; its verdict is `guardianVerdictAll`.
  *
- *   node --experimental-strip-types scripts/computer-use/evaluate-guardian.ts --set=development|heldout [executor-url] [--seeds=1-10] [--think=256]
+ *   node --experimental-strip-types scripts/computer-use/evaluate-guardian.ts --set=development|heldout [service-url] [--seeds=1-10] [--think=256]
  *
  * `--think` is the thought budget of every request; it defaults to production's `permissionThink`, and 0 sends none (design §5).
  *
@@ -14,13 +14,13 @@
  * - Agreement: answers to the request with window text equal to the label, over all such answers; effect is labelled only for local cases.
  * - Repeatability: the production request set (no seed) sent twice gives identical answers and confidences.
  * - Seed spread: cases whose verdict at the production gate differs between seeds.
- * - Round trip, median: harness-side time from sending the request to the full response.
+ * - Round trip, median: client-side time from sending the request to the full response.
  * Verdicts are for auto mode; the production gate is DEFAULT_GUARDIAN_GATE, and 0.4 and 0.8 are shown beside it.
  */
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { defaultComputerUseConfiguration } from "../../extensions/secretary/computer-use/configuration.ts";
-import { ExecutorClient, ExecutorError, type DecisionResponse } from "../../extensions/secretary/computer-use/executor-client.ts";
+import { DecisionServiceClient, DecisionServiceError, type DecisionResponse } from "../../extensions/secretary/computer-use/decision-service-client.ts";
 import {
   buildGuardianRequests, DEFAULT_GUARDIAN_GATE, expectedVerdict, guardianVerdictAll,
   type Effect, type Environment, type GuardedAction, type GuardianAnswers, type Reach,
@@ -30,13 +30,13 @@ interface Case { id: string; set: string; category: string; action: GuardedActio
 const flags = process.argv.slice(2).filter(arg => arg.startsWith("--"));
 const [url = "http://jev.home.arpa"] = process.argv.slice(2).filter(arg => !arg.startsWith("--"));
 const set = flags.find(flag => flag.startsWith("--set="))?.slice(6);
-if (set !== "development" && set !== "heldout") { console.error("usage: evaluate-guardian.ts --set=development|heldout [executor-url] [--seeds=1-10]"); process.exit(2); }
+if (set !== "development" && set !== "heldout") { console.error("usage: evaluate-guardian.ts --set=development|heldout [service-url] [--seeds=1-10]"); process.exit(2); }
 const [from, to] = (flags.find(flag => flag.startsWith("--seeds="))?.slice(8) ?? "1-10").split("-").map(Number);
 const think = Number(flags.find(flag => flag.startsWith("--think="))?.slice(8) ?? defaultComputerUseConfiguration().permissionThink);
 if (!Number.isInteger(think) || think < 0) { console.error("--think must be a whole number of tokens"); process.exit(2); }
 const seeds = Array.from({ length: to! - from! + 1 }, (_, i) => from! + i);
 const cases = (JSON.parse(readFileSync(new URL("../../tests/computer-use/fixtures/guardian/cases.json", import.meta.url), "utf8")) as Case[]).filter(c => c.set === set);
-const client = new ExecutorClient({ baseUrl: url, timeoutMs: 60_000 });
+const client = new DecisionServiceClient({ baseUrl: url, timeoutMs: 60_000 });
 const out = join("test-results", "computer-use", `guardian-eval-${set}-${new Date().toISOString().replace(/[:.]/g, "-")}`);
 mkdirSync(out, { recursive: true });
 
@@ -49,7 +49,7 @@ async function ask(action: GuardedAction, seed?: number): Promise<Run> {
   const label = seed === undefined ? "production" : `seed ${seed}`;
   const results = await Promise.all(buildGuardianRequests(action, { think }).map(async (body): Promise<{ response: DecisionResponse } | { error: string }> => {
     try { return { response: await client.decide(seed === undefined ? body : { ...body, seed }) }; }
-    catch (error) { return { error: error instanceof ExecutorError ? `${error.code}: ${error.message}` : String(error) }; }
+    catch (error) { return { error: error instanceof DecisionServiceError ? `${error.code}: ${error.message}` : String(error) }; }
   }));
   return { label, errors: results.flatMap(r => "error" in r ? [r.error] : []), responses: results.flatMap(r => "response" in r ? [r.response] : []),
     answers: results.map(r => "response" in r ? { effect: r.response.answers.effect ?? null, reach: r.response.answers.reach ?? null } : undefined) };
@@ -121,7 +121,7 @@ const range = (values: number[]) => values.length ? `${Math.min(...values).toFix
 const gateRows = GATES.map(gate => `| ${gate}${gate === DEFAULT_GUARDIAN_GATE ? " (production)" : ""} | ${counts.unsafe[gate]!.ephemeral} of ${counts.askExpected.ephemeral} | ${counts.unsafe[gate]!.persistent} of ${counts.askExpected.persistent} | ${pct(counts.needless[gate]!.ephemeral, counts.proceedExpected.ephemeral)} | ${pct(counts.needless[gate]!.persistent, counts.proceedExpected.persistent)} |`);
 const report = `# Guardian evaluation: ${set} set
 
-Executor: ${url}
+Service: ${url}
 Cases: ${cases.length}
 Thought budget: ${think ? `${think} tokens` : "none"}
 Requests per case: the production request twice (no seed), then seeds ${seeds[0]} to ${seeds.at(-1)}

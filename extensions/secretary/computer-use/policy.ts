@@ -1,12 +1,12 @@
 import type { ActuatorRequest, Operation } from "./actuator.ts";
-import type { ChoiceAnswer, DecisionResponse } from "./executor-client.ts";
+import type { ChoiceAnswer, DecisionResponse } from "./decision-service-client.ts";
 import type { ObservedElement, ObservedGroup, Observation } from "./observer.ts";
 import type { QuestionMap, StepSpec } from "./request-builder.ts";
 
-/** Decision policy (design §8): rules applied in order after each executor response. */
+/** Decision policy (design §8): rules applied in order after each grounder response. */
 
-export type EscalationReason = "needs_text" | "state_too_large" | "uncertain" | "already_satisfied" | "target_not_found" | "postcondition_failed" | "no_progress"
-  | "approval_required" | "approval_denied" | "budget_exhausted" | "executor_unavailable" | "backend_failed" | "window_unclear" | "window_changed" | "input_mode";
+export type EscalationReason = "needs_text" | "state_too_large" | "uncertain" | "target_not_found" | "no_progress"
+  | "approval_required" | "approval_denied" | "grounder_unavailable" | "backend_failed" | "window_unclear" | "window_changed" | "input_mode";
 
 export interface Prior { region?: string; element?: string; operation?: string; confidences: Record<string, number> }
 
@@ -34,10 +34,10 @@ export function decide(input: {
     const operationAnswer = answer(questions.operation);
     note("operation", operationAnswer);
     if (operationAnswer) prior.operation = operationAnswer.choice;
-    if (!operationAnswer) return { kind: "escalate", reason: "executor_unavailable", detail: "the executor gave no operation answer", prior };
+    if (!operationAnswer) return { kind: "escalate", reason: "grounder_unavailable", detail: "the grounder gave no operation answer", prior };
     // Rules 2 and 3.
     if (operationAnswer.choice === "reobserve") return { kind: "reobserve", prior };
-    if (operationAnswer.choice === "abstain") return { kind: "escalate", reason: "target_not_found", detail: "the executor found no listed control for this step", prior };
+    if (operationAnswer.choice === "abstain") return { kind: "escalate", reason: "target_not_found", detail: "the grounder found no listed UI element for this step", prior };
     operation = operationAnswer.choice as Operation;
   }
 
@@ -48,7 +48,7 @@ export function decide(input: {
     note("region", region);
     groupIndex = observation.groups.findIndex(group => group.name === region?.choice);
     if (region) prior.region = region.choice;
-    if (groupIndex < 0) return { kind: "escalate", reason: "executor_unavailable", detail: "the executor gave no usable region answer", prior };
+    if (groupIndex < 0) return { kind: "escalate", reason: "grounder_unavailable", detail: "the grounder gave no usable region answer", prior };
   }
   const group = observation.groups[groupIndex]!;
   const needsElement = operation !== "key" && operation !== "scroll_up" && operation !== "scroll_down";
@@ -58,7 +58,7 @@ export function decide(input: {
     note("element", elementAnswer);
     element = group.elements.find(candidate => candidate.letter === elementAnswer?.choice);
     if (elementAnswer) prior.element = element?.name ?? elementAnswer.choice;
-    if (!element) return { kind: "escalate", reason: "target_not_found", detail: `the executor chose no control in the ${group.name} region`, prior };
+    if (!element) return { kind: "escalate", reason: "target_not_found", detail: `the grounder chose no UI element in the ${group.name} region`, prior };
   }
 
   // Rule 5: compatibility.
@@ -69,8 +69,8 @@ export function decide(input: {
     return { kind: "escalate", reason: "uncertain", detail: `the ${group.name} region cannot be scrolled`, prior };
   }
 
-  // Rule 6 is the permission check, which the harness runs on the chosen action (permissions design §9).
-  // The risk answer is recorded and decides nothing: the executor's measurements were made with the question.
+  // Rule 6 is the permission check, which the executor runs on the chosen action (design §8.6).
+  // The risk answer is recorded and decides nothing: the grounder's measurements were made with the question.
   const risk = answer(questions.risk);
   note("risk", risk);
 

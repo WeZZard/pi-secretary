@@ -73,10 +73,10 @@ test("invalid configuration and a tool-name collision disable computer use with 
   assert.match(collision.notices[0]!, /another extension provides computer_observe/);
 });
 
-test("computer_run_plan is registered only when the executor is configured", async (t) => {
+test("computer_run_plan is registered only when the grounder is configured", async (t) => {
   const h = host(t, { computerUse: { backend: "local", allowLocalDesktop: true, executorUrl: "http://jev.home.arpa" } });
   delegatedInstall(h.pi, { root: h.root, agentDir: () => h.agentDir, backendFactory: () => new FakeBackend({}),
-    executorFactory: () => ({ decide: async () => { throw new Error("unused"); } }) });
+    grounderFactory: () => ({ decide: async () => { throw new Error("unused"); } }) });
   await h.emit("session_start");
   assert.deepEqual(h.tools.map(tool => tool.name), ["computer_observe", "computer_run_plan"]);
 });
@@ -85,32 +85,52 @@ test("the start check accepts our previous plan's last read only when that plan 
   const read = (label: string) => ({ window: { pid: 1, windowId: 1, app: "Form", title: "Form" }, appActive: true, truncated: false, elements: [
     { element_index: 0, role: "AXWindow", label: "Form", depth: 0, frame: { x: 0, y: 0, w: 800, h: 600 } },
     { element_index: 1, role: "AXButton", label, parent_index: 0, depth: 1, frame: { x: 100, y: 50, w: 80, h: 20 } }] });
-  // Reads in order: observe A; plan 1 before and after its press; plan 2 before and after; observe B; plan 3's first read.
-  const backend = new FakeBackend({ Form: [read("Submit"), read("Submit"), read("Done"), read("Done"), read("Submit"), read("Submit"), read("Done")] });
+  // Reads in order: observe A; plan 1 before and after its press, then the read after the plan; the same for plan 2; observe B; plan 3's first read.
+  const backend = new FakeBackend({ Form: [read("Submit"), read("Submit"), read("Done"), read("Done"), read("Done"), read("Submit"), read("Submit"), read("Submit"), read("Done")] });
   const h = host(t, { computerUse: { backend: "local", allowLocalDesktop: true, executorUrl: "http://jev.home.arpa", settleMs: 0 } });
   delegatedInstall(h.pi, { root: h.root, agentDir: () => h.agentDir, backendFactory: () => backend,
-    executorFactory: () => withGuardian({ decide: async () => ({ roundTripMs: 1, answers: { element_1: { choice: "A", confidence: 0.99 }, operation: { choice: "click", confidence: 0.99 }, risk: { choice: "safe", confidence: 0.99 } } }) }) });
+    grounderFactory: () => withGuardian({ decide: async () => ({ roundTripMs: 1, answers: { element_1: { choice: "A", confidence: 0.99 }, operation: { choice: "click", confidence: 0.99 }, risk: { choice: "safe", confidence: 0.99 } } }) }) });
   await h.emit("session_start");
   const [observeTool, runPlanTool] = h.tools;
   const observation = async () => /Observation: (\S+)/.exec((await observeTool.execute("o", { app: "Form" }, undefined, undefined, h.ctx)).content[0].text)![1]!;
-  const run = (basedOn: string, postcondition: unknown) => runPlanTool.execute("r", { app: "Form", goal: "g", based_on: basedOn,
-    steps: [{ id: "s", intent: "Press the button", postcondition }] }, undefined);
+  const run = (basedOn: string) => runPlanTool.execute("r", { app: "Form", goal: "g", based_on: basedOn,
+    steps: [{ id: "s", intent: "Press the button" }] }, undefined, undefined, h.ctx);
   const a = await observation();
-  assert.equal((await run(a, { exists: { name: "Done" } })).details.outcome, "completed");
-  const second = await run(a, { absent: { name: "Done" } });
+  assert.equal((await run(a)).details.outcome, "completed");
+  const second = await run(a);
   assert.notEqual(second.details.escalation, "window_changed", "plan 1 ran after A, so its last read explains the change");
   const b = await observation();
-  const third = await run(b, { absent: { name: "Done" } });
+  const third = await run(b);
   assert.equal(third.details.escalation, "window_changed", "plan 1 ran before B, so it does not explain the change");
+});
+
+test("the next plan starts from the previous plan's result, with no observation in between (decision PS-D20)", async (t) => {
+  const read = (label: string) => ({ window: { pid: 1, windowId: 1, app: "Form", title: "Form" }, appActive: true, truncated: false, elements: [
+    { element_index: 0, role: "AXWindow", label: "Form", depth: 0, frame: { x: 0, y: 0, w: 800, h: 600 } },
+    { element_index: 1, role: "AXButton", label, parent_index: 0, depth: 1, frame: { x: 100, y: 50, w: 80, h: 20 } }] });
+  // Reads in order: observe; plan 1 before and after its press, then the read after the plan; the same three for plan 2.
+  const backend = new FakeBackend({ Form: [read("Next"), read("Next"), read("Finish"), read("Finish"), read("Finish"), read("Done")] });
+  const h = host(t, { computerUse: { backend: "local", allowLocalDesktop: true, executorUrl: "http://jev.home.arpa", settleMs: 0 } });
+  delegatedInstall(h.pi, { root: h.root, agentDir: () => h.agentDir, backendFactory: () => backend,
+    grounderFactory: () => withGuardian({ decide: async () => ({ roundTripMs: 1, answers: { element_1: { choice: "A", confidence: 0.99 }, operation: { choice: "click", confidence: 0.99 }, risk: { choice: "safe", confidence: 0.99 } } }) }) });
+  await h.emit("session_start");
+  const [observeTool, runPlanTool] = h.tools;
+  const first = /Observation: (\S+)/.exec((await observeTool.execute("o", { app: "Form" }, undefined, undefined, h.ctx)).content[0].text)![1]!;
+  const run = (basedOn: string, intent: string) => runPlanTool.execute("r", { app: "Form", goal: "g", based_on: basedOn, steps: [{ id: "s", intent }] }, undefined, undefined, h.ctx);
+  const one = await run(first, "Press Next");
+  assert.match(one.content[0].text, /Observation: (\S+)\n[^]*A Button "Finish"/);
+  const two = await run(one.details.observationId, "Press Finish");
+  assert.deepEqual([two.details.outcome, two.details.actions], ["completed", 1], "the result's observation is accepted as based_on");
+  assert.equal(backend.reads.length, 7, "one observation, then three reads per plan and none between them");
 });
 
 test("the main session registers no computer tools and creates no backend, and offers the tools to delegated agents (PS-D11)", async (t) => {
   const config = { computerUse: { backend: "local", allowLocalDesktop: true, executorUrl: "http://jev.home.arpa" } };
-  const executorFactory = () => ({ decide: async () => { throw new Error("unused"); } });
+  const grounderFactory = () => ({ decide: async () => { throw new Error("unused"); } });
   let created = 0;
   const parent = host(t, config);
   const offer = installComputerUse(parent.pi, { root: parent.root, agentDir: () => parent.agentDir,
-    backendFactory: () => { created++; return new FakeBackend({}); }, executorFactory });
+    backendFactory: () => { created++; return new FakeBackend({}); }, grounderFactory });
   await parent.emit("session_start");
   assert.deepEqual(parent.tools.map(tool => tool.name), [], "The main agent cannot observe or act, so it cannot acquire a machine");
   assert.equal(created, 0, "The main session creates no backend");
@@ -118,12 +138,12 @@ test("the main session registers no computer tools and creates no backend, and o
 
   const child = host(t, config);
   installComputerUse(child.pi, { root: child.root, agentDir: () => child.agentDir, delegated: true,
-    backendFactory: () => new FakeBackend({}), executorFactory });
+    backendFactory: () => new FakeBackend({}), grounderFactory });
   await child.emit("session_start");
   assert.deepEqual(child.tools.map(tool => tool.name), ["computer_observe", "computer_run_plan"], "A delegated session registers the tools");
 });
 
-test("a delegated agent's approval reaches the main session's dialog, and without an interface nobody is asked (permissions design §8)", async (t) => {
+test("a delegated agent's approval reaches the main session's dialog, and without an interface nobody is asked (design §8.5)", async (t) => {
   const config = { computerUse: { backend: "local", allowLocalDesktop: true, executorUrl: "http://jev.home.arpa", settleMs: 0, approvalTimeoutMs: 60_000 } };
   const read = (label: string) => ({ window: { pid: 1, windowId: 1, app: "Form", title: "Form" }, appActive: true, truncated: false, elements: [
     { element_index: 0, role: "AXWindow", label: "Form", depth: 0, frame: { x: 0, y: 0, w: 800, h: 600 } },
@@ -139,12 +159,12 @@ test("a delegated agent's approval reaches the main session's dialog, and withou
   const backend = new FakeBackend({ Form: [read("Send"), read("Sent"), read("Send")] });
   const child = host(t, config);
   child.ctx.hasUI = false;
-  const executor = withGuardian({ decide: async () => ({ roundTripMs: 1, answers: { element_1: { choice: "A", confidence: 0.99 }, operation: { choice: "click", confidence: 0.99 }, risk: { choice: "safe", confidence: 0.99 } } }) },
+  const grounder = withGuardian({ decide: async () => ({ roundTripMs: 1, answers: { element_1: { choice: "A", confidence: 0.99 }, operation: { choice: "click", confidence: 0.99 }, risk: { choice: "safe", confidence: 0.99 } } }) },
     () => ({ effect: ["change", 0.9], reach: ["outside", 0.9] }));
-  delegatedInstall(child.pi, { root: child.root, agentDir: () => child.agentDir, backendFactory: () => backend, executorFactory: () => executor });
+  delegatedInstall(child.pi, { root: child.root, agentDir: () => child.agentDir, backendFactory: () => backend, grounderFactory: () => grounder });
   await child.emit("session_start");
   const runPlanTool = child.tools.find(tool => tool.name === "computer_run_plan");
-  const run = () => runPlanTool.execute("r", { app: "Form", goal: "Send the form", steps: [{ id: "send", intent: "Send it", postcondition: { exists: { name: "Sent" } } }] }, undefined);
+  const run = () => runPlanTool.execute("r", { app: "Form", goal: "Send the form", steps: [{ id: "send", intent: "Send it" }] }, undefined, undefined, child.ctx);
   assert.equal((await run()).details.outcome, "completed");
   assert.equal(dialogs.length, 1);
   assert.equal(dialogs[0]!.title, "Computer use needs approval");

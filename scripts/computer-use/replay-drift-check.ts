@@ -1,7 +1,7 @@
 /**
  * Replays a proposed plan-start check over every recorded plan: does the window still match what
  * the planner last saw? It compares the last read before a plan with the plan's first read, by
- * the observer's kept controls (role and name), ignoring values and displayed text, and reports
+ * the observer's kept UI elements (role and name), ignoring values and displayed text, and reports
  * what the check would have done. It changes no behaviour; it reads recorded evidence only.
  *
  *   node --experimental-strip-types scripts/computer-use/replay-drift-check.ts
@@ -42,13 +42,13 @@ const BLOCKING = /^AX(Sheet|Dialog|Popover|Menu|SystemDialog)$/;
 /** The menu bar belongs to the application and appears only while it is active; it is not window content. */
 const MENU_BAR = /^AXMenuBar(Item)?$/;
 
-interface Read { path: string; at: number; startedAt: number; purpose: string; windowId?: number; title: string; controls: string[]; blocking: string[]; session: string; runId?: string }
+interface Read { path: string; at: number; startedAt: number; purpose: string; windowId?: number; title: string; uiElements: string[]; blocking: string[]; session: string; runId?: string }
 
 function read(path: string, session: string): Read {
   const record = readJson(path);
   const tree = (parse(record.tree) ?? []) as Json[];
   const roleOf = new Map(tree.map(element => [element.element_index, element.role as string]));
-  const controls = ((parse(record.groups) ?? []) as Json[]).flatMap(group => group.elements.map((element: Json) => `${roleOf.get(element.index) ?? "?"} ${JSON.stringify(element.name)}`))
+  const uiElements = ((parse(record.groups) ?? []) as Json[]).flatMap(group => group.elements.map((element: Json) => `${roleOf.get(element.index) ?? "?"} ${JSON.stringify(element.name)}`))
     .filter(key => !MENU_BAR.test(key.split(" ")[0]!)).sort();
   // The menu bar's own menus are always in the tree of an active application; only a menu outside
   // the menu bar, such as a context menu, is open over the window (observed 2026-09-25 in the replay).
@@ -61,7 +61,7 @@ function read(path: string, session: string): Read {
   const at = Date.parse(record.recordedAt);
   const runId = /^(run-[a-z0-9]+)-\d+\.json$/.exec(basename(path))?.[1];
   return { path, at, startedAt: at - (record.readMs ?? 0), purpose: record.purpose ?? "", windowId: record.window?.windowId, title: record.window?.title ?? "",
-    controls, blocking, session, ...(runId ? { runId } : {}) };
+    uiElements, blocking, session, ...(runId ? { runId } : {}) };
 }
 
 const multisetMinus = (a: string[], b: string[]) => {
@@ -75,9 +75,9 @@ function check(baseline: Read, current: Read): Verdict {
   const reasons: string[] = [];
   if (baseline.windowId !== undefined && current.windowId !== undefined && baseline.windowId !== current.windowId) reasons.push(`a different window (${baseline.windowId} → ${current.windowId})`);
   if (baseline.title !== current.title) reasons.push(`window title ${JSON.stringify(baseline.title)} → ${JSON.stringify(current.title)}`);
-  const removed = multisetMinus(baseline.controls, current.controls);
-  const added = multisetMinus(current.controls, baseline.controls);
-  if (removed.length) reasons.push(`${removed.length} control(s) gone`);
+  const removed = multisetMinus(baseline.uiElements, current.uiElements);
+  const added = multisetMinus(current.uiElements, baseline.uiElements);
+  if (removed.length) reasons.push(`${removed.length} UI element(s) gone`);
   const newBlocking = multisetMinus(current.blocking, baseline.blocking);
   if (newBlocking.length) reasons.push(`opened over the window: ${newBlocking.join(", ")}`);
   return { stop: reasons.length > 0, reasons, added, removed };
@@ -169,7 +169,7 @@ for (const session of [...sessions].sort()) {
     const baseline = named ?? [...reads].reverse().find(entry => entry.at < first.at && entry.runId !== plan.runId) ?? reads.filter(entry => entry.at < first.at).at(-1);
     if (!baseline) continue;
     const baselineKind = named ? `based_on ${call!.basedOn}` : call ? "last read (the plan named no observation)" : "last read (no transcript)";
-    // Changes made by our own earlier plans are known to the harness: the last read of a plan that
+    // Changes made by our own earlier plans are known to the executor: the last read of a plan that
     // ran after the baseline is accepted as well.
     const previous = [...reads].reverse().find(entry => entry.runId && entry.runId !== plan.runId && entry.at > baseline.at && entry.at < first.at);
     const started = process.cpuUsage();
@@ -197,11 +197,11 @@ const stops = rows.filter(row => row.verdict.stop);
 const report = [
   "# Plan-start state check: replay over recorded plans", "",
   `Generated ${new Date().toISOString()} by \`scripts/computer-use/replay-drift-check.ts\`. It changed no behaviour; it read recorded evidence only.`, "",
-  "**The check.** Before a plan's first step, compare the observation the plan was based on (the baseline) with the plan's first read; when they differ, also accept a match with the last read of an earlier plan of ours that ran after the baseline. Compare the controls the observer kept, by role and name, and ignore values, displayed text and the menu bar. Stop when the window or its title changed, when a control is gone, or when a sheet, dialog, popover or a menu outside the menu bar opened. Added controls alone do not stop the plan.", "",
+  "**The check.** Before a plan's first step, compare the observation the plan was based on (the baseline) with the plan's first read; when they differ, also accept a match with the last read of an earlier plan of ours that ran after the baseline. Compare the UI elements the observer kept, by role and name, and ignore values, displayed text and the menu bar. Stop when the window or its title changed, when a UI element is gone, or when a sheet, dialog, popover or a menu outside the menu bar opened. Added UI elements alone do not stop the plan.", "",
   "## Result", "",
   `- Plans with a first read and a baseline: ${rows.length}, from ${sessions.size} recorded session directories (copies counted once).`,
   `- The check would have stopped: ${stops.length}. It would have let through: ${rows.length - stops.length}.`,
-  `- Let through with controls added: ${rows.filter(row => !row.verdict.stop && row.verdict.added.length).length}.`,
+  `- Let through with UI elements added: ${rows.filter(row => !row.verdict.stop && row.verdict.added.length).length}.`,
   `- Let through only because the plan's first read matched the last read of an earlier plan of ours: ${rows.filter(row => row.matchedPrevious).length}.`,
   `- The runtime check (the current observer and \`compareWindows\` on the same recorded reads) agreed on ${rows.filter(row => row.runtime === row.verdict.stop).length} of ${rows.length} plans; disagreed on ${rows.filter(row => row.runtime !== undefined && row.runtime !== row.verdict.stop).map(row => row.runId).join(", ") || "none"}; could not judge ${rows.filter(row => row.runtime === undefined).length}.`,
   `- Baseline used: ${[...new Set(rows.map(row => row.baselineKind.replace(/^based_on .*/, "based_on observation")))].map(kind => `${kind} ${rows.filter(row => row.baselineKind.replace(/^based_on .*/, "based_on observation") === kind).length}`).join(", ")}.`, "",

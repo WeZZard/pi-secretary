@@ -9,9 +9,9 @@
 export interface WindowComparison {
   windowId?: number;
   title: string;
-  /** Kept controls outside the menu bar, as `role "name"`, sorted. */
-  controls: string[];
-  /** Elements outside the menu bar that open over the window, as `role "label"`. */
+  /** Kept UI elements outside the menu bar, as `role "name"`, sorted. */
+  uiElements: string[];
+  /** UI elements outside the menu bar that open over the window, as `role "label"`. */
   blocking: string[];
 }
 
@@ -30,15 +30,15 @@ function without(a: string[], b: string[]): string[] {
 }
 
 /**
- * Stops when the window or its title differs, a control is gone, or something opened over the
- * window. An added control does not stop the plan, because it cannot make a step act on the wrong control.
+ * Stops when the window or its title differs, a UI element is gone, or something opened over the
+ * window. An added UI element does not stop the plan, because it cannot make a step act on the wrong UI element.
  */
 export function compareWindows(baseline: WindowComparison, current: WindowComparison): WindowVerdict {
   const reasons: string[] = [];
   if (baseline.windowId !== undefined && current.windowId !== undefined && baseline.windowId !== current.windowId) reasons.push(`it is a different window (${baseline.windowId}, now ${current.windowId})`);
   if (baseline.title !== current.title) reasons.push(`the window title was ${JSON.stringify(baseline.title)} and is now ${JSON.stringify(current.title)}`);
-  const gone = without(baseline.controls, current.controls);
-  if (gone.length) reasons.push(`${gone.length} control(s) are gone: ${gone.slice(0, 5).join(", ")}${gone.length > 5 ? ", …" : ""}`);
+  const gone = without(baseline.uiElements, current.uiElements);
+  if (gone.length) reasons.push(`${gone.length} UI element(s) are gone: ${gone.slice(0, 5).join(", ")}${gone.length > 5 ? ", …" : ""}`);
   const opened = without(current.blocking, baseline.blocking);
   if (opened.length) reasons.push(`opened over the window: ${opened.join(", ")}`);
   return { stop: reasons.length > 0, reasons };

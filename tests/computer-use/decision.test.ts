@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DEFINITIONS } from "../../extensions/secretary/computer-use/actions.ts";
-import { ExecutorClient, ExecutorError, type DecisionResponse, type Fetch } from "../../extensions/secretary/computer-use/executor-client.ts";
+import { DecisionServiceClient, DecisionServiceError, type DecisionResponse, type Fetch } from "../../extensions/secretary/computer-use/decision-service-client.ts";
 import { observe, type Observation } from "../../extensions/secretary/computer-use/observer.ts";
 import { decide } from "../../extensions/secretary/computer-use/policy.ts";
 import { buildDecisionRequest, type BuiltRequest, type StepSpec } from "../../extensions/secretary/computer-use/request-builder.ts";
@@ -10,21 +10,21 @@ import { finderRead, textEditRead } from "./fixtures/trees.ts";
 const finder = () => observe({ ...finderRead(), readMs: 0 }, { id: "o", maxElements: 240, maxNameLength: 48 }) as Observation;
 const textEdit = () => observe({ ...textEditRead(), readMs: 0 }, { id: "o", maxElements: 240, maxNameLength: 48 }) as Observation;
 const ready = (built: BuiltRequest) => { assert.equal(built.status, "ready"); return built as Extract<BuiltRequest, { status: "ready" }>; };
-const recent = Array.from({ length: 5 }, (_, i) => ({ intent: `step ${i}`, action: "click", element: `Item ${i}`, outcome: "verified" as const }));
+const recent = Array.from({ length: 5 }, (_, i) => ({ intent: `step ${i}`, action: "click", element: `Item ${i}` }));
 
-test("a grouped window gets a routing question, one element question per group, operation and risk, in one stage", () => {
+test("a grouped window gets a routing question, one UI element question per group, operation and risk, in one stage", () => {
   const built = ready(buildDecisionRequest({ goal: "Find a file", step: { id: "s1", intent: "Search this folder" }, observation: finder(), recent }));
   assert.deepEqual(Object.keys(built.body.questions), ["region", "element_1", "element_2", "element_3", "operation", "risk"]);
   assert.deepEqual(Object.keys(built.body.questions.region!.criteria), ["toolbar", "outline", "list"]);
   assert.equal(built.body.samples, 1);
   assert.ok(Object.values(built.body.questions).every(question => !("depends_on" in question) && !("alone" in question)));
   assert.deepEqual(Object.keys(built.body.questions.operation!.criteria), ["click", "double_click", "right_click", "scroll_up", "scroll_down", "reobserve", "abstain"]);
-  assert.equal(built.body.questions.operation!.criteria.double_click, DEFINITIONS.double_click, "the executor reads the planner's definition");
+  assert.equal(built.body.questions.operation!.criteria.double_click, DEFINITIONS.double_click, "the grounder reads the planner's definition");
   assert.match(String((built.body.state as { elements: string }).elements), /^TOOLBAR\n {2}A Button "Back"\n/);
   assert.equal(built.historyUsed, 5);
 });
 
-test("no question exceeds the executor's 26 alternatives, even with none added to full groups", () => {
+test("no question exceeds the grounder's 26 alternatives, even with none added to full groups", () => {
   const observation = observe({ ...finderRead({ contentItems: 60 }), readMs: 0 }, { id: "o", maxElements: 240, maxNameLength: 48 }) as Observation;
   const built = ready(buildDecisionRequest({ goal: "g", step: { id: "s", intent: "i", text: "t", keys: "cmd+a" }, observation, recent: [] }));
   for (const [id, question] of Object.entries(built.body.questions)) assert.ok(Object.keys(question.criteria).length <= 26, `${id} has ${Object.keys(question.criteria).length} options`);
@@ -37,11 +37,11 @@ test("a small window has no routing question, and the step's literal or operatio
   assert.deepEqual(built.offered, ["type"]);
   const offered = (step: Omit<StepSpec, "id" | "intent">) => ready(buildDecisionRequest({ goal: "g", step: { id: "s", intent: "i", ...step }, observation: textEdit(), recent: [] })).offered;
   assert.deepEqual(offered({ keys: "delete" }), ["key"], "A step with keys can no longer be answered with a click");
-  assert.equal(built.body.questions.operation, undefined, "A fixed operation is not asked, so the executor cannot abstain on it");
+  assert.equal(built.body.questions.operation, undefined, "A fixed operation is not asked, so the grounder cannot abstain on it");
   assert.equal(built.questions.fixedOperation, "type");
   assert.deepEqual(offered({ action: "click" }), ["click"]);
   assert.ok(offered({}).includes("click") && !offered({}).includes("type") && !offered({}).includes("key"));
-  assert.deepEqual(Object.keys(built.body.questions.element_1!.criteria), ["A", "none"], "Every element question offers none");
+  assert.deepEqual(Object.keys(built.body.questions.element_1!.criteria), ["A", "none"], "Every UI element question offers none");
 });
 
 test("history is dropped oldest first to fit the budget, and a request over the estimate is still built without history", () => {
@@ -52,7 +52,7 @@ test("history is dropped oldest first to fit the budget, and a request over the 
   const trimmed = ready(build(recent, 4096 - Math.floor((full + bare) / 2)));
   assert.ok(trimmed.historyUsed > 0 && trimmed.historyUsed < 5, "Older records are dropped first until the request fits");
   const over = ready(build(recent, 4096 - bare + 1));
-  assert.equal(over.historyUsed, 0, "Only the executor can say that a request without history is too long");
+  assert.equal(over.historyUsed, 0, "Only the grounder can say that a request without history is too long");
 });
 
 function response(answers: Record<string, [string, number]>): DecisionResponse {
@@ -89,39 +89,39 @@ test("each policy rule produces its outcome", () => {
   assert.equal(run({ ...base, operation: ["reobserve", 0.9] }).kind, "reobserve");
   assert.equal((run({ ...base, operation: ["abstain", 0.9] }) as { reason: string }).reason, "target_not_found");
   const risky = run({ ...base, risk: ["destructive", 0.9] });
-  assert.deepEqual([risky.kind, (risky as { risk: string }).risk], ["act", "destructive"], "The risk answer is recorded and decides nothing (permissions design §9)");
+  assert.deepEqual([risky.kind, (risky as { risk: string }).risk], ["act", "destructive"], "The risk answer is recorded and decides nothing (design §8.6)");
   const low = run({ ...base, element_1: ["A", 0.3] });
   assert.deepEqual([low.kind, (low as { reason: string }).reason, low.prior.element], ["escalate", "uncertain", "Back"], "A low-confidence answer is returned as a prior");
   const text = decide({ observation, step: { id: "s", intent: "i", text: "x" }, questions, confidenceGate: 0.4, response: response({ ...base, operation: ["type", 0.9] }) });
   assert.match((text as { detail: string }).detail, /type does not fit Button "Back"/);
   const scroll = run({ ...base, region: ["list", 0.9], operation: ["scroll_down", 0.9], element_3: ["A", 0.1] });
-  assert.equal(scroll.kind, "act", "A scroll ignores the element answer, including its confidence");
+  assert.equal(scroll.kind, "act", "A scroll ignores the UI element answer, including its confidence");
   assert.deepEqual((scroll as { request: unknown }).request, { operation: "scroll_down", frame: { x: 200, y: 80, w: 1000, h: 1500 } });
-  assert.equal((run({ ...base, region: ["sidebar", 0.9] }) as { reason: string }).reason, "executor_unavailable");
+  assert.equal((run({ ...base, region: ["sidebar", 0.9] }) as { reason: string }).reason, "grounder_unavailable");
 });
 
 test("the client reports timeout, rejection, malformed answers and usage", async () => {
   const body = { state: {}, questions: { q: { type: "choice" as const, instructions: "", criteria: { A: null, B: null } } }, samples: 1 as const };
   const reply = (status: number, text: string): Fetch => async () => ({ ok: status < 300, status, text: async () => text });
   let clock = 0;
-  const ok = new ExecutorClient({ baseUrl: "http://jev/", timeoutMs: 1000, now: () => (clock += 250), fetch: reply(200, JSON.stringify({ answers: { q: { choice: "B", confidence: 0.7 } }, usage: { input_tokens: 42 } })) });
+  const ok = new DecisionServiceClient({ baseUrl: "http://jev/", timeoutMs: 1000, now: () => (clock += 250), fetch: reply(200, JSON.stringify({ answers: { q: { choice: "B", confidence: 0.7 } }, usage: { input_tokens: 42 } })) });
   assert.deepEqual(await ok.decide(body), { answers: { q: { choice: "B", confidence: 0.7 } }, inputTokens: 42, roundTripMs: 250 });
-  const counted = new ExecutorClient({ baseUrl: "http://jev/", timeoutMs: 1000, fetch: reply(200, JSON.stringify({ answers: { q: null }, usage: { input_tokens: 42, output_tokens: 18 } })) });
+  const counted = new DecisionServiceClient({ baseUrl: "http://jev/", timeoutMs: 1000, fetch: reply(200, JSON.stringify({ answers: { q: null }, usage: { input_tokens: 42, output_tokens: 18 } })) });
   assert.equal((await counted.decide(body)).outputTokens, 18);
   // The service's wording on 2026-09-23 for a request one token over the model length.
   const overLength = JSON.stringify({ error: { message: "upstream 400: {\"error\":{\"message\":\"This model's maximum context length is 4096 tokens. However, you requested 8 output tokens and your prompt contains at least 4089 input tokens\"}}", type: "server_error" } });
-  await assert.rejects(new ExecutorClient({ baseUrl: "http://jev", timeoutMs: 1000, fetch: reply(502, overLength) }).decide(body), (error: ExecutorError) => error.code === "too_large");
-  await assert.rejects(new ExecutorClient({ baseUrl: "http://jev", timeoutMs: 1000, fetch: reply(502, "bad gateway") }).decide(body), (error: ExecutorError) => error.code === "failed");
-  await assert.rejects(new ExecutorClient({ baseUrl: "http://jev", timeoutMs: 1000, fetch: reply(422, "at most 26 alternatives") }).decide(body), (error: ExecutorError) => error.code === "rejected");
-  await assert.rejects(new ExecutorClient({ baseUrl: "http://jev", timeoutMs: 1000, fetch: reply(200, JSON.stringify({ answers: { q: { choice: "Z", confidence: 1 } } })) }).decide(body), (error: ExecutorError) => error.code === "malformed");
+  await assert.rejects(new DecisionServiceClient({ baseUrl: "http://jev", timeoutMs: 1000, fetch: reply(502, overLength) }).decide(body), (error: DecisionServiceError) => error.code === "too_large");
+  await assert.rejects(new DecisionServiceClient({ baseUrl: "http://jev", timeoutMs: 1000, fetch: reply(502, "bad gateway") }).decide(body), (error: DecisionServiceError) => error.code === "failed");
+  await assert.rejects(new DecisionServiceClient({ baseUrl: "http://jev", timeoutMs: 1000, fetch: reply(422, "at most 26 alternatives") }).decide(body), (error: DecisionServiceError) => error.code === "rejected");
+  await assert.rejects(new DecisionServiceClient({ baseUrl: "http://jev", timeoutMs: 1000, fetch: reply(200, JSON.stringify({ answers: { q: { choice: "Z", confidence: 1 } } })) }).decide(body), (error: DecisionServiceError) => error.code === "malformed");
   const hang: Fetch = (_url, init) => new Promise((_resolve, reject) => init.signal.addEventListener("abort", () => reject(new Error("aborted"))));
-  await assert.rejects(new ExecutorClient({ baseUrl: "http://jev", timeoutMs: 20, fetch: hang }).decide(body), (error: ExecutorError) => error.code === "timeout");
+  await assert.rejects(new DecisionServiceClient({ baseUrl: "http://jev", timeoutMs: 20, fetch: hang }).decide(body), (error: DecisionServiceError) => error.code === "timeout");
   let seenUrl = "";
-  await new ExecutorClient({ baseUrl: "http://jev.home.arpa/", timeoutMs: 1000, fetch: async url => { seenUrl = url; return { ok: true, status: 200, text: async () => JSON.stringify({ answers: { q: null } }) }; } }).decide(body);
+  await new DecisionServiceClient({ baseUrl: "http://jev.home.arpa/", timeoutMs: 1000, fetch: async url => { seenUrl = url; return { ok: true, status: 200, text: async () => JSON.stringify({ answers: { q: null } }) }; } }).decide(body);
   assert.equal(seenUrl, "http://jev.home.arpa/v1/systemone");
 });
 
-test("the priority table removes closed menus, then history, then inactive controls, then shortens shown text", () => {
+test("the priority table removes closed menus, then history, then inactive UI elements, then shortens shown text", () => {
   const value = textEditRead();
   value.appActive = true;
   const window = value.elements.find(element => element.role === "AXWindow")!;
@@ -144,7 +144,7 @@ test("the priority table removes closed menus, then history, then inactive contr
   assert.equal(noMenus.historyUsed, 5, "Closed menus go before any history");
   const noHistory = fitting(noMenus.estimatedTokens - 1);
   assert.ok(noHistory.historyUsed < 5);
-  assert.match(elements(noHistory), /NOT CLICKABLE NOW/, "History goes before inactive controls");
+  assert.match(elements(noHistory), /NOT CLICKABLE NOW/, "History goes before inactive elements");
   const bare = build(4096 - 1);
   assert.equal(bare.historyUsed, 0);
   assert.doesNotMatch(elements(bare), /NOT CLICKABLE NOW/);

@@ -10,7 +10,7 @@ import { BackendError, type ActionOutcome, type BackendAction, type ExecutionBac
 import { LocalDriverBackend, selectWindow, toWindowRead, windowRef, type DriverRunner, type FrontmostPid, type ListedWindow, type ScreenshotFiles, type WindowBounds, type WindowState } from "./local-backend.ts";
 
 /**
- * The relay client (design docs/arch/computer-use.md §11.2). It sends the harness's reads and
+ * The relay client (design docs/arch/computer-use.md §11.2). It sends the executor's reads and
  * actions to an mcp-vm-relay server of its own, which performs them in a disposable virtual
  * machine with a driver of its choosing. It reuses the local driver backend and replaces only the
  * driver calls, the active-application source and the screenshot files.
@@ -125,6 +125,16 @@ async function resultBody(text: string): Promise<unknown> {
   return JSON.parse(body);
 }
 
+/** The machine a session acquired (design §12.3): the relay's evidence package name and, when reported, its host directory. */
+export interface LeaseRecord { package: string; output?: string }
+
+/** The package that a `relay_acquire` result names, from its `purpose` and `output` fields. */
+export function acquiredLease(text: string): LeaseRecord | undefined {
+  const name = /"purpose"\s*:\s*"([^"]+)"/.exec(text)?.[1];
+  const output = /"output"\s*:\s*("(?:[^"\\]|\\.)*")/.exec(text)?.[1];
+  return name ? { package: name, ...(output ? { output: JSON.parse(output) as string } : {}) } : undefined;
+}
+
 /** One check command's result (evaluation design §3). `stdout` is empty when the command did not complete. */
 export interface CheckResult { argv: string[]; completed: boolean; stdout: string; error?: string }
 
@@ -135,6 +145,7 @@ export class RelaySession {
   readonly #prepare: string[][];
   readonly #check: string[][];
   readonly #onCheck?: (results: CheckResult[]) => Promise<void> | void;
+  readonly #onAcquire?: (lease: LeaseRecord) => Promise<void> | void;
   #ready?: Promise<RelayConnection>;
   /** A preparation failure is final for the session: another machine would fail the same way. */
   #prepareFailure?: BackendError;
@@ -142,11 +153,12 @@ export class RelaySession {
   #label?: string;
   #issued: string[] = [];
   constructor(connect: RelayConnect, acquire: { image: string; env?: string; ttlHours: number; prepare?: string[][]; check?: string[][];
-    onCheck?: (results: CheckResult[]) => Promise<void> | void; }) {
+    onCheck?: (results: CheckResult[]) => Promise<void> | void; onAcquire?: (lease: LeaseRecord) => Promise<void> | void; }) {
     this.#connect = connect;
     this.#prepare = acquire.prepare ?? [];
     this.#check = acquire.check ?? [];
     this.#onCheck = acquire.onCheck;
+    this.#onAcquire = acquire.onAcquire;
     this.#acquire = { task: "computer-use", image: acquire.image, extractions: [{ path: SCREENSHOT_EXTRACTION, name: SCREENSHOT_EXTRACTION }],
       ttlHours: acquire.ttlHours, ...(acquire.env ? { env: acquire.env } : {}) };
   }
@@ -168,6 +180,9 @@ export class RelaySession {
         for (const [tool, args] of [["relay_acquire", this.#acquire], ["relay_stage", {}]] as const) {
           const result = await this.#call(connection, tool, args, 15 * 60_000, signal);
           if (result.isError) throw new BackendError("driver_failed", `${tool} failed: ${result.text.slice(0, 500)}`);
+          const lease = tool === "relay_acquire" ? acquiredLease(result.text) : undefined;
+          // Design §12.3: the trajectory finds this session's machines by this record.
+          if (lease) { try { await this.#onAcquire?.(lease); } catch { /* A lost record does not stop the machine. */ } }
         }
         await this.#waitForDriver(connection, signal);
         // Configured preparation, such as opening the application a task needs, runs once after staging.
@@ -502,6 +517,8 @@ export interface RelayBackendOptions {
   /** Commands run in the guest once before the lease is finished, and where their results go (evaluation design §3). */
   check?: string[][];
   onCheck?: (results: CheckResult[]) => Promise<void> | void;
+  /** Where the acquired machine's package name goes (design §12.3). */
+  onAcquire?: (lease: LeaseRecord) => Promise<void> | void;
   /** The guest's `lsappinfo`; tests replace it. */
   guestLsappinfo?: string;
 }
@@ -510,7 +527,7 @@ export interface RelayBackendOptions {
  * A read is one relay run and, when a screenshot is wanted, one `image` call. Actions go through
  * the local driver backend with relay runs, and take the window's bounds and scale from its latest
  * read instead of reading the bounds again. If the window moved since that read, the click lands
- * where the window was, and the step's postcondition reports the miss.
+ * where the window was, and the window read after the plan shows the miss to the planner.
  */
 export class RelayBackend implements ExecutionBackend {
   readonly kind = "relay" as const;

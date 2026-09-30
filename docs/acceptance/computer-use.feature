@@ -4,18 +4,18 @@ Feature: Delegate a desktop task to the computer-use agent
   I want to hand a desktop task to the computer-use agent and receive facts about what it did,
   so that the task runs in a disposable machine and my conversation stays free of per-step details.
 
-  # These scenarios run live: Pi loads the extension, the real planner and executor decide, and the
-  # task runs in a relay machine. Results are recorded in docs/testing/computer-use-verification.md.
+  # These scenarios run live: Pi loads the extension, the real planner and grounder decide, and the
+  # task runs in a relay machine.
 
   @ACC-CU-01 @confirmed @CU-01 @CU-02 @CU-05 @CU-06
-  Scenario: A delegated task completes with a compact report and steps checked by code.
+  Scenario: A delegated task completes with a compact report of the window after the plan.
     Given Calculator is open with a cleared display in a relay machine.
     When the parent delegates "compute 7 + 3 in Calculator" to the computer-use agent.
     Then the run is reported as succeeded.
-    And the last plan completed, and each of its steps was verified by code.
+    And the last plan completed, and each of its steps acted once.
     And the display shows "10" when the task's check reads it.
     And the report the parent receives states the result "10".
-    And the parent's conversation contains no observation or element table of any step.
+    And the parent's conversation contains no observation or UI element table of any step.
     And every step of the last plan names the relay steps that hold its screenshots.
 
   @ACC-CU-02 @confirmed @CU-05
@@ -26,7 +26,7 @@ Feature: Delegate a desktop task to the computer-use agent
     And the report the parent receives says that the result was already on screen.
 
   @ACC-CU-03 @confirmed @CU-03
-  Scenario: A control that does not exist stops the task with a named reason.
+  Scenario: A UI element that does not exist stops the task with a named reason.
     Given Calculator is open in a relay machine.
     When the parent delegates "press the Launch Rocket button in Calculator" to the computer-use agent.
     Then no plan completes.
@@ -62,7 +62,7 @@ Feature: Delegate a desktop task to the computer-use agent
     Given Calculator is open in a relay machine.
     And the decision service cannot be reached.
     When the parent delegates "compute 7 + 3 in Calculator" to the computer-use agent.
-    Then every plan that ran escalated with the reason "executor_unavailable".
+    Then every plan that ran escalated with the reason "grounder_unavailable".
     And no step sent an action.
 
   @ACC-CU-07 @confirmed @PS-D11
@@ -80,3 +80,13 @@ Feature: Delegate a desktop task to the computer-use agent
     Then the run is reported as cancelled.
     And its relay lease has a lifecycle record that says it was released.
     And the lease was released before the run was recorded as ended.
+
+  @ACC-CU-10 @proposed @CU-08 @PS-D17 @PS-D18
+  Scenario: The trajectory shows the prompt, the agent's messages and each call's machine steps in one timeline.
+    Given the parent delegated a task, and later sent the computer-use agent a message that resumed it on a second machine.
+    When a maintainer opens the agent's trajectory in the viewer after both machines are finished.
+    Then its first item is the prompt that spawned the agent, and the message where the second run began is an item of its own.
+    And every message and tool call of the agent is an item, in the order the session recorded it.
+    And each tool call is followed by the machine steps that started during it, and then by the result the agent received.
+    And each machine step names the tool call that caused it, and the checks after a run say that no tool call asked for them.
+    And the Overview names both machines, with each machine's verdicts.

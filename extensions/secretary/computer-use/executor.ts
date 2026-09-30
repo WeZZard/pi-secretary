@@ -2,56 +2,50 @@ import { isScroll } from "./actions.ts";
 import { ActuatorError, actionsFor, parseKeyCombo } from "./actuator.ts";
 import { BackendError, type ExecutionBackend, type WindowRead, type WindowTarget } from "./backend/backend.ts";
 import type { ComputerUseConfiguration } from "./configuration.ts";
-import { ExecutorError, type DecisionRequestBody, type DecisionResponse } from "./executor-client.ts";
+import { DecisionServiceError, type DecisionRequestBody, type DecisionResponse } from "./decision-service-client.ts";
 import { judgeAction, type Environment, type GuardedAction, type Judgment } from "./guardian.ts";
 import { ActionHistory, type ActionRecord } from "./history.ts";
-import { observe, platformView, renderPlannerTable, type ObservedElement, type Observation, type ObservationFailure } from "./observer.ts";
+import { ROLE, normalize, observe, platformView, type ObservedElement, type Observation, type ObservationFailure } from "./observer.ts";
 import { decide, type Decision, type EscalationReason, type Prior } from "./policy.ts";
-import { buildDecisionRequest, type StepSpec } from "./request-builder.ts";
+import { buildDecisionRequest, type StepSpec, type UIElementRef } from "./request-builder.ts";
 import type { Picture, Telemetry } from "./telemetry.ts";
 import { compareWindows, type WindowComparison } from "./window-check.ts";
-import { ROLE, evaluatePostcondition, isWeakPostcondition, normalize, validatePostcondition, visibleSignature, type Postcondition } from "./verifier.ts";
 
-/** The step harness (design docs/arch/computer-use.md §9 and §10). */
-
-/**
- * `idempotent` marks a step that changes nothing when it is already done, such as setting a
- * checkbox on. Only such a step may be skipped when its postcondition holds before it runs
- * (fix plan F-1): a stale Calculator display made every step of a plan look done (observed 2026-09-23).
- */
-export interface PlanStep extends StepSpec { postcondition: Postcondition; maxAttempts?: number; idempotent?: boolean; control?: ControlRef }
-
-/** The control a step acts on, copied from a line of the observation (design §5.2, decision PS-D4). */
-export interface ControlRef { name: string; role?: string; region?: string }
-
-const describeControl = (control: ControlRef) =>
-  `${control.role ? `${control.role.replace(/^AX/, "")} ` : ""}${JSON.stringify(control.name)}${control.region ? ` in ${control.region}` : ""}`;
+/** The executor: the step loop of `computer_run_plan` (design docs/arch/computer-use.md §9 and §10). */
 
 /**
- * The elements of an observation that a step's control names (design §9, control check). Name and
- * role must match. The region only chooses among matches, because group names change with the
- * window's size: a small window is one group named "window", and a large one splits into several.
+ * A plan step carries no check: the planner judges the plan's result from the window after it, and
+ * each step acts once (design §5.3, decision PS-D19).
  */
-export function controlMatches(observation: Observation, control: ControlRef): ObservedElement[] {
-  const wanted = normalize(control.name);
+export type PlanStep = StepSpec;
+
+/**
+ * The UI elements of an observation that a step's UI element names. Only a plan's validation uses it,
+ * against the observation the planner copied the name from (design §6.5); the executor never matches
+ * a name against a later read (decision PS-D24). Name and role must match. The region only chooses
+ * among matches, because group names change with the window's size.
+ */
+export function uiElementMatches(observation: Observation, ref: UIElementRef): ObservedElement[] {
+  const wanted = normalize(ref.name);
   const found = observation.groups.flatMap(group => group.elements).filter(element => normalize(element.name) === wanted
-    && (control.role === undefined || element.role === control.role || element.role === `AX${control.role}`));
-  const inRegion = control.region === undefined ? [] : found.filter(element => normalize(element.group) === normalize(control.region!));
+    && (ref.role === undefined || element.role === ref.role || element.role === `AX${ref.role}`));
+  const inRegion = ref.region === undefined ? [] : found.filter(element => normalize(element.group) === normalize(ref.region!));
   return inRegion.length ? inRegion : found;
 }
 export interface Plan {
   target: WindowTarget; goal: string; steps: PlanStep[];
-  /** The actions the task says a person must approve first, in the task's words (permissions design §5). It only adds approvals. */
+  /** The actions the task says a person must approve first, in the task's words (design §8.4). It only adds approvals. */
   askBefore?: string;
   /** The `based_on` observation, which the first read must still match (design §9, start check). */
   basedOn?: WindowComparison;
-  /** The last read of the previous plan, when it ran after `basedOn`: a change this harness made itself. */
+  /** The last read of the previous plan, when it ran after `basedOn`: a change this executor made itself. */
   previous?: WindowComparison;
 }
 
 export interface StepOutcome {
   id: string;
-  result: "verified" | "weakly_verified" | "skipped" | "failed" | "not_run";
+  /** `acted`: input was sent, which says nothing about whether the step achieved its intent (design §5.4). */
+  result: "acted" | "stopped" | "not_run";
   action?: string;
   element?: string;
   detail?: string;
@@ -63,33 +57,33 @@ export interface StepOutcome {
   inputPaths?: string[];
 }
 
-export interface Escalation { stepId: string; reason: EscalationReason; detail: string; prior?: Prior; observation?: string }
+export interface Escalation { stepId: string; reason: EscalationReason; detail: string; prior?: Prior }
 
 export interface PlanResult {
   outcome: "completed" | "escalated" | "cancelled";
   steps: StepOutcome[];
   escalation?: Escalation;
-  /** Executor decisions kept out of the planner (design §12.2): requests whose answer was acted on or escalated. */
+  /** Grounder decisions kept out of the planner (design §12.2): requests whose answer was acted on or escalated. */
   decisions: number;
   actions: number;
   /** The last read of the plan, which a later plan's start check may accept. */
   last?: Observation;
 }
 
-export interface Executor { decide(body: DecisionRequestBody, signal?: AbortSignal): Promise<DecisionResponse> }
+export interface Grounder { decide(body: DecisionRequestBody, signal?: AbortSignal): Promise<DecisionResponse> }
 
-/** A person's answer to an approval request (permissions design §8). */
+/** A person's answer to an approval request (design §8.5). */
 export type ApprovalAnswer = "approved" | "declined" | "no_interface" | "timeout" | "cancelled";
 export interface ApprovalRequest { goal: string; intent: string; action: GuardedAction; judgment: Judgment }
-/** Asks a person; the harness never asks the planner or the parent agent (permissions design §8). */
+/** Asks a person; the executor never asks the planner or the parent agent (design §8.5). */
 export type Approver = (request: ApprovalRequest, signal?: AbortSignal) => Promise<ApprovalAnswer>;
 
-/** Permissions design §3: the environment is a fact of the backend, never a model's judgment. */
+/** Design §8.2: the environment is a fact of the backend, never a model's judgment. */
 export const environmentOf = (backend: ExecutionBackend): Environment => backend.kind === "local" ? "persistent" : "ephemeral";
 
-export interface HarnessDependencies {
+export interface ExecutorDependencies {
   backend: ExecutionBackend;
-  executor: Executor;
+  grounder: Grounder;
   telemetry: Telemetry;
   config: ComputerUseConfiguration;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
@@ -99,35 +93,13 @@ export interface HarnessDependencies {
 }
 
 const REOBSERVE_LIMIT = 2;
-/**
- * An action that changes nothing visible is not repeated (fix plan F-7). Through Pi, a click into a
- * text area and Cmd+Down were each sent twice because the tree did not change, and a repeated press
- * of a button such as Send could act twice (observed 2026-09-23).
- */
-const NO_CHANGE_LIMIT = 1;
-/** Keys that only move the insertion point or the selection; the accessibility tree does not show their effect. */
-const NAVIGATION_KEYS = new Set(["up", "down", "left", "right", "home", "end", "pageup", "pagedown"]);
-/**
- * An action that changed the screen but missed its postcondition is not repeated unless the step is
- * idempotent: through Pi, a second press of Calculator's Add followed a first press that had taken
- * effect (observed 2026-09-23). A second press of Send would send twice.
- */
-const DEFAULT_ATTEMPTS = 1;
-const DEFAULT_IDEMPOTENT_ATTEMPTS = 2;
-/**
- * A scroll only moves the view, so a repeat cannot act twice. Through Pi, every scroll toward a file
- * below the visible list needed a new plan once scrolls acted only once (observed 2026-09-23); the
- * fixture's target took two pages.
- */
-const DEFAULT_SCROLL_ATTEMPTS = 3;
 
 /** A rejected plan and the rule that rejected it, recorded per rule (design §12.1). */
 export interface PlanProblem { rule: string; message: string }
 
 /**
  * Returns the first reason the plan cannot run, before any action (design §5.2, decision PS-D3).
- * It rejects only a plan that cannot run, or one that asks to repeat an action that could act twice;
- * it never guesses what the planner meant or what the window will show.
+ * It rejects only a plan that cannot run; it never guesses what the planner meant or what the window will show.
  */
 export function validatePlan(plan: Plan, maxSteps: number): PlanProblem | undefined {
   const problem = (rule: string, message: string): PlanProblem => ({ rule, message });
@@ -137,8 +109,6 @@ export function validatePlan(plan: Plan, maxSteps: number): PlanProblem | undefi
   for (const step of plan.steps) {
     if (ids.has(step.id)) return problem("repeated_step_id", `step id ${JSON.stringify(step.id)} is repeated`);
     ids.add(step.id);
-    const invalid = validatePostcondition(step.postcondition);
-    if (invalid) return problem("postcondition", `step ${step.id}: ${invalid}`);
     if (step.action === "type" && step.text === undefined) return problem("needs_text", `step ${step.id}: type needs text`);
     if (step.action === "key" && step.keys === undefined) return problem("needs_keys", `step ${step.id}: key needs keys`);
     if (step.text !== undefined && step.keys !== undefined) return problem("text_and_keys", `step ${step.id}: a step has text or keys, not both; split it into two steps`);
@@ -146,21 +116,13 @@ export function validatePlan(plan: Plan, maxSteps: number): PlanProblem | undefi
       try { parseKeyCombo(step.keys); }
       catch (error) { return problem("keys", `step ${step.id}: ${(error as Error).message}`); }
     }
-    if (step.maxAttempts !== undefined && (!Number.isInteger(step.maxAttempts) || step.maxAttempts < 1 || step.maxAttempts > 5)) return problem("max_attempts", `step ${step.id}: maxAttempts must be 1 to 5`);
-    if ((step.maxAttempts ?? 1) > 1 && step.idempotent !== true && !isScroll(step.action)) {
-      return problem("unsafe_repeat", `step ${step.id}: max_attempts above 1 needs idempotent: true or a scroll operation, because repeating an action that took effect could act twice`);
-    }
-    if (step.idempotent !== undefined && typeof step.idempotent !== "boolean") return problem("idempotent", `step ${step.id}: idempotent must be true or false`);
-    if (step.control !== undefined) {
-      if (!step.control.name.trim()) return problem("control", `step ${step.id}: control needs a name`);
-      if (step.control.role !== undefined && !ROLE.test(step.control.role)) return problem("control", `step ${step.id}: control role ${JSON.stringify(step.control.role)} is not an accessibility role such as Button or TextField`);
+    if (step.ui_element !== undefined) {
+      if (!step.ui_element.name.trim()) return problem("ui_element", `step ${step.id}: UI element needs a name`);
+      if (step.ui_element.role !== undefined && !ROLE.test(step.ui_element.role)) return problem("ui_element", `step ${step.id}: UI element role ${JSON.stringify(step.ui_element.role)} is not an accessibility role such as Button or TextField`);
     }
   }
   return undefined;
 }
-
-/** A key that only moves the insertion point or the selection, which the accessibility tree does not show. */
-const isNavigationKey = (keys: string | undefined) => keys !== undefined && NAVIGATION_KEYS.has(keys.toLowerCase().split("+").pop()!.trim());
 
 class Stop extends Error {
   readonly escalation?: Escalation;
@@ -168,8 +130,8 @@ class Stop extends Error {
   constructor(escalation: Escalation | undefined, cancelled = false) { super(escalation?.detail ?? "cancelled"); this.escalation = escalation; this.cancelled = cancelled; }
 }
 
-export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: AbortSignal): Promise<PlanResult> {
-  const { backend, executor, telemetry, config } = deps;
+export async function runPlan(deps: ExecutorDependencies, plan: Plan, signal?: AbortSignal): Promise<PlanResult> {
+  const { backend, grounder, telemetry, config } = deps;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
   let sequence = 0;
   const nextId = deps.newId ?? (() => `run-${Date.now().toString(36)}`);
@@ -181,7 +143,6 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
   let target: WindowTarget = { ...plan.target, single: true };
 
   const checkCancelled = () => { if (signal?.aborted) throw new Stop(undefined, true); };
-  const plannerView = () => current ? renderPlannerTable(current.observation) : undefined;
   const escalate = (stepId: string, reason: EscalationReason, detail: string, prior?: Prior): never =>
     { throw new Stop({ stepId, reason, detail, ...(prior ? { prior } : {}) }); };
 
@@ -220,70 +181,48 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
     }
     for (const [index, step] of plan.steps.entries()) {
       const outcome = outcomes[index]!;
-      // Precheck (design §9, fix plan F-1): a postcondition that already holds cannot show that the
-      // step did anything. Only an idempotent step is skipped; any other step stops the plan.
-      const precheck = isWeakPostcondition(step.postcondition) ? undefined : evaluatePostcondition(step.postcondition, current.read);
-      if (precheck?.holds) {
-        if (!step.idempotent) {
-          escalate(step.id, "already_satisfied", `the postcondition already held before the step (${precheck.detail}), so it cannot show that the step worked. `
-            + "Write a postcondition that is false now, or mark the step idempotent if doing it again changes nothing.");
-        }
-        outcome.result = "skipped";
-        outcome.detail = `idempotent, and the postcondition already held (${precheck.detail})`;
-        history.push({ intent: step.intent, action: "none", outcome: "skipped" });
-        continue;
-      }
-      let attempts = 0, reobserves = 0, unchanged = 0;
+      // Design §9: nothing is checked before a step, and the step acts once (decision PS-D19).
+      let reobserves = 0;
       for (;;) {
-        if (actions >= config.maxActionsPerPlan) escalate(step.id, "budget_exhausted", `the plan used its ${config.maxActionsPerPlan} actions`);
         const observation = current.observation;
-        // Control check (design §9): the named control must be in this read before the executor is asked.
-        const named = step.control ? controlMatches(observation, step.control) : undefined;
-        if (step.control && !named!.length) escalate(step.id, "target_not_found", `the control the step names, ${describeControl(step.control)}, is not in the window; no action was taken`);
-        // Design §6.5 and §7.2: iOS actions are not built yet, so a step names only a macOS control,
-        // and the executor is offered only macOS elements.
-        if (named?.length && named.every(element => element.platform === "ios")) {
-          escalate(step.id, "target_not_found", `the control the step names, ${describeControl(step.control!)}, is on the iOS screen, and iOS targets are not supported yet; no action was taken`);
-        }
+        // Design §9: the grounder chooses the UI element, with the step's named UI element as the
+        // planner's pointer; no code matches the name against this read (decision PS-D24). It is offered
+        // only macOS UI elements, because iOS actions are not built yet (design §6.5).
         const offeredView = platformView(observation, "macos");
         const recent = history.recent();
         const build = (fromTrimStep: number) =>
           buildDecisionRequest({ goal: plan.goal, step, observation: offeredView, recent, answerReserveTokens: config.answerReserveTokens, fromTrimStep });
         let built = build(0);
         let response: DecisionResponse | undefined;
-        // The executor counts tokens exactly and the estimate does not. A request it finds too long
+        // The grounder counts tokens exactly and the estimate does not. A request it finds too long
         // is built again from the next trim step (design §7.3), which is safe because a decision acts on nothing.
         while (!response) {
           checkCancelled();
-          try { response = await executor.decide(built.body, signal); }
+          try { response = await grounder.decide(built.body, signal); }
           catch (error) {
-            if (error instanceof ExecutorError && error.code === "aborted") throw new Stop(undefined, true);
-            if (error instanceof ExecutorError && error.code === "too_large") {
+            if (error instanceof DecisionServiceError && error.code === "aborted") throw new Stop(undefined, true);
+            if (error instanceof DecisionServiceError && error.code === "too_large") {
               if (!built.smallest) { built = build(built.trimStep + 1); continue; }
-              escalate(step.id, "state_too_large", `the window is too large for the executor even with everything optional removed (estimated ${built.estimatedTokens} tokens): ${error.message}`);
+              escalate(step.id, "state_too_large", `the window is too large for the grounder even with everything optional removed (estimated ${built.estimatedTokens} tokens): ${error.message}`);
             }
-            return escalateAfter(step.id, "executor_unavailable", error instanceof Error ? error.message : String(error));
+            return escalateAfter(step.id, "grounder_unavailable", error instanceof Error ? error.message : String(error));
           }
         }
         decisions++;
         const decision: Decision = decide({ response, questions: built.questions, observation: offeredView, step, confidenceGate: config.confidenceGate });
-        await telemetry.recordStep({ runId, stepId: step.id, attempt: attempts + 1, estimatedTokens: built.estimatedTokens,
+        await telemetry.recordStep({ runId, stepId: step.id, attempt: 1, estimatedTokens: built.estimatedTokens,
           inputTokens: response.inputTokens, outputTokens: response.outputTokens, historyUsed: built.historyUsed, roundTripMs: response.roundTripMs, request: built.body, answers: response.answers, decision: summarize(decision) });
         if (decision.kind === "reobserve") {
-          if (++reobserves > REOBSERVE_LIMIT) escalate(step.id, "no_progress", "the executor kept asking to look again", decision.prior);
+          if (++reobserves > REOBSERVE_LIMIT) escalate(step.id, "no_progress", "the grounder kept asking to look again", decision.prior);
           await sleep(config.settleMs, signal);
           current = await look(step.id, "reobserve");
           continue;
         }
         if (decision.kind === "escalate") escalate(step.id, decision.reason, decision.detail, decision.prior);
         if (decision.kind !== "act") break;
-        // The named control cross-checks the executor's choice (decision PS-D4).
-        if (named && decision.element && !named.some(element => element.index === decision.element!.index)) {
-          escalate(step.id, "uncertain", `the executor chose ${JSON.stringify(decision.element.name)} in ${decision.element.group}, not the control the step names, ${describeControl(step.control!)}; no action was taken`, decision.prior);
-        }
 
-        // Permissions design §9: the chosen action is judged before any input is sent. Scrolls only move the view.
-        if (!isScroll(decision.operation)) await permit(step, decision, observation, attempts + 1);
+        // Design §8.6: the chosen action is judged before any input is sent. Scrolls only move the view.
+        if (!isScroll(decision.operation)) await permit(step, decision, observation, 1);
 
         let backendActions;
         try { backendActions = actionsFor(decision.request); }
@@ -291,9 +230,12 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
           if (error instanceof ActuatorError) escalate(step.id, error.code === "untypeable_text" ? "needs_text" : "uncertain", error.message, decision.prior);
           throw error;
         }
+        // Set before the input, so a step that stops after its input was sent still names it.
+        outcome.action = decision.operation;
+        if (decision.element) outcome.element = decision.element.name;
         const before = current;
-        const pictures = { attempt: attempts + 1 } as NonNullable<StepOutcome["pictures"]>[number];
-        if (before.read.screenshot) pictures.before = await telemetry.recordPicture(runId, `${step.id}-${attempts + 1}-before`, before.read.screenshot);
+        const pictures = { attempt: 1 } as NonNullable<StepOutcome["pictures"]>[number];
+        if (before.read.screenshot) pictures.before = await telemetry.recordPicture(runId, `${step.id}-1-before`, before.read.screenshot);
         for (const action of backendActions) {
           checkCancelled();
           const label = `${runId} ${step.id}: ${decision.operation}${decision.element ? ` ${JSON.stringify(decision.element.name)}` : ""}`;
@@ -315,39 +257,14 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
           }
         }
         actions++;
-        attempts++;
-        const described = `${decision.operation}${decision.element ? ` ${JSON.stringify(decision.element.name)}` : decision.group ? ` in ${decision.group.name}` : ""}`;
-        outcome.action = decision.operation;
-        if (decision.element) outcome.element = decision.element.name;
+        outcome.result = "acted";
+        history.push({ intent: step.intent, action: decision.operation, ...(decision.element ? { element: decision.element.name } : {}) });
+        // Design §9, Read: the next step's before-read. It judges nothing.
         await sleep(config.settleMs, signal);
-        current = await look(step.id, "verify");
-        if (current.read.screenshot) pictures.after = await telemetry.recordPicture(runId, `${step.id}-${attempts}-after`, current.read.screenshot);
+        current = await look(step.id, "after");
+        if (current.read.screenshot) pictures.after = await telemetry.recordPicture(runId, `${step.id}-1-after`, current.read.screenshot);
         if (pictures.before || pictures.after) (outcome.pictures ??= []).push(pictures);
-        const evaluation = evaluatePostcondition(step.postcondition, current.read, before.read);
-        const record: ActionRecord = { intent: step.intent, action: decision.operation, ...(decision.element ? { element: decision.element.name } : {}),
-          outcome: evaluation.holds ? (isWeakPostcondition(step.postcondition) ? "weakly_verified" : "verified") : "failed" };
-        history.push(record);
-        if (evaluation.holds) {
-          outcome.result = record.outcome === "weakly_verified" ? "weakly_verified" : "verified";
-          // Advice moved from a removed plan rule (design §5.2): the typed words can land in the wrong place.
-          outcome.detail = step.text !== undefined && !checksText(step.postcondition)
-            ? `${evaluation.detail}; the typed text itself was not checked, which only a {text} or {value} postcondition does` : evaluation.detail;
-          break;
-        }
-        unchanged = visibleSignature(before.read) === visibleSignature(current.read) ? unchanged + 1 : 0;
-        outcome.result = "failed";
-        outcome.detail = evaluation.detail;
-        if (unchanged >= NO_CHANGE_LIMIT) {
-          escalate(step.id, "no_progress", `${described} changed nothing on screen; it was not repeated${isScroll(decision.operation) ? ", because the view has reached its end" : ", because a repeat could act twice"}`
-            // Advice moved from a removed plan rule (design §5.2).
-            + (decision.operation === "key" && isNavigationKey(step.keys) ? `. ${step.keys} only moves the insertion point, which the accessibility tree does not show; set position on the type step instead` : ""), decision.prior);
-        }
-        const repeatable = step.idempotent === true || isScroll(decision.operation);
-        const limit = repeatable ? step.maxAttempts ?? (isScroll(decision.operation) ? DEFAULT_SCROLL_ATTEMPTS : DEFAULT_IDEMPOTENT_ATTEMPTS) : DEFAULT_ATTEMPTS;
-        if (attempts >= limit) {
-          escalate(step.id, "postcondition_failed", !repeatable
-            ? `${evaluation.detail}. The action changed the screen, so it was not repeated; a repeat could act twice.` : evaluation.detail, decision.prior);
-        }
+        break;
       }
     }
     await telemetry.recordPlan({ runId, outcome: "completed", steps: outcomes, decisions, actions, redact: config.redactTypedText, plan });
@@ -360,7 +277,9 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
       await review("cancelled");
       return { outcome: "cancelled", steps: outcomes, decisions, actions, ...(current ? { last: current.observation } : {}) };
     }
-    const escalation = { ...error.escalation!, ...(plannerView() ? { observation: plannerView() } : {}) };
+    const escalation = error.escalation!;
+    const stopped = outcomes.find(entry => entry.id === escalation.stepId);
+    if (stopped) { stopped.result = "stopped"; stopped.detail = `${escalation.reason}: ${escalation.detail}`; }
     await telemetry.recordPlan({ runId, outcome: "escalated", steps: outcomes, decisions, actions, escalation, redact: config.redactTypedText, plan });
     await review(`escalated at ${escalation.stepId}: ${escalation.reason}`);
     return { outcome: "escalated", steps: outcomes, escalation, decisions, actions, ...(current ? { last: current.observation } : {}) };
@@ -372,8 +291,8 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
     const lines = [`# Review of ${runId}`, "", `Goal: ${plan.goal}`, "", `Outcome: ${outcome}`, ""];
     for (const [index, step] of plan.steps.entries()) {
       const result = outcomes[index]!;
-      lines.push(`## ${step.id}`, "", `- Intent: ${step.intent}`, `- Postcondition: \`${JSON.stringify(step.postcondition)}\``,
-        `- Result: ${result.result}${result.detail ? ` (${result.detail})` : ""}`);
+      lines.push(`## ${step.id}`, "", `- Intent: ${step.intent}`,
+        `- Result: ${result.result.replace("_", " ")}${result.action ? `, ${result.action}${result.element ? ` ${JSON.stringify(result.element)}` : ""}` : ""}${result.detail ? ` (${result.detail})` : ""}`);
       for (const picture of result.pictures ?? []) {
         for (const phase of ["before", "after"] as const) {
           const file = picture[phase];
@@ -387,21 +306,21 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
 
   function escalateAfter(stepId: string, reason: EscalationReason, detail: string): never { return escalate(stepId, reason, detail); }
 
-  /** Permissions design §8 to §10: judge the action, ask a person when the verdict is ask, and record both. */
+  /** Design §8.5, §8.6 and §12.1: judge the action, ask a person when the verdict is ask, and record both. */
   async function permit(step: PlanStep, decision: Extract<Decision, { kind: "act" }>, observation: Observation, attempt: number): Promise<void> {
     const action: GuardedAction = {
       app: observation.window.app, window: observation.window.title ?? "", action: decision.operation as GuardedAction["action"],
-      ...(decision.element ? { control: { role: decision.element.role, name: decision.element.fullName, ...(decision.element.value !== undefined ? { value: decision.element.value } : {}) } } : {}),
+      ...(decision.element ? { ui_element: { role: decision.element.role, name: decision.element.fullName, ...(decision.element.value !== undefined ? { value: decision.element.value } : {}) } } : {}),
       ...(decision.operation === "type" && step.text !== undefined ? { text: step.text } : {}),
       ...(decision.operation === "key" && step.keys !== undefined ? { keys: step.keys } : {}),
       ...(observation.texts?.length ? { shownText: observation.texts } : {}),
     };
     let judgment: Judgment;
     try {
-      judgment = await judgeAction(executor, action, { mode: config.permissionMode, environment: environmentOf(backend), gate: config.permissionGate,
+      judgment = await judgeAction(grounder, action, { mode: config.permissionMode, environment: environmentOf(backend), gate: config.permissionGate,
         think: config.permissionThink, ...(plan.askBefore ? { askBefore: plan.askBefore } : {}), ...(signal ? { signal } : {}) });
     } catch (error) {
-      if (error instanceof ExecutorError && error.code === "aborted") throw new Stop(undefined, true);
+      if (error instanceof DecisionServiceError && error.code === "aborted") throw new Stop(undefined, true);
       throw error;
     }
     let approval: { answer: ApprovalAnswer; ms: number } | undefined;
@@ -421,14 +340,7 @@ export async function runPlan(deps: HarnessDependencies, plan: Plan, signal?: Ab
   }
 }
 
-/** True when a postcondition checks text content somewhere, as a type step must (fix plan F-3). */
-function checksText(condition: Postcondition): boolean {
-  if ("all" in condition) return condition.all.some(checksText);
-  if ("any" in condition) return condition.any.every(checksText);
-  return "text" in condition || "value" in condition;
-}
-
-/** Why a person is asked, in the words the escalation and the approval dialog show (permissions design §8). */
+/** Why a person is asked, in the words the escalation and the approval dialog show (design §8.5). */
 export function describeJudgment(judgment: Judgment): string {
   if (judgment.reason === "ask_before") return "the task asked for approval before this kind of action";
   if (judgment.reason === "doubt") return "the permission guardian could not judge it with confidence";

@@ -1,7 +1,7 @@
 /**
  * Extracts readable trajectories of every recorded computer-use run, and an index of the failures
  * in them. A trajectory merges, in time order, the planner's conversation (Pi events or session
- * transcripts), the harness's observations, the executor's answers per step, and the plan outcomes.
+ * transcripts), the executor's observations, the grounder's answers per step, and the plan outcomes.
  *
  *   node --experimental-strip-types scripts/computer-use/extract-trajectories.ts
  *
@@ -43,7 +43,7 @@ interface Run {
   conversations: Conversation[]; records: string[]; check?: Json; package?: string;
   /** Relay evidence package directories whose screenshots belong to this run. */
   packages: string[];
-  /** Harness step pictures: runs/<runId>/pictures/<step>-<attempt>-<before|after>.png. */
+  /** Executor step pictures: runs/<runId>/pictures/<step>-<attempt>-<before|after>.png. */
   pictures: string[];
 }
 
@@ -81,7 +81,7 @@ function messagesOf(path: string): Json[] {
 
 const packageOf = (path: string) => /relay-evidence\/(relay-[^/]+?)\//.exec(path)?.[1];
 
-// Pi runs inside relay machines: a directory with events.jsonl, and harness records under secretary/computer-use.
+// Pi runs inside relay machines: a directory with events.jsonl, and executor records under secretary/computer-use.
 const runs: Run[] = [];
 const seen = new Map<string, string>();
 const duplicates: string[] = [];
@@ -103,7 +103,7 @@ for (const events of walk(join(repository, "relay-evidence")).filter(path => bas
     task: text(first).slice(0, 200), conversations: [{ label: "Pi (planner)", source: rel(events), messages }], records, ...(check ? { check } : {}) });
 }
 
-// Script runs of the harness on the development machine through the relay client.
+// Script runs of the executor on the development machine through the relay client.
 for (const dir of readdirSync(join(repository, "test-results/computer-use")).filter(name => name.startsWith("relay-live-")).map(name => join(repository, "test-results/computer-use", name))) {
   const records = walk(dir).filter(path => /\/(observations|runs)\//.test(path) && path.endsWith(".json") && !path.includes("relay-evidence"));
   if (records.length === 0) continue;
@@ -192,14 +192,14 @@ for (const run of runs) {
     const at = time(record.recordedAt);
     if (record.schema?.includes("observation")) {
       const shown = Object.values(record.descendantText ?? {}).map(value => JSON.stringify(String(value).replace(/‎/g, ""))).join(", ");
-      add(at, `### ${clock(at)} harness: observation (${record.purpose ?? "?"}, attempt ${record.attempt ?? 1})\n\n`
+      add(at, `### ${clock(at)} executor: observation (${record.purpose ?? "?"}, attempt ${record.attempt ?? 1})\n\n`
         + `- File: \`${basename(path)}\`\n- Status: ${record.status}; window ${JSON.stringify(record.window?.title)} of ${record.window?.app}; active app: ${record.appActive}; read ${Math.round(record.readMs ?? 0)} ms\n`
-        + `- Text shown in the window: ${shown || "none"}\n\n<details><summary>Element table given to the executor</summary>\n${fence(record.executorTable ?? "")}</details>\n`
+        + `- Text shown in the window: ${shown || "none"}\n\n<details><summary>UI element table given to the grounder</summary>\n${fence(record.executorTable ?? "")}</details>\n`
         + (readShotFor.has(path) ? figure(readShotFor.get(path)!.path, `Window screenshot taken by this read (${record.purpose}); ${readShotFor.get(path)!.note}.`) : ""));
     } else if (record.schema?.includes("step")) {
       const answers = Object.entries(record.answers ?? {}).map(([question, answer]: [string, any]) => `${question}=${answer.choice} (${Number(answer.confidence).toFixed(2)})`).join(", ");
       const decision = record.decision ?? {};
-      add(at, `### ${clock(at)} executor: step \`${record.stepId}\`, attempt ${record.attempt}\n\n`
+      add(at, `### ${clock(at)} grounder: step \`${record.stepId}\`, attempt ${record.attempt}\n\n`
         + `- Asked: ${JSON.stringify(record.request?.state?.step ?? "")}\n- Answers: ${answers || "none"}\n`
         + `- Decision: ${decision.kind}${decision.operation ? ` ${decision.operation}` : ""}${decision.element ? ` ${JSON.stringify(decision.element)}` : ""}${decision.reason ? ` (${decision.reason})` : ""}${decision.detail ? `: ${decision.detail}` : ""}\n`
         + `- Round trip: ${Math.round(record.roundTripMs ?? 0)} ms\n`
@@ -208,11 +208,11 @@ for (const run of runs) {
             && basename(candidate) === `${record.stepId}-${record.attempt}-${phase}.png`);
           if (!picture) return "";
           usedPictures.add(picture);
-          return figure(picture, `Target window ${phase} the action of step ${record.stepId}, attempt ${record.attempt} (harness step picture).`);
+          return figure(picture, `Target window ${phase} the action of step ${record.stepId}, attempt ${record.attempt} (executor step picture).`);
         }).join(""));
     } else if (record.schema?.includes("plan")) {
       const steps = (record.steps ?? []).map((step: Json) => `  - \`${step.id}\`: ${step.result}${step.action ? `, ${step.action} ${JSON.stringify(step.element ?? "")}` : ""}${step.detail ? ` (${step.detail})` : ""}`).join("\n");
-      add(at, `### ${clock(at)} harness: plan \`${record.runId}\` ended: ${record.outcome}\n\n${steps}\n${record.escalation ? `\n- Escalation: step \`${record.escalation.stepId}\`, ${record.escalation.reason}: ${record.escalation.detail}\n` : ""}`);
+      add(at, `### ${clock(at)} executor: plan \`${record.runId}\` ended: ${record.outcome}\n\n${steps}\n${record.escalation ? `\n- Escalation: step \`${record.escalation.stepId}\`, ${record.escalation.reason}: ${record.escalation.detail}\n` : ""}`);
       // A plan run through Pi is already counted from the tool result; a scripted run is counted here.
       if (run.conversations.length === 0 && record.outcome !== "completed") fail(`plan ${record.outcome}${record.escalation ? `: ${record.escalation.reason}` : ""}`, record.escalation?.detail ?? "");
       for (const step of record.steps ?? []) {
@@ -227,10 +227,10 @@ for (const run of runs) {
     if (run.check.exit !== 0) fail("Pi exited with an error", `${run.check.name}: exit ${run.check.exit}`);
   }
 
-  // Step pictures not matched to an executor record go with their plan.
+  // Step pictures not matched to a grounder record go with their plan.
   for (const picture of run.pictures.filter(candidate => !usedPictures.has(candidate))) {
     const plan = join(dirname(dirname(picture)), "plan.json");
-    add(existsSync(plan) ? time(readJson(plan).recordedAt) - 1 : NaN, figure(picture, `Target window, ${basename(picture, ".png")} (harness step picture).`));
+    add(existsSync(plan) ? time(readJson(plan).recordedAt) - 1 : NaN, figure(picture, `Target window, ${basename(picture, ".png")} (executor step picture).`));
   }
   // Whole-display screenshots from the relay, placed by their capture time. A package shared by
   // several Pi runs contributes only the relay commands whose before-to-after span overlaps this run.
@@ -253,7 +253,7 @@ for (const run of runs) {
   const header = [`# Run ${run.id}: ${run.task || "(no prompt)"}`, "",
     `- Started: ${run.when}`, `- Source: \`${run.source}\``, ...(run.package ? [`- Relay package: \`relay-evidence/${run.package}/\` (open its index.html for the screenshots)`] : []),
     ...run.conversations.map(conversation => `- ${conversation.label} transcript: \`${conversation.source}\``),
-    `- Harness records: ${run.records.length}`,
+    `- Executor records: ${run.records.length}`,
     `- Figures: ${run.pictures.length} step pictures, ${readShotFor.size} window screenshots from reads, ${displayed} whole-display screenshots from the relay`,
     ...(run.check ? [`- Code check by the batch script: ${run.check.done ? "passed" : "FAILED"} (${run.check.check}); ${Math.round(run.check.seconds)} s`] : []),
     `- Failures found: ${failures.filter(failure => failure.run === run.id).length}`, "",

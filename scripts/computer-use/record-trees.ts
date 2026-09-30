@@ -7,7 +7,7 @@
  *
  * targets.json: [{ "label": "finder-folder", "app": "Finder", "windowTitle": "Fixture Folder",
  *                  "intents": [{ "intent": "Go back", "expect": ["Back"] }] }]
- * An intent's `expect` lists acceptable element names; matching ignores case and extra whitespace.
+ * An intent's `expect` lists acceptable UI element names; matching ignores case and extra whitespace.
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";

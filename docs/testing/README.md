@@ -8,7 +8,7 @@ Use this guide to choose a verification layer. Test procedures explain how to re
 | --- | --- | --- |
 | Run the routine development gate. | `npm run verify` runs type checking, the default tests, Mermaid validation, and acceptance linting. | The tests use deterministic fixtures and do not make paid model requests. |
 | Run focused subagent tests. | `npm run test:subagents` runs component and SDK regressions. | The tests use temporary state and deterministic providers. |
-| Run focused computer-use tests. | `npm run test:computer-use` runs the harness, observer, verifier, backend and delegation tests. | The tests use a fake desktop, a scripted executor and a deterministic provider. |
+| Run focused computer-use tests. | `npm run test:computer-use` runs the executor, observer, backend and delegation tests. | The tests use a fake desktop, a scripted grounder and a deterministic provider. |
 | Execute the Gherkin acceptance bindings. | `npm run test:acceptance` runs scenario-specific adapters. | The tests use isolated fixtures rather than a live provider. |
 | Check acceptance syntax and identities only. | `npm run lint:acceptance` parses the specifications. | This command does not execute the scenarios. |
 | Run all real-provider E2E cases. | `npm run test:e2e` runs headless and interactive cases sequentially. | A configured LiteLLM installation is required, and model calls may incur charges. |
@@ -29,7 +29,8 @@ The default `npm test` and `npm run verify` commands do not include the paid-pro
 - Read the [acceptance specification index](../../doc/acceptance/README.md) for scenario identities, source-hash checks, and approval tags.
 - Follow the [test artifact policy](test-artifacts.md) when recording, sharing, retaining, or deleting generated output.
 - Read the [verification report](subagent-verification.md) for the tested implementation baseline and known gaps.
-- Computer use has its own live acceptance: `scripts/computer-use/acceptance-live.ts` runs the scenarios of [computer-use.feature](../acceptance/computer-use.feature) in relay machines with the real planner and executor, and the [computer-use verification report](computer-use-verification.md) records the dated results and limits.
+- The [computer-use evaluation](computer-use-evaluation.md) defines the MacArena ship gate and benchmark run, and the permission guardian's evaluation.
+- Computer use has its own live acceptance: `scripts/computer-use/acceptance-live.ts` runs the scenarios of [computer-use.feature](../acceptance/computer-use.feature) in relay machines with the real planner and grounder.
 
 ## Request-context verification
 

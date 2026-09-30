@@ -3,12 +3,12 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Screenshot, WindowRead } from "./backend/backend.ts";
 import type { Observation, ObservationFailure } from "./observer.ts";
-import { renderExecutorTable } from "./request-builder.ts";
+import { renderGrounderTable } from "./request-builder.ts";
 
 /**
  * Step telemetry (design docs/arch/computer-use.md §12.1). Phase 1 writes the retrieval
- * record (§6.4) for every observation: the full parsed tree, the executor table, every
- * discard with its reason, and the group assignment of every kept element.
+ * record (§6.4) for every observation: the full parsed tree, the grounder table, every
+ * discard with its reason, and the group assignment of every kept UI element.
  */
 export interface Picture { file: string; sha256: string }
 
@@ -22,6 +22,15 @@ export class Telemetry {
     await mkdir(directory, { recursive: true });
     const path = join(directory, `check-${Date.now()}.json`);
     await writeFile(path, `${JSON.stringify({ schema: "secretary.computer-use.check/1", recordedAt: new Date().toISOString(), results }, null, 1)}\n`, { mode: 0o600 });
+    return path;
+  }
+
+  /** Design §12.3: the machine this session acquired, so its trajectory finds the evidence package. */
+  async recordLease(lease: { package: string; output?: string }): Promise<string> {
+    const directory = join(this.root, "leases");
+    await mkdir(directory, { recursive: true });
+    const path = join(directory, `${lease.package.replace(/[^A-Za-z0-9_-]/g, "_")}.json`);
+    await writeFile(path, `${JSON.stringify({ schema: "secretary.computer-use.lease/1", recordedAt: new Date().toISOString(), ...lease }, null, 1)}\n`, { mode: 0o600 });
     return path;
   }
 
@@ -44,7 +53,7 @@ export class Telemetry {
       screenshotCaptured: read.screenshot !== undefined,
       tree: read.elements,
       descendantText: read.descendantText,
-      executorTable: result.status === "ready" ? renderExecutorTable(result) : undefined,
+      executorTable: result.status === "ready" ? renderGrounderTable(result) : undefined,
       groups: result.status === "ready"
         ? result.groups.map(group => ({ name: group.name, elements: group.elements.map(element => ({ letter: element.letter, index: element.index, name: element.name })) }))
         : [],
@@ -54,7 +63,7 @@ export class Telemetry {
     return path;
   }
 
-  /** One record per executor decision (design §12.1). The request carries no typed literal; step text stays in the plan record. */
+  /** One record per grounder decision (design §12.1). The request carries no typed literal; step text stays in the plan record. */
   async recordStep(record: { runId: string; stepId: string; attempt: number } & Record<string, unknown>): Promise<string> {
     const directory = join(this.root, "runs", record.runId);
     await mkdir(directory, { recursive: true });
@@ -76,7 +85,7 @@ export class Telemetry {
     return { file: `pictures/${file}`, sha256: createHash("sha256").update(bytes).digest("hex") };
   }
 
-  /** Fix plan F-4: a page that lists each step with its postcondition, result and pictures, for human review. */
+  /** Fix plan F-4: a page that lists each step with its action, result and pictures, for human review. */
   async recordReview(runId: string, lines: string[]): Promise<string> {
     const directory = join(this.root, "runs", runId);
     await mkdir(directory, { recursive: true });
@@ -86,7 +95,7 @@ export class Telemetry {
   }
 
   /**
-   * Permissions design §10: one record per judged action, with the guardian's requests and answers,
+   * Design §12.1: one record per judged action, with the guardian's requests and answers,
    * the verdict and a person's answer. Typed text is replaced by its length when redaction is on.
    */
   async recordPermission(record: { runId: string; stepId: string; attempt: number; redact: boolean; action: { text?: string }; judgment: { requests: { state: Record<string, unknown> }[] } } & Record<string, unknown>): Promise<string> {

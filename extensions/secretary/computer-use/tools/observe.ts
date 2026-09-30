@@ -44,7 +44,7 @@ const defaultSleep = (ms: number, signal?: AbortSignal) => new Promise<void>((re
 
 export async function executeObserve(
   deps: ObserveDependencies,
-  params: { app: string; window_title?: string },
+  params: { app: string; window_title?: string; windowId?: number },
   modelAcceptsImages: boolean,
   signal?: AbortSignal,
 ): Promise<AgentToolResult<ObserveDetails>> {
@@ -57,11 +57,11 @@ export async function executeObserve(
   let rereadForScreen = false;
   try {
     for (attempts = 1; attempts <= MAX_READ_ATTEMPTS; attempts++) {
-      read = await deps.backend.readWindow({ app: params.app, ...(params.window_title ? { windowTitle: params.window_title } : {}) },
+      read = await deps.backend.readWindow({ app: params.app, ...(params.window_title ? { windowTitle: params.window_title } : {}), ...(params.windowId !== undefined ? { windowId: params.windowId } : {}) },
         { screenshot: modelAcceptsImages, signal });
       result = observe(read, { id: attempts === 1 ? observationId : `${observationId}-${attempts}`, maxElements: deps.config.maxElements, maxNameLength: deps.config.maxNameLength });
       recordPath = await deps.telemetry.recordObservation(read, result, { attempt: attempts, purpose: "computer_observe" });
-      // Design §6.5: the first read of a Simulator window has shown only its macOS controls, so a
+      // Design §6.5: the first read of a Simulator window has shown only its macOS elements, so a
       // Simulator window without an iOS screen is read once more.
       const screenMissing = result.status === "ready" && read.window.app === SIMULATOR_APP && !result.groups.some(group => group.platform === "ios") && !rereadForScreen;
       if (screenMissing) rereadForScreen = true;
@@ -91,9 +91,9 @@ export async function executeObserve(
   const summary = discardSummary(final.discards);
   const discarded = Object.entries(summary).filter(([, count]) => count > 0).map(([reason, count]) => `${reason} ${count}`).join(", ");
   const text = [...header,
-    `Elements: ${elementCount} in ${final.groups.length} group${final.groups.length === 1 ? "" : "s"}. Discarded: ${discarded || "none"}.`,
-    ...(final.groups.some(group => group.platform === "ios") ? [`The ${IOS_GROUP} group is the Simulator's device screen. iOS targets are not supported yet, so a plan cannot act on its elements.`] : []),
-    note, "", elementCount === 0 ? "No actionable named elements are visible." : renderPlannerTable(final)].join("\n");
+    `UI elements: ${elementCount} in ${final.groups.length} group${final.groups.length === 1 ? "" : "s"}. Discarded: ${discarded || "none"}.`,
+    ...(final.groups.some(group => group.platform === "ios") ? [`The ${IOS_GROUP} group is the Simulator's device screen. iOS targets are not supported yet, so a plan cannot act on its UI elements.`] : []),
+    note, "", elementCount === 0 ? "No actionable named UI elements are visible." : renderPlannerTable(final)].join("\n");
   const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
   if (screenshot === "included") content.push({ type: "image", data: finalRead.screenshot!.data, mimeType: finalRead.screenshot!.mimeType });
   return { content, details: { observationId: final.id, status: "ready", app: finalRead.window.app, window: finalRead.window.title,

@@ -3,12 +3,12 @@ import { BLOCKING_ROLES, MENU_BAR_ROLES, type WindowComparison } from "./window-
 
 /**
  * Observation pipeline (design docs/arch/computer-use.md §6): from cua-driver's structured
- * elements to a grouped, lettered element table, with every discard recorded (§6.4).
+ * UI elements to a grouped, lettered UI element table, with every discard recorded (§6.4).
  */
 
-/** The executor's limit per question (research §2.4). */
+/** The grounder's limit per question (research §2.4). */
 export const MAX_ALTERNATIVES = 26;
-/** Elements per group: one alternative of every element question is reserved for "none". */
+/** UI elements per group: one alternative of every UI element question is reserved for "none". */
 export const MAX_GROUP_ELEMENTS = MAX_ALTERNATIVES - 1;
 
 export type DiscardReason =
@@ -23,13 +23,13 @@ export type DiscardReason =
 
 export interface Discard { index: number; role: string; label?: string; reason: DiscardReason }
 
-/** The platform an element belongs to, which decides the actions allowed on it (design §6.5, decision PS-D6). */
+/** The platform a UI element belongs to, which decides the actions allowed on it (design §6.5, decision PS-D6). */
 export type Platform = "macos" | "ios";
-/** The application name of the iOS Simulator, whose window holds a device screen of iOS elements. */
+/** The application name of the iOS Simulator, whose window holds a device screen of iOS UI elements. */
 export const SIMULATOR_APP = "Simulator";
 /** The group of the Simulator's device screen. Its name says the platform, and the planner copies it as a region. */
 export const IOS_GROUP = "iOS screen";
-/** Points within which an element touches the window's side, as the Simulator's hardware buttons do. */
+/** Points within which a UI element touches the window's side, as the Simulator's hardware buttons do. */
 const BEZEL_TOLERANCE = 2;
 
 export interface ObservedElement {
@@ -37,7 +37,7 @@ export interface ObservedElement {
   index: number;
   role: string;
   name: string;
-  /** The name cut at 200 characters rather than the configured name length, for the executor's priority table (design §6.2). */
+  /** The name cut at 200 characters rather than the configured name length, for the grounder's priority table (design §6.2). */
   fullName: string;
   value?: string;
   /** The end of a text field's or text area's content, for the planner only (design §5.1). */
@@ -52,7 +52,7 @@ export interface ObservedElement {
 
 /**
  * `frame` is the group's container, or the window for the single-group and content cases; scrolling targets it.
- * `hidden` counts named elements of the group's container that lie outside the window, such as rows below the visible part of a list.
+ * `hidden` counts named UI elements of the group's container that lie outside the window, such as rows below the visible part of a list.
  */
 export interface ObservedGroup { name: string; elements: ObservedElement[]; frame?: Frame; hidden?: number; platform: Platform }
 
@@ -63,20 +63,20 @@ export interface Observation {
   snapshotId?: string;
   groups: ObservedGroup[];
   /**
-   * Text the window shows that is not the name of any kept element, such as Calculator's display,
-   * which is static text under the window (fix plan F-6). The planner sees it; the executor does not.
+   * Text the window shows that is not the name of any kept UI element, such as Calculator's display,
+   * which is static text under the window (fix plan F-6). The planner sees it; the grounder does not.
    */
   texts?: string[];
   discards: Discard[];
   rawCount: number;
   /** What the plan-start window check compares (design §9). */
   comparison: WindowComparison;
-  /** Content that cannot be clicked now, for the executor's priority table (design §6.2, priorities 3 and 4). */
+  /** Content that cannot be clicked now, for the grounder's priority table (design §6.2, priorities 3 and 4). */
   context: ObservationContext;
 }
 
 export interface ObservationContext {
-  /** Elements in the window with a frame that are disabled or unnamed, such as `Button (unnamed) ×3`. */
+  /** UI elements in the window with a frame that are disabled or unnamed, such as `Button (unnamed) ×3`. */
   inactive: string[];
   /** Items of closed menu-bar menus, as paths such as `Format ▸ Text ▸ Align Left`. */
   menus: string[];
@@ -93,7 +93,7 @@ export interface ObservationFailure {
 
 const MAX_SHOWN_TEXTS = 8;
 const MAX_SHOWN_TEXT_LENGTH = 200;
-/** The name length of the executor's priority table (design §6.2, priority 1). */
+/** The name length of the grounder's priority table (design §6.2, priority 1). */
 const FULL_NAME_LENGTH = 200;
 
 /** `Button (unnamed)` three times becomes `Button (unnamed) ×3`, in first-seen order. */
@@ -125,6 +125,10 @@ const CONTENT_END_LENGTH = 200;
 
 /** Bidirectional control marks, which Calculator's display text carries (observed 2026-09-23). */
 export const BIDI_MARKS = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+/** Names compare ignoring case, extra whitespace and Unicode bidirectional marks (the plan-time iOS check, design §6.5). */
+export const normalize = (text: string) => text.replace(BIDI_MARKS, "").replace(/\s+/g, " ").trim().toLowerCase();
+/** An accessibility role, with or without the AX prefix. */
+export const ROLE = /^(AX)?[A-Z][A-Za-z]*$/;
 
 export function cleanName(text: string | undefined, maxLength: number): string | undefined {
   if (text === undefined || AUTOMATIC_IDENTIFIER.test(text.trim())) return undefined;
@@ -150,7 +154,7 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
   }
   // A read taken while a window is still appearing lacks the window element (observed on TextEdit launch).
   if (!read.elements.some(element => element.role === "AXWindow")) {
-    return { status: "window_missing", ...base, detail: "The window element is not in the accessibility tree yet." };
+    return { status: "window_missing", ...base, detail: "The window UI element is not in the accessibility tree yet." };
   }
 
   const ancestors = (element: RawElement): RawElement[] => {
@@ -174,7 +178,7 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
   const insideWindow = (frame: Frame) => !windowFrame || (frame.x + frame.w / 2 >= windowFrame.x && frame.x + frame.w / 2 <= windowFrame.x + windowFrame.w
     && frame.y + frame.h / 2 >= windowFrame.y && frame.y + frame.h / 2 <= windowFrame.y + windowFrame.h);
 
-  // Design §6.5: the Simulator's window holds its own macOS controls and the device screen, and the
+  // Design §6.5: the Simulator's window holds its own macOS elements and the device screen, and the
   // tree lists both flat under the window with the same roles. The macOS ones are the menus, the
   // toolbar band at the top, and the hardware buttons, which touch the window's left or right side.
   const toolbarBottom = Math.max(windowFrame?.y ?? 0, ...read.elements.filter(element => element.role === "AXToolbar" && element.frame)
@@ -188,7 +192,7 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
   };
 
   // Fix plan F-6: descendant text of containers is content the window shows, such as a display.
-  // Container text is never a control's name, so it is listed even when it equals one: Calculator's
+  // Container text is never a UI element's name, so it is listed even when it equals one: Calculator's
   // display read "0" while a button was named "0" (observed through Pi, 2026-09-23).
   const shownTexts = (): { texts?: string[] } => {
     const texts: string[] = [];
@@ -202,7 +206,7 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
     return texts.length ? { texts } : {};
   };
 
-  // Priorities 3 and 4 of the executor's table (design §6.2): what the window has but cannot be clicked now.
+  // Priorities 3 and 4 of the grounder's table (design §6.2): what the window has but cannot be clicked now.
   const inactive: string[] = [];
   const nameOf = (element: RawElement) => cleanName(element.label, FULL_NAME_LENGTH) ?? cleanName(element.value, FULL_NAME_LENGTH)
     ?? cleanName(read.descendantText?.[element.element_index], FULL_NAME_LENGTH);
@@ -221,7 +225,7 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
         const name = cleanName(item.label, FULL_NAME_LENGTH);
         if (!name) continue;
         const path = `${prefix} ▸ ${name}`;
-        // An open menu's items have frames and are clickable controls already.
+        // An open menu's items have frames and are clickable elements already.
         if (!item.frame) paths.push(`${path}${item.enabled === false ? " (disabled)" : ""}`);
         if (depth < 4) for (const sub of children.get(item.element_index) ?? []) if (sub.role === "AXMenu") walk(sub, path, depth + 1);
       }
@@ -270,7 +274,7 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
   }
 
   if (candidates.length > options.maxElements) {
-    return { status: "state_too_large", ...base, detail: `${candidates.length} elements remain after filtering; the limit is ${options.maxElements}.` };
+    return { status: "state_too_large", ...base, detail: `${candidates.length} UI elements remain after filtering; the limit is ${options.maxElements}.` };
   }
 
   const toElement = (entry: typeof kept[number], group: string, position: number): ObservedElement => ({
@@ -283,14 +287,14 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
   });
 
   const ready = (groups: ObservedGroup[]): Observation => {
-    const controls = groups.flatMap(group => group.elements).filter(element => !MENU_BAR_ROLES.test(element.role))
+    const uiElements = groups.flatMap(group => group.elements).filter(element => !MENU_BAR_ROLES.test(element.role))
       .map(element => `${element.role} ${JSON.stringify(element.name)}`).sort();
     // The menu bar's own menus are always in the tree of an active application; only a menu outside
     // the menu bar, such as a context menu, is open over the window (observed 2026-09-25 in the replay).
     const blocking = read.elements.filter(element => BLOCKING_ROLES.test(element.role) && !underMenuBar(element))
       .map(element => `${element.role} ${JSON.stringify(element.label ?? "")}`);
     return { status: "ready", id: options.id, window: read.window, snapshotId: read.snapshotId, groups, discards, rawCount: read.elements.length, ...shownTexts(),
-      comparison: { windowId: read.window.windowId, title: read.window.title ?? "", controls, blocking },
+      comparison: { windowId: read.window.windowId, title: read.window.title ?? "", uiElements, blocking },
       context: { inactive: collapseRepeats(inactive), menus: menuPaths() } };
   };
 
@@ -361,16 +365,16 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
         platform: key === "ios" ? "ios" : "macos" });
     }
   }
-  // The routing question has one option per group, and the executor accepts at most 26 (research §2.4).
+  // The routing question has one option per group, and the grounder accepts at most 26 (research §2.4).
   if (groups.length > MAX_ALTERNATIVES) {
-    return { status: "state_too_large", ...base, detail: `the window splits into ${groups.length} groups; the executor can route among at most ${MAX_ALTERNATIVES}.` };
+    return { status: "state_too_large", ...base, detail: `the window splits into ${groups.length} groups; the grounder can route among at most ${MAX_ALTERNATIVES}.` };
   }
   return ready(groups);
 }
 
 /**
- * The observation with only one platform's groups, which is all the executor is offered for a step
- * (design §6.5). Through Pi, the executor chose the Simulator's macOS search field for a step on the
+ * The observation with only one platform's groups, which is all the grounder is offered for a step
+ * (design §6.5). Through Pi, the grounder chose the Simulator's macOS search field for a step on the
  * iOS search field (2026-09-26).
  */
 export function platformView(observation: Observation, platform: Platform): Observation {
@@ -390,7 +394,7 @@ export function renderPlannerTable(observation: Observation): string {
     return `  ${element.letter} ${role} ${JSON.stringify(element.name)}${state ? ` ${state}` : ""}`;
   }).join("\n")}`).join("\n");
   if (!observation.texts?.length) return table;
-  return `${table}\ntext shown in the window (not controls; check it with {text:{contains}}):\n${observation.texts.map(text => `  ${JSON.stringify(text)}`).join("\n")}`;
+  return `${table}\ntext shown in the window (not UI elements):\n${observation.texts.map(text => `  ${JSON.stringify(text)}`).join("\n")}`;
 }
 
 export function discardSummary(discards: Discard[]): Record<DiscardReason, number> {

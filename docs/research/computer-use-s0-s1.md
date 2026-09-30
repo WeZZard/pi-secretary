@@ -835,7 +835,7 @@ The relay client pinned `@wezzard/mcp-vm-relay@0.4.0` from 2026-09-24. Pi's own 
 
 ### 16.7 Element detail for the executor
 
-[Section 16.6](#166-relay-061) found that in TextEdit, the executor answered "none" for every step that named the text area. This section measures why, and compares three ways to describe the window to the executor ([design Section 6.2](../arch/computer-use.md#62-element-table), decision [PS-D5](../decisions.md)).
+[Section 16.6](#166-relay-061) found that in TextEdit, the executor answered "none" for every step that named the text area. This section measures why, and compares three ways to describe the window to the executor ([design Section 6.2](../arch/computer-use.md#62-ui-element-table), decision [PS-D5](../decisions.md)).
 
 **The text area without its role.** The request that Pi's TextEdit run sent on 2026-09-26 at 00:18 UTC was replayed against the executor five times per variant, for two steps: focus the document, and type the new line. Only the `elements` field changed.
 
@@ -1012,7 +1012,7 @@ The Calculator, TextEdit and Finder tasks of [Section 14](#14-pi-task-batch-2026
 
 ## 17. MacArena in relay machines (2026-09-26)
 
-These checks carry out the evaluation design ([PS-D9](../decisions.md), [evaluation design](../arch/computer-use-evaluation.md)).
+These checks carry out the evaluation design ([PS-D9](../decisions.md), [evaluation](../testing/computer-use-evaluation.md)).
 
 ### 17.1 Which MacArena tasks can run
 
@@ -1025,7 +1025,7 @@ These checks carry out the evaluation design ([PS-D9](../decisions.md), [evaluat
   - Keynote is missing for 26 tasks, Numbers for 25 and Pages for 25.
   - Another application or tool is missing for 19 tasks: Anaconda-Navigator (4), Obsidian (4), Visual Studio Code (3), `conda` (3), Keka (2), OBS (1), LibreOffice (1) and `pdftotext` (1).
   - 1 needs uploaded files.
-- The setup of 103 tasks quits the task's application. The approved requirements have the application already open, so the ship gate opens it after the setup ([evaluation design §5](../arch/computer-use-evaluation.md#5-the-ship-gate)).
+- The setup of 103 tasks quits the task's application. The approved requirements have the application already open, so the ship gate opens it after the setup ([evaluation §5](../testing/computer-use-evaluation.md#5-the-ship-gate)).
 
 ### 17.2 First run of one task
 
@@ -1047,7 +1047,7 @@ The Apple Events prompt that blocked `osascript` from SSH commands was removed i
 
 ## 18. The executor as permission guardian (2026-09-29)
 
-These runs carry out the evaluation of [permissions design §6](../arch/computer-use-permissions.md#6-evaluation) ([PS-D14](../decisions.md)). The script is `scripts/computer-use/evaluate-guardian.ts`, which builds every request with the production builder and prints its formulas. The executor was `http://jev.home.arpa`. The 80 cases in `tests/computer-use/fixtures/guardian/cases.json` were labelled and split into 50 development and 30 held-out cases in commit `304e718`, before any request was sent.
+These runs carry out the evaluation of [evaluation §8](../testing/computer-use-evaluation.md#8-permission-guardian-evaluation) ([PS-D14](../decisions.md)). The script is `scripts/computer-use/evaluate-guardian.ts`, which builds every request with the production builder and prints its formulas. The executor was `http://jev.home.arpa`. The 80 cases in `tests/computer-use/fixtures/guardian/cases.json` were labelled and split into 50 development and 30 held-out cases in commit `304e718`, before any request was sent.
 
 **Formulas.**
 
@@ -1159,7 +1159,7 @@ A probe sent 11 cases, 6 samples each, through the production request set with f
 
 ### 18.6 The planner declares each step's effect
 
-This run carries out the evaluation of [permissions design §7.1](../arch/computer-use-permissions.md#71-evaluation). The script is `scripts/computer-use/evaluate-planner-flags.ts`. The planner was `qwen3.8-27b` through the LiteLLM gateway, with thinking off, forced to answer with a `computer_run_plan` call whose steps declare `effect` and `reach`. Each of the 80 cases was sampled 6 times. Each sample was paired with the recorded guardian sample of the same index (the first 6 of the 12 in §18.2 revision 2 and §18.3), so the guardian-alone figures below are over 6 samples, not 12.
+This run carries out the evaluation of [evaluation §8.4](../testing/computer-use-evaluation.md#84-candidate-the-planner-declares-each-steps-effect). The script is `scripts/computer-use/evaluate-planner-flags.ts`. The planner was `qwen3.8-27b` through the LiteLLM gateway, with thinking off, forced to answer with a `computer_run_plan` call whose steps declare `effect` and `reach`. Each of the 80 cases was sampled 6 times. Each sample was paired with the recorded guardian sample of the same index (the first 6 of the 12 in §18.2 revision 2 and §18.3), so the guardian-alone figures below are over 6 samples, not 12.
 
 **Formulas.** A sample's verdict in each arm:
 
@@ -1221,7 +1221,7 @@ The cases that still let an action through in the two combined arms ("relay" is 
 
 ### 18.7 Held-out set with the shipped settings: revision 4 and thought
 
-The held-out set was sent again with the settings production now uses ([permissions design §5](../arch/computer-use-permissions.md#5-guardian-request), [PS-D15](../decisions.md)): revision 4 of the questions, where carts and wish lists stay local ([PS-D16](../decisions.md)), and `think: 256`. The script, the samples and the formulas are those of §18 (`evaluate-guardian.ts --set=heldout`, which now takes `--think` and defaults to production's budget). The counts are over all 12 samples per case, as in §18.3; the script's own report table counts only the first production sample.
+The held-out set was sent again with the settings production now uses ([design §8.4](../arch/computer-use.md#84-guardian-request), [PS-D15](../decisions.md)): revision 4 of the questions, where carts and wish lists stay local ([PS-D16](../decisions.md)), and `think: 256`. The script, the samples and the formulas are those of §18 (`evaluate-guardian.ts --set=heldout`, which now takes `--think` and defaults to production's budget). The counts are over all 12 samples per case, as in §18.3; the script's own report table counts only the first production sample.
 
 | Measure | Revision 2, no thought (§18.3) | Revision 4, `think: 256` |
 | --- | --- | --- |

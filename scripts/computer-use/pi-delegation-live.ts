@@ -1,9 +1,9 @@
 /**
  * Live delegation check: a real Pi parent in RPC mode delegates a desktop task to the computer-use
  * agent definition, which runs through the relay client in a fresh relay virtual machine, with the
- * real LiteLLM model and the executor at jev.home.arpa. It makes model calls.
+ * real LiteLLM model and the grounder at jev.home.arpa. It makes model calls.
  *
- *   node --experimental-strip-types scripts/computer-use/pi-delegation-live.ts [model] [executor-url] [task]
+ *   node --experimental-strip-types scripts/computer-use/pi-delegation-live.ts [model] [grounder-url] [task]
  *
  * The task is calculator (the default), textedit or finder, as in the Pi task batch (research §14),
  * or simulator-about or simulator-dark-mode, which operate an iPhone simulator.
@@ -15,7 +15,7 @@
  */
 import { delegate } from "./support/delegate.ts";
 
-const [modelId = "qwen3.8-27b", executorUrl = "http://jev.home.arpa", taskName = "calculator"] = process.argv.slice(2);
+const [modelId = "qwen3.8-27b", grounderUrl = "http://jev.home.arpa", taskName = "calculator"] = process.argv.slice(2);
 
 // Fixtures match scripts/computer-use/pi-task-batch.ts, so results compare with research §14.
 const FILES = ["Agenda", "Appendix", "Archive", "Backups", "Budget draft", "Calendar", "Contacts", "Contract", "Diagram", "Drafts",
@@ -58,7 +58,7 @@ const TASKS: Record<string, { task: string; prepare: string[][] }> = {
 };
 const selected = TASKS[taskName];
 if (!selected) throw new Error(`unknown task ${taskName}; expected ${Object.keys(TASKS).join(", ")}`);
-const result = await delegate({ name: `computer-use-delegation${taskName === "calculator" ? "" : `-${taskName}`}`, task: selected.task, prepare: selected.prepare, modelId, executorUrl });
+const result = await delegate({ name: `computer-use-delegation${taskName === "calculator" ? "" : `-${taskName}`}`, task: selected.task, prepare: selected.prepare, modelId, grounderUrl });
 const { log } = result;
 log(`\nElapsed: ${Math.round(result.elapsedMs / 1000)} s (wall clock from sending the prompt to stopping Pi)`);
 if (!result.runs.length) log("Run: none");

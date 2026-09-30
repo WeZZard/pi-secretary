@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { APPROVAL_TITLE, approvalMessage, channelApprover, confirmApprover, openApprovalChannel } from "../../extensions/secretary/computer-use/approval.ts";
-import type { ApprovalRequest } from "../../extensions/secretary/computer-use/harness.ts";
+import type { ApprovalRequest } from "../../extensions/secretary/computer-use/executor.ts";
 
 const request: ApprovalRequest = {
   goal: "Clean up the notes", intent: "Press the default button",
-  action: { app: "Safari", window: "Notes Cleanup", action: "click", control: { role: "AXButton", name: "Delete" }, shownText: ["Delete all 12 notes? This cannot be undone."] },
+  action: { app: "Safari", window: "Notes Cleanup", action: "click", ui_element: { role: "AXButton", name: "Delete" }, shownText: ["Delete all 12 notes? This cannot be undone."] },
   judgment: { verdict: "ask", reason: "guardian", mode: "auto", environment: "ephemeral", requests: [] },
 };
 const why = () => "the permission guardian judged that its effect leaves this machine";
 
-test("the dialog shows the action's facts, why it asks, and the agent's own words last (permissions design §8)", () => {
+test("the dialog shows the action's facts, why it asks, and the agent's own words last (design §8.5)", () => {
   const message = approvalMessage(request, why(), 300_000);
   assert.deepEqual(message.split("\n").slice(0, 7), [
     "Application: Safari", "Window: Notes Cleanup", 'Action: click Button "Delete"', "The window shows:",

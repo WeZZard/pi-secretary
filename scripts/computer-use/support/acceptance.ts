@@ -1,6 +1,6 @@
 /**
  * Live acceptance for computer use (docs/acceptance/computer-use.feature, build plan Phase 8). Each
- * scenario's Then steps are judged from recorded facts only: Secretary's run records, the harness's
+ * scenario's Then steps are judged from recorded facts only: Secretary's run records, the executor's
  * plan records, the parent's RPC events, the task's check output, and the relay's lifecycle records.
  * A step whose fact was not recorded is `not_observable`, never passed.
  */
@@ -36,9 +36,9 @@ export interface Facts {
   report: string;
   checks?: CheckResult[];
   leases: LeaseRecord[];
-  /** The executor decision of every step attempt, from the harness's step records. */
+  /** The grounder decision of every step attempt, from the executor's step records. */
   decisions: { kind?: string; risk?: string; reason?: string }[];
-  /** The permission check of every judged action, from the harness's permission records (permissions design §10). */
+  /** The permission check of every judged action, from the executor's permission records (design §12.1). */
   permissions: PermissionRecord[];
 }
 export interface PermissionRecord { judgment?: { verdict?: string; reason?: string; requests?: { answers?: Record<string, unknown> }[] }; approval?: { answer?: string } }
@@ -98,7 +98,7 @@ export interface Scenario {
   task: string;
   prepare: string[][];
   check?: string[][];
-  executorUrl?: string;
+  grounderUrl?: string;
   duringRun?: { afterMs: number; message: string };
   then(facts: Facts): ThenResult[];
 }
@@ -115,7 +115,7 @@ const OPEN_CALCULATOR = [["/usr/bin/open", "-a", "Calculator"], ["/bin/sleep", "
 const SAFARI_TITLES = `osascript -l JavaScript -e 'Application("System Events").processes["Safari"].windows.name().join("\\n")'`;
 /**
  * ACC-CU-04's preparation: a local Safari page that asks whether to delete all notes, with Cancel and
- * a default Delete button. A Safari page's controls are in the accessibility tree; an AppleScript
+ * a default Delete button. A Safari page's UI elements are in the accessibility tree; an AppleScript
  * dialog in TextEdit was not observed on 2026-09-27. Pressing a button sets the page title, which the
  * check reads. The command fails unless the page is open, so the task never starts without it.
  */
@@ -148,12 +148,12 @@ export const SCENARIOS: Scenario[] = [
       const toolResults = facts.parentToolResults.join("\n");
       return [
         verdict("ACC-CU-01", "the run is reported as succeeded", facts.runs.length ? facts.runs.at(-1)!.status === "succeeded" : undefined, facts.runs.map(run => run.status).join(", ") || "no run"),
-        verdict("ACC-CU-01", "the last plan completed, and each of its steps was verified by code",
-          last ? last.outcome === "completed" && last.steps.length > 0 && last.steps.every(step => step.result === "verified") : undefined,
+        verdict("ACC-CU-01", "the last plan completed, and each of its steps acted once",
+          last ? last.outcome === "completed" && last.steps.length > 0 && last.steps.every(step => step.result === "acted") : undefined,
           last ? `${last.outcome}: ${last.steps.map(step => `${step.id}=${step.result}`).join(", ")}` : "no plan record"),
         verdict("ACC-CU-01", "the display shows 10 when the task's check reads it", shown === undefined ? undefined : /(^|\D)10(\D|$)/.test(shown), shown?.slice(0, 200) ?? "the check did not complete"),
         verdict("ACC-CU-01", "the report the parent receives states the result 10", facts.report ? /(^|\D)10(\D|$)/.test(facts.report) : undefined, facts.report.slice(0, 200) || "no report"),
-        verdict("ACC-CU-01", "the parent's conversation contains no observation or element table of any step",
+        verdict("ACC-CU-01", "the parent's conversation contains no observation or UI element table of any step",
           facts.parentToolResults.length ? !/Observation: obs-|element_index/.test(toolResults) : undefined, `${facts.parentToolResults.length} tool results read by the parent`),
         verdict("ACC-CU-01", "every step of the last plan names the relay steps that hold its screenshots",
           last?.steps.length ? last.steps.every(step => (step.evidence?.length ?? 0) > 0) : undefined, last?.steps.map(step => `${step.id}: ${step.evidence?.length ?? 0}`).join(", ") ?? "no plan record"),
@@ -221,10 +221,10 @@ export const SCENARIOS: Scenario[] = [
     id: "ACC-CU-06",
     task: "In the Calculator app, compute 7 + 3 and tell me the result shown on the display.",
     prepare: OPEN_CALCULATOR,
-    executorUrl: "http://127.0.0.1:9",
+    grounderUrl: "http://127.0.0.1:9",
     then: facts => [
-      verdict("ACC-CU-06", "every plan that ran escalated with the reason executor_unavailable",
-        facts.plans.length ? facts.plans.every(plan => plan.escalation?.reason === "executor_unavailable") : undefined,
+      verdict("ACC-CU-06", "every plan that ran escalated with the reason grounder_unavailable",
+        facts.plans.length ? facts.plans.every(plan => plan.escalation?.reason === "grounder_unavailable") : undefined,
         facts.plans.map(plan => plan.escalation?.reason ?? plan.outcome).join(", ") || "no plan ran"),
       verdict("ACC-CU-06", "no step sent an action", facts.runs.length ? actionsSent(facts) === 0 : undefined, `${actionsSent(facts)} actions`),
     ],

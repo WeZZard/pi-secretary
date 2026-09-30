@@ -4,7 +4,7 @@ import type { RawElement, WindowRead } from "../../extensions/secretary/computer
 import { observe, type Observation } from "../../extensions/secretary/computer-use/observer.ts";
 import { compareWindows } from "../../extensions/secretary/computer-use/window-check.ts";
 
-/** A window with a menu bar, some buttons, an optional display text, and optional extra elements. */
+/** A window with a menu bar, some buttons, an optional display text, and optional extra UI elements. */
 function read(options: { title?: string; windowId?: number; buttons?: string[]; display?: string; extra?: RawElement[] } = {}): WindowRead {
   const elements: RawElement[] = [
     { element_index: 0, role: "AXWindow", label: options.title ?? "Calculator", depth: 0, frame: { x: 0, y: 0, w: 400, h: 600 } },
@@ -20,16 +20,16 @@ function read(options: { title?: string; windowId?: number; buttons?: string[]; 
 const comparison = (window: WindowRead) => (observe(window, { id: "obs", maxElements: 240, maxNameLength: 48 }) as Observation).comparison;
 const verdict = (before: WindowRead, after: WindowRead) => compareWindows(comparison(before), comparison(after));
 
-test("the start check lets a plan through when only values or shown text changed, or a control was added", () => {
+test("the start check lets a plan through when only values or shown text changed, or a UI element was added", () => {
   assert.equal(verdict(read(), read()).stop, false);
   assert.equal(verdict(read({ display: "0" }), read({ display: "7+3" })).stop, false, "a step is expected to change shown text");
-  assert.equal(verdict(read(), read({ buttons: ["7", "Add", "Equals", "Clear"] })).stop, false, "an added control cannot make a step act on the wrong control");
+  assert.equal(verdict(read(), read({ buttons: ["7", "Add", "Equals", "Clear"] })).stop, false, "an added UI element cannot make a step act on the wrong element");
 });
 
-test("the start check stops on another window, another title, a control gone, or something opened over the window", () => {
+test("the start check stops on another window, another title, a UI element gone, or something opened over the window", () => {
   assert.match(verdict(read(), read({ windowId: 8 })).reasons.join(), /different window \(7, now 8\)/);
   assert.match(verdict(read(), read({ title: "Converter" })).reasons.join(), /title was "Calculator" and is now "Converter"/);
-  assert.match(verdict(read(), read({ buttons: ["7", "Equals"] })).reasons.join(), /1 control\(s\) are gone: AXButton "Add"/);
+  assert.match(verdict(read(), read({ buttons: ["7", "Equals"] })).reasons.join(), /1 UI element\(s\) are gone: AXButton "Add"/);
   const sheet: RawElement = { element_index: 50, role: "AXSheet", label: "Save", parent_index: 0, depth: 1, frame: { x: 0, y: 30, w: 400, h: 200 } };
   assert.match(verdict(read(), read({ extra: [sheet] })).reasons.join(), /opened over the window: AXSheet "Save"/);
 });

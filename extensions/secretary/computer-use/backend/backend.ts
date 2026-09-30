@@ -1,7 +1,7 @@
 /**
  * Execution backend interface (design docs/arch/computer-use.md §11.1).
  * Every action is real pointer or keyboard input (relay decision D3); no backend action
- * activates an element through the accessibility API.
+ * activates a UI element through the accessibility API.
  */
 
 export interface Frame { x: number; y: number; w: number; h: number }
