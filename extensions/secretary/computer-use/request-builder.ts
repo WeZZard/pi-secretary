@@ -1,8 +1,9 @@
+import { readFileSync } from "node:fs";
 import { DEFINITIONS } from "./actions.ts";
 import type { Operation } from "./actuator.ts";
 import type { ChoiceQuestion, DecisionRequestBody } from "./decision-service-client.ts";
 import { formatRecord, type ActionRecord } from "./history.ts";
-import type { Observation } from "./observer.ts";
+import { nameText, type Observation } from "./observer.ts";
 
 /**
  * One grounder request per step, every question answered in one stage (design §7.1). The
@@ -37,8 +38,8 @@ export interface BuiltRequest { status: "ready"; body: DecisionRequestBody; ques
   /** No trim step is left; a request the grounder finds too long cannot be made smaller. */
   smallest: boolean }
 
-/** The grounder's model length (research §2.2). */
-export const GROUNDER_MODEL_LENGTH = 4096;
+/** The grounder's model length, the model's own limit (design §2.2, decision PS-D27). It was 4,096 before 2026-10-01. */
+export const GROUNDER_MODEL_LENGTH = 262_144;
 /**
  * The largest answer one grounder read can need. The answer's length depends only on the
  * question ids, so it is fixed by the group count: 18 tokens for one group, 127 for 25, and 26
@@ -49,6 +50,11 @@ export const ANSWER_RESERVE_TOKENS = 128;
 const hiddenNote = (group: { hidden?: number }) => group.hidden ? `; ${group.hidden} more items are hidden beyond the visible area and need scrolling` : "";
 const REOBSERVE = "The window is still changing or loading, so look again before acting.";
 const ABSTAIN = "No listed UI element can carry out the step.";
+/**
+ * The reference table every request carries (design §7.1 and §11.4, decision PS-D39): guidance for the
+ * grounder, such as when accessibility actions are used. It is a Markdown template, so it grows without code.
+ */
+export const GROUNDER_REFERENCE = readFileSync(new URL("./templates/grounder-reference.md", import.meta.url), "utf8").trim();
 
 /**
  * Estimated input tokens. It chooses how much history to send and nothing else, because it was
@@ -57,17 +63,19 @@ const ABSTAIN = "No listed UI element can carry out the step.";
 export const estimateTokens = (body: DecisionRequestBody): number => Math.ceil(JSON.stringify(body).length / 3);
 
 /**
- * The planner decides the operation whenever the step says it: `keys` means key, `text` means
- * type, and a named action is the only one offered. The grounder then chooses only the
- * element and the risk. Through Pi, a step with keys was answered with a click, which clicked the
- * text area instead of pressing the key (observed 2026-09-23).
+ * The planner decides the operation whenever the step says it: `keys` means key, and a named action is
+ * the only one offered. Through Pi, a step with keys was answered with a click, which clicked the text
+ * area instead of pressing the key (observed 2026-09-23). `text` offers both ways to enter it. The
+ * candidates of both inputs are offered, and the grounder chooses from the request and the reference
+ * table (design §7.2, decision PS-D39).
  */
 export function offeredOperations(step: StepSpec, observation: Observation): Operation[] {
   const hasElements = observation.groups.some(group => group.elements.length > 0);
   const scrollable = observation.groups.some(group => group.frame);
   if (step.keys !== undefined) return ["key"];
-  if (step.text !== undefined) return hasElements ? ["type"] : [];
-  const available: Operation[] = [...(hasElements ? ["click", "double_click", "right_click"] as const : []), ...(scrollable ? ["scroll_up", "scroll_down"] as const : [])];
+  const available: Operation[] = step.text !== undefined ? (hasElements ? ["type", "ax_set_value"] : [])
+    : [...(hasElements ? ["click", "double_click", "right_click"] as const : []), ...(scrollable ? ["scroll_up", "scroll_down"] as const : []),
+      ...(hasElements ? ["ax_press", "ax_show_menu"] as const : [])];
   return step.action ? available.filter(operation => operation === step.action) : available;
 }
 
@@ -84,8 +92,10 @@ export type RegionDescriptions = "none" | "names";
  * `roles`: letter, role, name cut at 200 characters, and state: priority 1 alone.
  * `priority`: priority 1, then shown text, elements that cannot be clicked now and closed menus,
  * removed from the lowest priority when the request is too large (design §7.3).
+ * `tree`: the whole accessibility tree as an outline, each UI element the grounder may choose marked
+ * with its group and letter (design §6.2, decision PS-D28).
  */
-export type ElementDetail = "names" | "roles" | "priority";
+export type ElementDetail = "names" | "roles" | "priority" | "tree";
 
 /** Priority 1 alone: as accurate as the full priority model and more accurate than names (research §16.7). */
 export const DEFAULT_ELEMENT_DETAIL: ElementDetail = "roles";
@@ -94,9 +104,9 @@ export const DEFAULT_ELEMENT_DETAIL: ElementDetail = "roles";
 const SHORT_TEXT_LENGTH = 60;
 
 function clickableLine(element: Observation["groups"][number]["elements"][number], detail: ElementDetail): string {
-  if (detail === "names") return `  ${element.letter} ${element.name}`;
+  if (detail === "names") return `  ${element.letter} ${element.unnamed ? nameText(element) : element.name}`;
   const state = [element.selected ? "selected" : "", element.value !== undefined ? `value=${JSON.stringify(element.value)}` : ""].filter(Boolean).join(" ");
-  return `  ${element.letter} ${element.role.replace(/^AX/, "")} ${JSON.stringify(element.fullName)}${state ? ` ${state}` : ""}`;
+  return `  ${element.letter} ${element.role.replace(/^AX/, "")} ${nameText(element, element.fullName)}${state ? ` ${state}` : ""}`;
 }
 
 /** The grounder's view of a read, as the first request for a step would carry it (design §6.2). */
@@ -104,8 +114,16 @@ export function renderGrounderTable(observation: Observation, detail: ElementDet
   return renderElements(observation, detail, { menus: true, inactive: true, shortTexts: false });
 }
 
+/** The whole tree outline. A UI element of an offered group starts with `[group letter]`, or `[letter]` for a single group. */
+function renderOutline(observation: Observation): string {
+  const multi = observation.groups.length > 1;
+  const markers = new Map(observation.groups.flatMap(group => group.elements.map(element => [element.index, multi ? `[${group.name} ${element.letter}] ` : `[${element.letter}] `] as const)));
+  return observation.outline.map(entry => `${"  ".repeat(entry.depth)}${entry.index !== undefined ? markers.get(entry.index) ?? "" : ""}${entry.line}`).join("\n");
+}
+
 /** The `elements` text. Only the clickable table carries letters; the other sections are context. */
-function renderElements(observation: Observation, detail: ElementDetail, parts: { menus: boolean; inactive: boolean; shortTexts: boolean }): string {
+function renderElements(observation: Observation, detail: ElementDetail, parts: { menus: boolean; inactive: boolean; shortTexts: boolean; outline?: boolean }): string {
+  if (detail === "tree" && parts.outline !== false) return renderOutline(observation);
   const table = observation.groups.map(group =>
     `${group.name.toUpperCase()}\n${group.elements.map(element => clickableLine(element, detail)).join("\n")}${group.hidden ? `\n  (${group.hidden} more hidden below; scroll to reveal)` : ""}`).join("\n");
   if (detail !== "priority") return table;
@@ -119,6 +137,8 @@ function renderElements(observation: Observation, detail: ElementDetail, parts: 
 
 export function buildDecisionRequest(input: {
   goal: string; step: StepSpec; observation: Observation; recent: ActionRecord[]; answerReserveTokens?: number;
+  /** The delegated request as written, the computer-use agent's first prompt (design §7.1, decision PS-D39). */
+  request?: string;
   regionDescriptions?: RegionDescriptions;
   /** Offer "none" in every UI element question. It is on by default; the switch exists for evaluation. */
   noneOption?: boolean;
@@ -169,20 +189,23 @@ export function buildDecisionRequest(input: {
   const budget = GROUNDER_MODEL_LENGTH - (input.answerReserveTokens ?? ANSWER_RESERVE_TOKENS);
   // Remove content from the lowest priority until the estimate fits (design §7.3): closed menus,
   // then history from the oldest, then UI elements that cannot be clicked now, then shorten shown text.
+  // The whole tree outline drops history from the oldest, then gives way to priority 1 alone.
   // The last candidate is sent even when the estimate is over, because only the grounder counts exactly.
   // The estimate undercounts menu paths by about a third (research §16.7), so the caller builds again
   // from the next step when the grounder finds a request too long.
-  const candidates: { menus: boolean; inactive: boolean; shortTexts: boolean; used: number }[] = [];
+  const candidates: { menus: boolean; inactive: boolean; shortTexts: boolean; outline?: boolean; used: number }[] = [];
   const all = input.recent.length;
   if (detail === "priority") candidates.push({ menus: true, inactive: true, shortTexts: false, used: all });
   for (let used = all; used >= 0; used--) candidates.push({ menus: false, inactive: true, shortTexts: false, used });
   if (detail === "priority") candidates.push({ menus: false, inactive: false, shortTexts: false, used: 0 }, { menus: false, inactive: false, shortTexts: true, used: 0 });
+  if (detail === "tree") candidates.push({ menus: false, inactive: true, shortTexts: false, outline: false, used: 0 });
   const first = Math.min(input.fromTrimStep ?? 0, candidates.length - 1);
   for (const [index, candidate] of candidates.entries()) {
     if (index < first) continue;
     const recent = input.recent.slice(all - candidate.used);
     const state: Record<string, unknown> = {
-      goal, step: step.intent, ...(step.ui_element ? { step_ui_element: describeUIElement(step.ui_element) } : {}), app: observation.window.app, window: observation.window.title, elements: renderElements(observation, detail, candidate),
+      goal, step: step.intent, ...(input.request !== undefined ? { request: input.request } : {}), reference: GROUNDER_REFERENCE,
+      ...(step.ui_element ? { step_ui_element: describeUIElement(step.ui_element) } : {}), app: observation.window.app, window: observation.window.title, elements: renderElements(observation, detail, candidate),
       ...(recent.length ? { recent: recent.map(formatRecord) } : {}),
     };
     const body: DecisionRequestBody = { state, questions, samples: 1 };

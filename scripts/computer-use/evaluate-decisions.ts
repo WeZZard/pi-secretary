@@ -11,6 +11,8 @@
  * - Wrong action on an unlisted target: the expected UI element was not in the table and the policy acted on another UI element.
  * - Grounder round-trip latency, median (ms): client-side time from sending the request to the full response.
  * - Input tokens: the service's usage.input_tokens, shown beside the builder's estimate.
+ *
+ * A labelled intent names the expected UI elements in `expect`, and optionally their `role`.
  */
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -23,13 +25,13 @@ import { buildDecisionRequest, DEFAULT_ELEMENT_DETAIL, type ElementDetail } from
 
 const flags = process.argv.slice(2).filter(arg => arg.startsWith("--"));
 const [dir, targetsPath, url = "http://jev.home.arpa"] = process.argv.slice(2).filter(arg => !arg.startsWith("--"));
-if (!dir || !targetsPath) { console.error("usage: evaluate-decisions.ts <trees-dir> <targets.json> [grounder-url] [--region-plain] [--no-none] [--seeds=1,2,3] [--elements=names|roles|priority]"); process.exit(2); }
+if (!dir || !targetsPath) { console.error("usage: evaluate-decisions.ts <trees-dir> <targets.json> [grounder-url] [--region-plain] [--no-none] [--seeds=1,2,3] [--elements=names|roles|priority|tree]"); process.exit(2); }
 const regionDescriptions = flags.includes("--region-plain") ? "none" as const : "names" as const;
 const noneOption = !flags.includes("--no-none");
 const elementDetail = (flags.find(flag => flag.startsWith("--elements="))?.slice(11) ?? DEFAULT_ELEMENT_DETAIL) as ElementDetail;
-if (!["names", "roles", "priority"].includes(elementDetail)) { console.error(`unknown --elements=${elementDetail}`); process.exit(2); }
+if (!["names", "roles", "priority", "tree"].includes(elementDetail)) { console.error(`unknown --elements=${elementDetail}`); process.exit(2); }
 const seeds = (flags.find(flag => flag.startsWith("--seeds="))?.slice(8) ?? "42").split(",").map(Number);
-const targets = JSON.parse(readFileSync(targetsPath, "utf8")) as { label: string; app: string; goal?: string; intents?: { intent: string; expect: string[]; text?: string; keys?: string }[] }[];
+const targets = JSON.parse(readFileSync(targetsPath, "utf8")) as { label: string; app: string; goal?: string; intents?: { intent: string; expect: string[]; text?: string; keys?: string; role?: string }[] }[];
 const config = defaultComputerUseConfiguration();
 const client = new DecisionServiceClient({ baseUrl: url, timeoutMs: 60_000 });
 const clean = (text: string) => text.replace(/\s+/g, " ").trim().toLowerCase();
@@ -50,7 +52,9 @@ for (const target of targets) {
   for (const seed of seeds) for (const intent of target.intents ?? []) {
     labelled++;
     const wanted = new Set(intent.expect.map(clean));
-    const inTable = observation.groups.flatMap(group => group.elements).some(element => wanted.has(clean(element.name)));
+    // A label with a role tells apart UI elements with the same name, such as a text field and the static text that repeats it.
+    const expected = (element: { name: string; role: string }) => wanted.has(clean(element.name)) && (!intent.role || element.role.replace(/^AX/, "") === intent.role.replace(/^AX/, ""));
+    const inTable = observation.groups.flatMap(group => group.elements).some(expected);
     if (inTable) present++; else retrievalMisses++;
     const step = { id: "s", intent: intent.intent, ...(intent.text ? { text: intent.text } : {}), ...(intent.keys ? { keys: intent.keys } : {}) };
     const build = (fromTrimStep: number) => buildDecisionRequest({ goal: target.goal ?? intent.intent, step, observation, recent: [], answerReserveTokens: config.answerReserveTokens,
@@ -72,7 +76,7 @@ for (const target of targets) {
     let described: string, outcome: string;
     if (decision.kind === "act") {
       described = `${decision.operation}${decision.element ? ` ${JSON.stringify(decision.element.name)}` : ""}${decision.group ? ` in ${decision.group.name}` : ""}`;
-      const hit = decision.element ? wanted.has(clean(decision.element.name)) : false;
+      const hit = decision.element ? expected(decision.element) : false;
       const scrolled = decision.operation === "scroll_up" || decision.operation === "scroll_down";
       if (hit) { correct++; outcome = "correct"; }
       else if (inTable) { judgmentMisses++; outcome = "**judgment miss**"; }

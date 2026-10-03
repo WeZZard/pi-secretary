@@ -11,12 +11,16 @@ import type { runPlanSchema } from "./schemas.ts";
 
 export interface RunPlanDetails {
   outcome: PlanResult["outcome"] | "rejected"; decisions: number; actions: number; escalation?: string; error?: string; rule?: string;
+  /** The plan's run, which names its records (design §12.3); a rejected plan has none. */
+  runId?: string;
   /** The observation of the window after the plan, which a next plan can name in `based_on` (design §5.4). */
   observationId?: string;
 }
 
 export interface RunPlanContext {
   deps: ExecutorDependencies;
+  /** The delegated request as written, which the grounder reads at every step (design §7.1, decision PS-D39). */
+  request?: string;
   /** The remembered observation with this id; the plan acts on its window. */
   observation(id: string): Observation | undefined;
   /**
@@ -39,10 +43,11 @@ async function rejected(context: RunPlanContext, params: Static<typeof runPlanSc
 }
 
 /** A plan made against an observation acts on that observation's window (Pi task batch, 2026-09-23). */
-export function toPlan(params: Static<typeof runPlanSchema>, basedOn?: Observation): Plan {
+export function toPlan(params: Static<typeof runPlanSchema>, basedOn?: Observation, request?: string): Plan {
   return {
     target: { app: params.app, ...(params.window_title ? { windowTitle: params.window_title } : {}), ...(basedOn ? { windowId: basedOn.window.windowId } : {}) },
     goal: params.goal,
+    ...(request !== undefined ? { request } : {}),
     ...(params.ask_before ? { askBefore: params.ask_before } : {}),
     steps: params.steps.map(step => ({ id: step.id, intent: step.intent,
       ...(toAction(step.action ?? step.operation) ? { action: toAction(step.action ?? step.operation)! } : {}), ...(step.text !== undefined ? { text: step.text } : {}),
@@ -56,6 +61,7 @@ export function toPlan(params: Static<typeof runPlanSchema>, basedOn?: Observati
 export function formatResult(result: PlanResult): string {
   const lines = [`Outcome: ${result.outcome}. Grounder decisions: ${result.decisions}. Actions: ${result.actions}.`];
   for (const step of result.steps) {
+    // Design §11.4: each action step names its action, which says its input.
     lines.push(`- ${step.id}: ${step.result.replace("_", " ")}${step.action ? `, ${step.action}${step.element ? ` ${JSON.stringify(step.element)}` : ""}` : ""}${step.detail && step.result !== "stopped" ? ` (${step.detail})` : ""}`);
   }
   // A stopped step's reason is the escalation below.
@@ -78,7 +84,7 @@ export async function executeRunPlan(context: RunPlanContext, params: Static<typ
     return rejected(context, params, "unknown_observation", `observation ${JSON.stringify(params.based_on)} is unknown or expired; call computer_observe and plan against the new observation.`);
   }
   const previous = basedOn ? context.previousPlanRead?.(basedOn.id) : undefined;
-  const plan = { ...toPlan(params, basedOn), ...(basedOn ? { basedOn: basedOn.comparison } : {}), ...(previous ? { previous: previous.comparison } : {}) };
+  const plan = { ...toPlan(params, basedOn, context.request), ...(basedOn ? { basedOn: basedOn.comparison } : {}), ...(previous ? { previous: previous.comparison } : {}) };
   const problem = validatePlan(plan, 50);
   if (problem) return rejected(context, params, problem.rule, problem.message);
   // Design §6.5: until the iOS actions of §7.2 are built, a step may not target the Simulator's device screen.
@@ -92,7 +98,7 @@ export async function executeRunPlan(context: RunPlanContext, params: Static<typ
   const result = await runPlan(context.deps, plan, signal);
   if (result.last) context.recordPlanRead?.(result.last);
   if (result.outcome === "escalated") context.escalations.record();
-  const details: RunPlanDetails = { outcome: result.outcome, decisions: result.decisions, actions: result.actions, ...(result.escalation ? { escalation: result.escalation.reason } : {}) };
+  const details: RunPlanDetails = { runId: result.runId, outcome: result.outcome, decisions: result.decisions, actions: result.actions, ...(result.escalation ? { escalation: result.escalation.reason } : {}) };
   // Design §5.4: the window after the plan is what the planner judges. A cancelled call reads nothing more.
   if (result.outcome === "cancelled" || !context.observeAfter) return { content: [{ type: "text", text: formatResult(result) }], details };
   const after = await context.observeAfter({ app: params.app, ...(params.window_title ? { window_title: params.window_title } : {}),

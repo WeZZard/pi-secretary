@@ -151,7 +151,8 @@ const TEXT_NAVIGATION_KEYS = new Set(["up", "down", "left", "right", "home", "en
 /** Fix plan F-3: which actions need the application to be active. */
 export function deliveryFor(action: BackendAction, foregroundDelivery: boolean): Delivery | undefined {
   if (action.delivery) return action.delivery;
-  if (!foregroundDelivery) return undefined;
+  // An accessibility action works on a background window (design §11.4).
+  if (!foregroundDelivery || action.kind === "accessibility") return undefined;
   if (action.kind === "click") return "foreground";
   // Text-editing key bindings such as Cmd+Down worked in the background; menu shortcuts need the application active.
   if (action.kind === "key" && !TEXT_NAVIGATION_KEYS.has(action.key)
@@ -315,8 +316,12 @@ export class LocalDriverBackend implements ExecutionBackend {
     const delivery = deliveryFor(action, this.#options.foregroundDelivery ?? false);
     const base = { pid: window.pid, window_id: window.windowId, ...(delivery ? { delivery_mode: delivery } : {}) };
     let result: unknown;
-    const desktop = action.kind !== "key" ? this.#options.desktopScale?.() : undefined;
-    if (desktop !== undefined && action.kind !== "key") {
+    const desktop = action.kind !== "key" && action.kind !== "accessibility" ? this.#options.desktopScale?.() : undefined;
+    if (action.kind === "accessibility") {
+      // Design §11.4: the UI element is named by its index in the window's latest read; nothing is brought to the front.
+      result = await this.#options.run(action.tool, { ...base, element_index: action.element, ...(action.value !== undefined ? { value: action.value } : {}) },
+        { timeoutMs: this.#timeout, signal });
+    } else if (desktop !== undefined && action.kind !== "key") {
       await this.bringToFront(window, signal);
       const at = { scope: "desktop", x: Math.round(action.point.x * desktop), y: Math.round(action.point.y * desktop) };
       result = action.kind === "click"

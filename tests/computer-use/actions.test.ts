@@ -6,8 +6,8 @@ import { toPlan } from "../../extensions/secretary/computer-use/tools/run-plan.t
 
 /** Plan phase 1.3: one closed allowlist of actions for macOS (design §7.2, decision PS-D7). */
 
-test("the macOS allowlist has the seven actions of the design, and the names before it are aliases", () => {
-  assert.deepEqual(ACTION_NAMES, ["click", "double_click", "right_click", "type", "key", "scroll_up", "scroll_down"]);
+test("the macOS allowlist has the ten actions of the design, and the names before it are aliases", () => {
+  assert.deepEqual(ACTION_NAMES, ["click", "double_click", "right_click", "type", "key", "scroll_up", "scroll_down", "ax_press", "ax_show_menu", "ax_set_value"]);
   assert.deepEqual(["press", "double_press", "context_press", "enter_text", "key_combo"].map(toAction), ["click", "double_click", "right_click", "type", "key"]);
   assert.equal(toAction("scroll_down"), "scroll_down");
   assert.equal(toAction("tap"), undefined, "iOS actions are not built yet");

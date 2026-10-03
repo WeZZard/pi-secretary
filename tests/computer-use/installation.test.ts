@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { FakeBackend } from "../../extensions/secretary/computer-use/backend/fake-backend.ts";
-import { installComputerUse } from "../../extensions/secretary/computer-use/installation.ts";
+import { CHILD_TASK_PREFIX } from "../../extensions/secretary/agents/child-task.ts";
+import { delegatedRequest, installComputerUse } from "../../extensions/secretary/computer-use/installation.ts";
 import { textEditRead } from "./fixtures/trees.ts";
 import { withGuardian } from "./support/guardian-answers.ts";
 
@@ -26,10 +27,11 @@ function host(t: TestContext, config: unknown, existingTools: string[] = []) {
     registerTool: (tool: any) => tools.push(tool),
     getAllTools: () => [...existingTools.map(name => ({ name })), ...tools],
   } as unknown as ExtensionAPI;
+  const entries: unknown[] = [];
   const ctx = { cwd: root, hasUI: true, isProjectTrusted: () => false, ui: { notify: (message: string) => notices.push(message) },
-    sessionManager: { getSessionId: () => "session-1" }, model: { input: ["text"] } };
+    sessionManager: { getSessionId: () => "session-1", getEntries: () => entries }, model: { input: ["text"] } };
   const emit = async (event: string) => { for (const handler of handlers.get(event) ?? []) await handler({}, ctx); };
-  return { pi, root, agentDir, tools, notices, emit, ctx };
+  return { pi, root, agentDir, tools, notices, emit, ctx, entries };
 }
 
 test("nothing is registered without a configured backend", async (t) => {
@@ -177,3 +179,29 @@ test("a delegated agent's approval reaches the main session's dialog, and withou
   assert.equal(dialogs.length, 1);
   assert.equal(backend.actions.length, 1);
 });
+
+test("the grounder reads the delegated request as the parent wrote it, the session's first user message (design §7.1, PS-D39)", async (t) => {
+  const task = "As an accessibility test, press Submit through its accessibility functions.";
+  const message = (text: string) => ({ type: "message", message: { role: "user", content: [{ type: "text", text }] } });
+  assert.equal(delegatedRequest([{ type: "model_change" } as never, message(`${CHILD_TASK_PREFIX}${task}`) as never, message("A later message") as never], CHILD_TASK_PREFIX), task);
+  assert.equal(delegatedRequest([{ type: "message", message: { role: "user", content: "Plain text" } } as never]), "Plain text");
+  assert.equal(delegatedRequest([]), undefined);
+
+  const read = (label: string) => ({ window: { pid: 1, windowId: 1, app: "Form", title: "Form" }, appActive: true, truncated: false, elements: [
+    { element_index: 0, role: "AXWindow", label: "Form", depth: 0, frame: { x: 0, y: 0, w: 800, h: 600 } },
+    { element_index: 1, role: "AXButton", label, parent_index: 0, depth: 1, frame: { x: 100, y: 50, w: 80, h: 20 } }] });
+  const backend = new FakeBackend({ Form: [read("Submit"), read("Done")] });
+  const bodies: Record<string, unknown>[] = [];
+  const h = host(t, { computerUse: { backend: "local", allowLocalDesktop: true, executorUrl: "http://jev.home.arpa", settleMs: 0 } });
+  h.entries.push(message(`${CHILD_TASK_PREFIX}${task}`));
+  delegatedInstall(h.pi, { root: h.root, agentDir: () => h.agentDir, backendFactory: () => backend, taskPrefix: CHILD_TASK_PREFIX,
+    grounderFactory: () => withGuardian({ decide: async body => { bodies.push(body.state as Record<string, unknown>); return { roundTripMs: 1, answers: { element_1: { choice: "A", confidence: 0.99 }, operation: { choice: "ax_press", confidence: 0.99 }, risk: { choice: "safe", confidence: 0.99 } } }; } }) });
+  await h.emit("session_start");
+  const runPlanTool = h.tools.find(tool => tool.name === "computer_run_plan");
+  const result = await runPlanTool.execute("r", { app: "Form", goal: "Press Submit", steps: [{ id: "s", intent: "Press Submit" }] }, undefined, undefined, h.ctx);
+  assert.equal(result.details.outcome, "completed");
+  assert.equal(bodies[0]!.request, task);
+  assert.deepEqual(backend.actions.map(entry => entry.action.kind), ["accessibility"]);
+  assert.match(result.content[0].text, /- s: acted, ax_press "Submit"/);
+});
+

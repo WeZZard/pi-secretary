@@ -34,6 +34,8 @@ export function uiElementMatches(observation: Observation, ref: UIElementRef): O
 }
 export interface Plan {
   target: WindowTarget; goal: string; steps: PlanStep[];
+  /** The delegated request as written, the computer-use agent's first prompt; the grounder reads it (design §7.1, decision PS-D39). */
+  request?: string;
   /** The actions the task says a person must approve first, in the task's words (design §8.4). It only adds approvals. */
   askBefore?: string;
   /** The `based_on` observation, which the first read must still match (design §9, start check). */
@@ -60,6 +62,8 @@ export interface StepOutcome {
 export interface Escalation { stepId: string; reason: EscalationReason; detail: string; prior?: Prior }
 
 export interface PlanResult {
+  /** Names the plan's records under `runs/` (design §12.3). */
+  runId: string;
   outcome: "completed" | "escalated" | "cancelled";
   steps: StepOutcome[];
   escalation?: Escalation;
@@ -109,7 +113,7 @@ export function validatePlan(plan: Plan, maxSteps: number): PlanProblem | undefi
   for (const step of plan.steps) {
     if (ids.has(step.id)) return problem("repeated_step_id", `step id ${JSON.stringify(step.id)} is repeated`);
     ids.add(step.id);
-    if (step.action === "type" && step.text === undefined) return problem("needs_text", `step ${step.id}: type needs text`);
+    if ((step.action === "type" || step.action === "ax_set_value") && step.text === undefined) return problem("needs_text", `step ${step.id}: ${step.action} needs text`);
     if (step.action === "key" && step.keys === undefined) return problem("needs_keys", `step ${step.id}: key needs keys`);
     if (step.text !== undefined && step.keys !== undefined) return problem("text_and_keys", `step ${step.id}: a step has text or keys, not both; split it into two steps`);
     if (step.keys !== undefined) {
@@ -191,7 +195,7 @@ export async function runPlan(deps: ExecutorDependencies, plan: Plan, signal?: A
         const offeredView = platformView(observation, "macos");
         const recent = history.recent();
         const build = (fromTrimStep: number) =>
-          buildDecisionRequest({ goal: plan.goal, step, observation: offeredView, recent, answerReserveTokens: config.answerReserveTokens, fromTrimStep });
+          buildDecisionRequest({ goal: plan.goal, ...(plan.request !== undefined ? { request: plan.request } : {}), step, observation: offeredView, recent, answerReserveTokens: config.answerReserveTokens, fromTrimStep });
         let built = build(0);
         let response: DecisionResponse | undefined;
         // The grounder counts tokens exactly and the estimate does not. A request it finds too long
@@ -225,7 +229,14 @@ export async function runPlan(deps: ExecutorDependencies, plan: Plan, signal?: A
         if (!isScroll(decision.operation)) await permit(step, decision, observation, 1);
 
         let backendActions;
-        try { backendActions = actionsFor(decision.request); }
+        try {
+          // Design §7.2 (decision PS-D39): the action is sent as named. A value set keeps the field's
+          // value from the read before the step, not the observer's shortened name.
+          const request = decision.request.operation === "ax_set_value"
+            ? { ...decision.request, value: current.read.elements.find(raw => raw.element_index === decision.element!.index)?.value }
+            : decision.request;
+          backendActions = actionsFor(request);
+        }
         catch (error) {
           if (error instanceof ActuatorError) escalate(step.id, error.code === "untypeable_text" ? "needs_text" : "uncertain", error.message, decision.prior);
           throw error;
@@ -242,15 +253,10 @@ export async function runPlan(deps: ExecutorDependencies, plan: Plan, signal?: A
           try {
             const done = await backend.act(before.read.window, { ...action, label }, signal);
             if (done.evidence?.length) (outcome.evidence ??= []).push(...done.evidence);
+            // Design §11.4: the path is recorded, and nothing acts on it.
             if (done.path) (outcome.inputPaths ??= []).push(done.path);
-            // Design §11.4: in ordinary mode an action the driver performed through accessibility is
-            // not real input. It may have taken effect, so it is neither repeated nor continued.
-            if (done.path === "ax" && config.inputMode === "ordinary") {
-              escalate(step.id, "input_mode", `the driver performed ${decision.operation}${decision.element ? ` ${JSON.stringify(decision.element.name)}` : ""} through accessibility (path ax), which ordinary input mode does not allow; it may have taken effect, so it was not repeated`, decision.prior);
-            }
           }
           catch (error) {
-            if (error instanceof Stop) throw error;
             // An action already sent is not replayed (design §11.2); its outcome is uncertain.
             if (error instanceof BackendError && error.code === "aborted") throw new Stop(undefined, true);
             escalate(step.id, "backend_failed", error instanceof Error ? error.message : String(error), decision.prior);
@@ -269,20 +275,20 @@ export async function runPlan(deps: ExecutorDependencies, plan: Plan, signal?: A
     }
     await telemetry.recordPlan({ runId, outcome: "completed", steps: outcomes, decisions, actions, redact: config.redactTypedText, plan });
     await review("completed");
-    return { outcome: "completed", steps: outcomes, decisions, actions, ...(current ? { last: current.observation } : {}) };
+    return { runId, outcome: "completed", steps: outcomes, decisions, actions, ...(current ? { last: current.observation } : {}) };
   } catch (error) {
     if (!(error instanceof Stop)) throw error;
     if (error.cancelled) {
       await telemetry.recordPlan({ runId, outcome: "cancelled", steps: outcomes, decisions, actions, redact: config.redactTypedText, plan });
       await review("cancelled");
-      return { outcome: "cancelled", steps: outcomes, decisions, actions, ...(current ? { last: current.observation } : {}) };
+      return { runId, outcome: "cancelled", steps: outcomes, decisions, actions, ...(current ? { last: current.observation } : {}) };
     }
     const escalation = error.escalation!;
     const stopped = outcomes.find(entry => entry.id === escalation.stepId);
     if (stopped) { stopped.result = "stopped"; stopped.detail = `${escalation.reason}: ${escalation.detail}`; }
     await telemetry.recordPlan({ runId, outcome: "escalated", steps: outcomes, decisions, actions, escalation, redact: config.redactTypedText, plan });
     await review(`escalated at ${escalation.stepId}: ${escalation.reason}`);
-    return { outcome: "escalated", steps: outcomes, escalation, decisions, actions, ...(current ? { last: current.observation } : {}) };
+    return { runId, outcome: "escalated", steps: outcomes, escalation, decisions, actions, ...(current ? { last: current.observation } : {}) };
   }
 
   /** Fix plan F-4: the review page is written only when pictures were taken. */
@@ -311,7 +317,7 @@ export async function runPlan(deps: ExecutorDependencies, plan: Plan, signal?: A
     const action: GuardedAction = {
       app: observation.window.app, window: observation.window.title ?? "", action: decision.operation as GuardedAction["action"],
       ...(decision.element ? { ui_element: { role: decision.element.role, name: decision.element.fullName, ...(decision.element.value !== undefined ? { value: decision.element.value } : {}) } } : {}),
-      ...(decision.operation === "type" && step.text !== undefined ? { text: step.text } : {}),
+      ...((decision.operation === "type" || decision.operation === "ax_set_value") && step.text !== undefined ? { text: step.text } : {}),
       ...(decision.operation === "key" && step.keys !== undefined ? { keys: step.keys } : {}),
       ...(observation.texts?.length ? { shownText: observation.texts } : {}),
     };

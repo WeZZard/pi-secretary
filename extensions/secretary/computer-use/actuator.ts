@@ -2,15 +2,20 @@ import type { Action } from "./actions.ts";
 import type { BackendAction, Frame } from "./backend/backend.ts";
 
 /**
- * Allowlist actions (design docs/arch/computer-use.md §7.2) expanded into real-input backend actions.
- * Targets are frames from the latest snapshot; a UI element index is never sent to the driver.
+ * Allowlist actions (design docs/arch/computer-use.md §7.2) expanded into backend actions, each sent as
+ * named (decision PS-D39). An input-events action is real input at frames from the latest snapshot, and
+ * a UI element index is never sent with it; an accessibility action names the UI element by its index
+ * in the read before the step (design §11.4).
  */
 export type Operation = Action;
 
 export type ActuatorRequest =
   | { operation: "click" | "double_click" | "right_click" | "scroll_up" | "scroll_down"; frame: Frame }
   | { operation: "type"; frame: Frame; text: string; position?: "end" | "start" | "replace" }
-  | { operation: "key"; keys: string };
+  | { operation: "key"; keys: string }
+  | { operation: "ax_press" | "ax_show_menu"; element: number }
+  /** `value` is the UI element's value in the read before the step, which `start` and `end` keep. */
+  | { operation: "ax_set_value"; element: number; text: string; position?: "end" | "start" | "replace"; value?: string };
 
 export class ActuatorError extends Error {
   readonly code: "untypeable_text" | "invalid_keys";
@@ -73,6 +78,13 @@ export function actionsFor(request: ActuatorRequest): BackendAction[] {
         // the text-editing key bindings Cmd+Up and Shift+Cmd+Down select the whole text instead.
         : request.position === "replace" ? [{ kind: "key", key: "up", modifiers: ["cmd"] }, { kind: "key", key: "down", modifiers: ["shift", "cmd"] }] : [];
       return [{ kind: "click", point: center(request.frame), button: "left", count: 1 }, ...place, ...keys];
+    }
+    case "ax_press": return [{ kind: "accessibility", tool: "click", element: request.element }];
+    case "ax_show_menu": return [{ kind: "accessibility", tool: "right_click", element: request.element }];
+    case "ax_set_value": {
+      const current = request.value ?? "";
+      const value = request.position === "start" ? request.text + current : request.position === "end" ? current + request.text : request.text;
+      return [{ kind: "accessibility", tool: "set_value", element: request.element, value }];
     }
   }
 }

@@ -36,5 +36,5 @@ test("the observer uses descendant text only when label and value are empty", ()
     descendantText: { 15: "Downloads", 18: "Ignored" },
   }, { id: "o", maxElements: 240, maxNameLength: 48 }) as Observation;
   assert.deepEqual(result.groups[0]!.elements.map(element => [element.role, element.name]), [["AXCell", "Downloads"], ["AXCell", "Own label"]]);
-  assert.equal(result.discards.find(discard => discard.index === 14)?.reason, "unnamed", "The row stays unnamed, so one sidebar item yields one candidate");
+  assert.equal(result.discards.find(discard => discard.index === 14)?.reason, "represented", "The row without a name is represented by its named cell, so one sidebar item yields one candidate");
 });

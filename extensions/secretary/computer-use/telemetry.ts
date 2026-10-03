@@ -50,6 +50,8 @@ export class Telemetry {
       appActive: read.appActive,
       truncated: read.truncated,
       readMs: read.readMs,
+      // The relay steps of the read, which the trajectory shows under its call (design §6.4, §12.3).
+      ...(read.evidence?.length ? { evidence: read.evidence } : {}),
       screenshotCaptured: read.screenshot !== undefined,
       tree: read.elements,
       descendantText: read.descendantText,

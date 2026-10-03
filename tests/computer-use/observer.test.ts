@@ -12,9 +12,10 @@ const ready = (result: ReturnType<typeof observe>): Observation => { assert.equa
 test("a small window is one group without routing, and every other UI element is a recorded discard", () => {
   const result = ready(observe(read(textEditRead()), options));
   assert.deepEqual(result.groups.map(group => group.name), ["window"]);
-  assert.deepEqual(result.groups[0]!.elements.map(element => [element.letter, element.name]), [["A", "Disposable document text"]]);
-  assert.deepEqual(discardSummary(result.discards), { container: 3, no_frame: 2, collapsed_frame: 0, disabled: 0, unnamed: 1, behind_modal: 0, inactive_menu_bar: 0, outside_window: 0 });
-  assert.equal(result.discards.length + 1, result.rawCount, "Every raw UI element is either kept or discarded with a reason");
+  assert.deepEqual(result.groups[0]!.elements.map(element => [element.letter, element.name]), [["A", "(no name)"], ["B", "Disposable document text"]],
+    "The title-bar button without a name is kept (decision PS-D26)");
+  assert.deepEqual(discardSummary(result.discards), { container: 3, no_frame: 2, collapsed_frame: 0, disabled: 0, represented: 0, behind_modal: 0, inactive_menu_bar: 0, outside_window: 0 });
+  assert.equal(result.discards.length + 2, result.rawCount, "Every raw UI element is either kept or discarded with a reason");
 });
 
 test("a window above 25 UI elements is grouped by landmark container in reading order", () => {
@@ -47,7 +48,7 @@ test("an open sheet is the only group and UI elements behind it are discarded as
   const area = document.elements.find(element => element.role === "AXTextArea")!;
   area.label = undefined; area.value = `${"First line of a long document. ".repeat(4)}\nHello from Pi`;
   const table = renderPlannerTable(ready(observe(read(document), options)));
-  assert.match(table, /A TextArea "First line of a long document\. First line of a …" content ends with ".*\\nHello from Pi"/);
+  assert.match(table, /B TextArea "First line of a long document\. First line of a …" content ends with ".*\\nHello from Pi"/);
 });
 
 test("truncation, a missing window UI element, and the UI element limit are failures, not partial tables", () => {
@@ -139,7 +140,7 @@ test("the observation keeps full names, UI elements that cannot be clicked now, 
   const area = background.groups.flatMap(group => group.elements).find(element => element.role === "AXTextArea")!;
   assert.equal(area.name.length, 48, "The table name keeps the configured length");
   assert.equal(area.fullName, text.label, "The full name is cut only at 200 characters");
-  assert.deepEqual(background.context, { inactive: ["Button (unnamed)"], menus: [] }, "A background application's menus are not listed");
+  assert.deepEqual(background.context, { inactive: [], menus: [] }, "A background application's menus are not listed");
 
   const active = ready(observe(read({ ...value, appActive: true }), options));
   assert.deepEqual(active.context.menus, ["File ▸ Save…"]);

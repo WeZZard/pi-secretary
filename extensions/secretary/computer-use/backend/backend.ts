@@ -1,7 +1,7 @@
 /**
  * Execution backend interface (design docs/arch/computer-use.md §11.1).
- * Every action is real pointer or keyboard input (relay decision D3); no backend action
- * activates a UI element through the accessibility API.
+ * An action is real pointer or keyboard input, except an `accessibility` action, which is sent only for an
+ * accessibility action the grounder chose (design §11.4, decisions PS-D31 and PS-D39).
  */
 
 export interface Frame { x: number; y: number; w: number; h: number }
@@ -74,6 +74,11 @@ export type BackendAction = (
   | { kind: "key"; key: string; modifiers: string[] }
   /** `extent` is the height in points of the region being scrolled; a page is most of it. */
   | { kind: "scroll"; point: Point; direction: "up" | "down"; by: "page"; extent: number }
+  /**
+   * A cua-driver accessibility action on the UI element with this `element_index` in the window's latest read
+   * (design §7.2): a press, a show-menu action, or a value set.
+   */
+  | { kind: "accessibility"; tool: "click" | "right_click" | "set_value"; element: number; value?: string }
 ) & { delivery?: Delivery; label?: string };
 
 /** Fix plan F-3: whether the target application is active, and which windows are drawn over a point. */

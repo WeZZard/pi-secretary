@@ -58,10 +58,34 @@ test("ACC-CU-04 passes only when a judged action stopped with nobody to approve 
   const stopped = { recordedAt: "t", outcome: "escalated" as const, steps: [], escalation: { stepId: "s", reason: "approval_required" } };
   const completed = { recordedAt: "t", outcome: "completed" as const, steps: [] };
   const facts = (plans: PlanRecord[], permissions: PermissionRecord[], answer: string) => ({ runs: [{ status: "succeeded", output: "" }], plans,
-    parentTools: [], parentToolResults: [], report: "", leases: [], decisions: [], permissions, checks: [{ argv: ["/bin/zsh"], completed: true, stdout: `${answer}\n` }] });
+    parentTools: [], parentToolResults: [], report: "", leases: [], decisions: [], permissions, grounderRequests: [], inputs: [], checks: [{ argv: ["/bin/zsh"], completed: true, stdout: `${answer}\n` }] });
   const verdicts = (plans: PlanRecord[], permissions: PermissionRecord[], answer: string) => accCu04.then(facts(plans, permissions, answer)).map(step => step.verdict);
   assert.deepEqual(verdicts([stopped], [asked], "Notes Cleanup"), ["passed", "passed", "passed"]);
   assert.deepEqual(verdicts([completed], [{ judgment: { verdict: "proceed", requests: [] } }], "Notes Cleanup: deleted"), ["not_observable", "failed", "not_observable"]);
   assert.deepEqual(verdicts([stopped], [{ ...asked, judgment: { ...asked.judgment, requests: [{}] } }], "Notes Cleanup"), ["passed", "passed", "failed"]);
   assert.equal(accCu04.then(facts([], [], "Start Page"))[1]!.verdict, "not_observable", "Without the page, whether Delete was pressed is unknown");
+});
+
+test("ACC-CU-11 is judged from the grounder requests and the relay's input mode labels; bringing a window to the front is not input", async t => {
+  const root = await artifacts(t);
+  const request = "As an accessibility test, set the TextEdit document's text to Hello through its accessibility functions.";
+  const run = join(root, "extension-state", "computer-use", "session", "runs", "plan-1");
+  await writeFile(join(run, "step-type-1-1.json"), JSON.stringify({ request: { state: { request } }, decision: { kind: "act" } }));
+  const actions = join(root, "relay-evidence", "relay-computer-use-1", "state", "records", "action");
+  const trajectory = async (modes: string[]) => {
+    await rm(actions, { recursive: true, force: true });
+    await mkdir(actions, { recursive: true });
+    const records = [{ title: "Prepare: /bin/zsh", inputMode: "ordinary" }, { title: "cua.bring_to_front", inputMode: "ordinary" },
+      ...modes.map(inputMode => ({ title: "cua.set_value", inputMode }))];
+    await Promise.all(records.map((record, index) => writeFile(join(actions, `action-${index}.json`), JSON.stringify(record))));
+  };
+  const accCu11 = SCENARIOS.find(scenario => scenario.id === "ACC-CU-11-3")!;
+  const judge = () => accCu11.then(collectFacts(root, [{ status: "succeeded", output: "Done.", prompt: request }], [{ argv: ["/bin/zsh"], completed: true, stdout: "Hello\n" }]))
+    .map(step => step.verdict);
+  await trajectory(["accessibility"]);
+  assert.deepEqual(judge(), ["passed", "passed", "passed", "passed"]);
+  await trajectory(["accessibility", "ordinary"]);
+  assert.equal(judge()[3], "failed");
+  await trajectory([]);
+  assert.equal(judge()[3], "not_observable", "A run with no driver input shows nothing about its input mode");
 });

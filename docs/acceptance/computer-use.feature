@@ -81,12 +81,46 @@ Feature: Delegate a desktop task to the computer-use agent
     And its relay lease has a lifecycle record that says it was released.
     And the lease was released before the run was recorded as ended.
 
-  @ACC-CU-10 @proposed @CU-08 @PS-D17 @PS-D18
-  Scenario: The trajectory shows the prompt, the agent's messages and each call's machine steps in one timeline.
+  @ACC-CU-10 @proposed @CU-08 @PS-D17 @PS-D18 @PS-D40
+  Scenario: The trajectory follows the agent's session and shows each plan step under its tool call.
     Given the parent delegated a task, and later sent the computer-use agent a message that resumed it on a second machine.
     When a maintainer opens the agent's trajectory in the viewer after both machines are finished.
     Then its first item is the prompt that spawned the agent, and the message where the second run began is an item of its own.
     And every message and tool call of the agent is an item, in the order the session recorded it.
-    And each tool call is followed by the machine steps that started during it, and then by the result the agent received.
-    And each machine step names the tool call that caused it, and the checks after a run say that no tool call asked for them.
+    And each "computer_run_plan" call is followed by its plan's steps in plan order, each plan step by the machine steps it ran, and then by the result the agent received.
+    And each machine step names the plan step or the tool call that asked for it.
+    And the checks after a run are not items, and the Overview counts them for their machine.
     And the Overview names both machines, with each machine's verdicts.
+
+  @ACC-CU-12 @proposed @CU-08 @PS-D40 @PS-D41 @PS-D42
+  Scenario: The trajectory shows how long a plan step waited for a person's approval.
+    Given the permission guardian held a plan step's key press for a person's approval, and nobody answered before the approval timed out.
+    When a maintainer opens the agent's trajectory in the viewer.
+    Then the plan step is an item between its "computer_run_plan" call and the result, although it sent nothing to the machine.
+    And it shows the guardian's verdict, the answer "timed out" and how long the approval waited.
+    And the time the plan step took, shown in its caption in the track, includes that wait.
+    And the interval pill after the plan step in the track includes that wait.
+
+  @ACC-CU-13 @proposed @CU-08 @PS-D41 @PS-D42
+  Scenario: The track tells host steps from guest steps and shows the time between steps.
+    Given a computer-use agent's run with tool calls, plan steps and machine steps.
+    When a maintainer opens the agent's trajectory in the viewer.
+    Then each thumbnail in the track has a line above it with the step number in a step pill at the left, and the word Host or VM with an icon at the right.
+    And the icon is a robot for the agent's items and the plan steps, and a virtual machine for the machine steps.
+    And the caption under each thumbnail shows the step's status dot, its name and the time it took.
+    And the monitor's heading shows the step pill, the step's name with the time it took, and the same word and icon.
+    And after each step with a start time, a pill shows the time from that start to the start of the next step that has one.
+
+  @ACC-CU-11 @proposed @CU-09 @PS-D31 @PS-D32 @PS-D39
+  Scenario Outline: The agent operates the computer the way the person asked.
+    Given TextEdit is open with an empty document in a relay machine.
+    When a person asks the main agent "<request>", and the main agent delegates it to the computer-use agent.
+    Then the run is reported as succeeded, and the document's text is "Hello".
+    And every grounder request of the run holds the delegated request as written.
+    And the relay evidence labels every action of the run with the input mode <input mode>.
+
+    Examples:
+      | request                                                                                                    | input mode      |
+      | Type Hello into the TextEdit document.                                                                     | "ordinary"      |
+      | I use VoiceOver. Please type Hello into the TextEdit document.                                             | "ordinary"      |
+      | As an accessibility test, set the TextEdit document's text to Hello through its accessibility functions.   | "accessibility" |

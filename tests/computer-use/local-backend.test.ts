@@ -123,3 +123,11 @@ test("a window nearer the front covers a point, and the driver's overlay covers 
   assert.deepEqual(await backend.foreground(window, { x: 540, y: 300 }), { active: true, coveredBy: ["Safari"] });
   assert.deepEqual(await backend.foreground(window, { x: 250, y: 300 }), { active: true, coveredBy: [] });
 });
+
+test("an accessibility action names the UI element by index, with no delivery mode and nothing brought to the front (design §11.4)", async () => {
+  const { calls, run } = recorder({ path: "ax" });
+  const backend = new LocalDriverBackend({ run, maxTreeNodes: 2000, foregroundDelivery: true, desktopScale: () => 2 });
+  const done = await backend.act({ pid: 7, windowId: 2, app: "TextEdit", title: "notes.txt" }, { kind: "accessibility", tool: "set_value", element: 5, value: "Hello" });
+  assert.deepEqual(calls, [{ tool: "set_value", args: { pid: 7, window_id: 2, element_index: 5, value: "Hello" } }]);
+  assert.equal(done.path, "ax");
+});

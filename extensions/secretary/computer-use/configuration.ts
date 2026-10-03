@@ -2,11 +2,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
 
-/** The `computerUse` object of secretary.json (design docs/arch/computer-use.md §4.5). */
-export type InputMode = "ordinary" | "accessibility-test";
 /** Design docs/arch/computer-use.md §8.1, decision PS-D13. */
 export type PermissionMode = "ask" | "auto" | "bypass";
 
+/**
+ * The `computerUse` object of secretary.json (design docs/arch/computer-use.md §4.5). The input mode is not
+ * configuration: the grounder chooses each action, and with it the input (design §11.4, decisions PS-D32 and PS-D39).
+ */
 export interface ComputerUseConfiguration {
   backend: "none" | "local" | "relay";
   executorUrl?: string;
@@ -26,11 +28,6 @@ export interface ComputerUseConfiguration {
   stepPictures: boolean;
   /** Fix plan F-3: clicks and modifier shortcuts make the application active for the action. */
   foregroundDelivery: boolean;
-  /**
-   * Design §11.4, decision PS-D8: `ordinary` allows only real pointer and key input, and a driver
-   * action performed through accessibility stops the plan; `accessibility-test` allows it.
-   */
-  inputMode: InputMode;
   /** Design §8.1: who decides whether an action may be sent. */
   permissionMode: PermissionMode;
   /** Design §8.3: a guardian answer below this confidence is doubt, which asks. Provisional (PS-D15). */
@@ -63,7 +60,7 @@ export interface ComputerUseConfiguration {
  * kept npx retrying past the client's 60-second start limit in 3 of 3 starts, and with the flag
  * 3 of 3 starts connected (observed 2026-09-24).
  */
-export const DEFAULT_RELAY_COMMAND = ["npx", "-y", "--prefer-offline", "@wezzard/mcp-vm-relay@0.8.0"];
+export const DEFAULT_RELAY_COMMAND = ["npx", "-y", "--prefer-offline", "@wezzard/mcp-vm-relay@0.9.0"];
 
 export const defaultComputerUseConfiguration = (): ComputerUseConfiguration => ({
   backend: "none",
@@ -77,7 +74,6 @@ export const defaultComputerUseConfiguration = (): ComputerUseConfiguration => (
   redactTypedText: true,
   stepPictures: false,
   foregroundDelivery: true,
-  inputMode: "ordinary",
   permissionMode: "auto",
   permissionGate: 0.6,
   permissionThink: 256,
@@ -107,7 +103,6 @@ const VALIDATORS: Record<Field, { check: (value: unknown) => boolean; expected: 
   redactTypedText: { check: value => typeof value === "boolean", expected: "a boolean" },
   stepPictures: { check: value => typeof value === "boolean", expected: "a boolean" },
   foregroundDelivery: { check: value => typeof value === "boolean", expected: "a boolean" },
-  inputMode: { check: value => value === "ordinary" || value === "accessibility-test", expected: "ordinary or accessibility-test" },
   permissionMode: { check: value => value === "ask" || value === "auto" || value === "bypass", expected: "ask, auto, or bypass" },
   permissionGate: { check: value => typeof value === "number" && value >= 0 && value <= 1, expected: "a number from 0 to 1" },
   permissionThink: { check: integer(0, 4096), expected: "an integer from 0 to 4096" },

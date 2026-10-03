@@ -68,3 +68,20 @@ test("text entry places the insertion point with fixed keys after the click when
   assert.deepEqual(kinds("replace"), ["click", "cmd+up", "shift+cmd+down", "a", "b"]);
   assert.deepEqual(kinds(), ["click", "a", "b"]);
 });
+
+test("each accessibility action reaches the driver as its accessibility call on the UI element's index (design §7.2, PS-D39)", () => {
+  assert.deepEqual(actionsFor({ operation: "ax_press", element: 4 }), [{ kind: "accessibility", tool: "click", element: 4 }]);
+  assert.deepEqual(actionsFor({ operation: "ax_show_menu", element: 4 }), [{ kind: "accessibility", tool: "right_click", element: 4 }]);
+  // No position replaces the value; any character can be set.
+  assert.deepEqual(actionsFor({ operation: "ax_set_value", element: 4, text: "→ Lovelace", value: "Ada" }), [{ kind: "accessibility", tool: "set_value", element: 4, value: "→ Lovelace" }]);
+  assert.deepEqual(actionsFor({ operation: "ax_set_value", element: 4, text: "x", position: "replace", value: "Ada" }), [{ kind: "accessibility", tool: "set_value", element: 4, value: "x" }]);
+  assert.deepEqual(actionsFor({ operation: "ax_set_value", element: 4, text: " Lovelace", position: "end", value: "Ada" }), [{ kind: "accessibility", tool: "set_value", element: 4, value: "Ada Lovelace" }]);
+  assert.deepEqual(actionsFor({ operation: "ax_set_value", element: 4, text: "x", position: "start" }), [{ kind: "accessibility", tool: "set_value", element: 4, value: "x" }]);
+});
+
+test("an input-events action is never sent as an accessibility action (PS-D39)", () => {
+  for (const request of [{ operation: "click" as const, frame }, { operation: "double_click" as const, frame }, { operation: "right_click" as const, frame },
+    { operation: "type" as const, frame, text: "ab" }, { operation: "key" as const, keys: "return" }, { operation: "scroll_down" as const, frame }]) {
+    assert.ok(actionsFor(request).every(action => action.kind !== "accessibility"), request.operation);
+  }
+});

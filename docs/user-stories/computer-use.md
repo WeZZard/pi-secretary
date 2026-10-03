@@ -12,7 +12,7 @@ Secretary will let a parent agent delegate a task on a macOS desktop application
 
 The following constraints were confirmed during design:
 
-- Actions use real pointer and keyboard input by default. Direct accessibility activation is reserved for accessibility tests, as relay decision D3 requires.
+- Actions use real pointer and keyboard input, as a person's would, unless the delegated task asks for an accessibility test or for content reached through the operating system's accessibility functions. Such actions are carried out with those functions (decisions PS-D31 and PS-D39).
 - Desktop work runs in a disposable virtual machine through the relay. Operating the user's own desktop requires an explicit developer setting and is limited to disposable windows.
 - The computer-use agent is a Secretary subagent. Launching, observing, stopping and resuming it follow the [subagent requirements](subagents.md).
 - The per-step decision is made by the grounder, a structured-decision service, not by the planning model.
@@ -85,19 +85,33 @@ As a user, I want the agent to work in a disposable virtual machine unless I cho
 As a maintainer reviewing a run, I want one trajectory that puts the agent's side next to the machine's side, so that I can tell whether a failure started in the prompt, in the agent's reasoning or in the machine.
 
 - The trajectory starts with the prompt that spawned the agent, and shows each later message from the parent where it arrived.
-- The agent's messages and tool calls appear in the order they happened. Each tool call is followed by the steps it ran in the machine, with their pictures, and by the result the agent received.
-- Machine steps that no tool call asked for, such as the checks after the agent's run, are shown where they happened.
+- The agent's messages and tool calls appear in the order its session recorded them. The session is the trajectory's only source of items.
+- Each plan the agent ran is shown step by step under its tool call, before the result the agent received. A plan step shows what the grounder decided, what the permission guardian judged, whether a person was asked and how long the answer took, and the machine steps it ran, with their pictures.
+- A plan step that sent nothing, such as one held for approval or one that never ran, is shown as well.
+- Each step shows whether the agent did it in the host or it ran in the guest machine, and the time from each step to the next is shown between them.
+- Machine steps that no plan step or observation asked for, such as the checks after the agent's run, are counted in the Overview.
 - An agent that was resumed on a second machine shows both machines in one trajectory.
 - The trajectory is labelled as recorded evidence, not as a person's review, and it stays in local, ignored storage.
 
-This story comes from decisions [PS-D17 and PS-D18](../decisions.md): the relay's viewer shows only the steps in the machine, so the viewer moves into the computer-use extension.
+This story comes from decisions [PS-D17 and PS-D18](../decisions.md): the relay's viewer shows only the steps in the machine, so the viewer moves into the computer-use extension. Decision [PS-D40](../decisions.md) makes the session the source and extends it with the extension's records, because a wait for approval reaches no machine.
+
+### CU-09: Operate the computer the way the person asked
+
+As a person who asks for computer work in the chat, I want the computer-use agent to operate the computer as a person does, unless I ask to test accessibility features, so that my task is done as my own input would do it and an accessibility test exercises the accessibility functions.
+
+- A person who asks for a task to be done gets input events only. No accessibility action reaches the machine for the task.
+- A disabled person who asks for a task to be done is served the same way. A mention of a disability or an assistive technology, such as VoiceOver, does not change the input.
+- An accessibility QA tester who asks to test accessibility features gets accessibility actions.
+- The delegated request reaches the grounder as written, and the grounder chooses each action. Nothing translates one input into the other, and no check stops the task for its input.
+- The step results name each step's action.
+
+This story comes from decisions [PS-D31, PS-D32 and PS-D39](../decisions.md).
 
 ## 3. Out of Scope
 
 - Tasks that span several applications in one plan.
 - Web automation inside a browser page through a browser protocol. The agent sees a browser only through its accessibility tree.
 - Degraded operation in which the planning model performs steps when the decision service is unavailable.
-- Direct accessibility activation, unless the owner revises decision D3.
 
 ## 4. Decisions
 
@@ -105,5 +119,6 @@ This story comes from decisions [PS-D17 and PS-D18](../decisions.md): the relay'
 | --- | --- |
 | Approve CU-01 to CU-07. | Approved as written on 2026-09-24. |
 | Should CU-05 require the agent to act again when the result is already on screen, or only to say that it did not act? | Settled by CU-05 as approved: the report says that the result was already on screen, and the agent does not claim it. |
-| Add CU-08. | Added by the owner's decision PS-D17 on 2026-09-30. |
+| Add CU-08. | Added by the owner's decision PS-D17 on 2026-09-30, and revised by PS-D40 and PS-D41 on 2026-10-03. |
+| Add CU-09. | Added by the owner's decisions PS-D31 and PS-D32 on 2026-10-01, and revised by PS-D39 on 2026-10-02. |
 | Does the parent's view of a running computer-use agent need its own interaction design? | Open. The recommendation is yes: the fleet view should show the current step and the last check, which the subagent interaction design does not cover. |

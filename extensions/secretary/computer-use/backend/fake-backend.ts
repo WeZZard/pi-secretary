@@ -9,8 +9,10 @@ export class FakeBackend implements ExecutionBackend {
   readonly reads: WindowTarget[] = [];
   /** When set, reads and actions report relay-style evidence identifiers and input paths, as the relay client does. */
   reportEvidence = false;
-  /** The input path an action reports when `reportEvidence` is set; tests set `ax` to see the input-mode check. */
+  /** The input path an action reports when `reportEvidence` is set. */
   pointerPath = "cgevent_hid";
+  /** The input path an accessibility action reports. */
+  accessibilityPath: string | undefined = "ax";
   #evidence = 0;
   readonly actions: { window: WindowRef; action: BackendAction }[] = [];
   /** Scripted failures for the next actions, consumed in order. */
@@ -37,7 +39,8 @@ export class FakeBackend implements ExecutionBackend {
     const failure = this.actionFailures.shift();
     if (failure) throw failure;
     this.actions.push({ window, action });
-    const path = this.reportEvidence ? { path: action.kind === "key" ? "key_events" : this.pointerPath } : {};
+    const reported = action.kind === "key" ? "key_events" : action.kind === "accessibility" ? this.accessibilityPath : this.pointerPath;
+    const path = this.reportEvidence && reported !== undefined ? { path: reported } : {};
     return action.kind === "key" ? { kind: "unverifiable", ...path, ...this.#reported() } : { kind: "completed", ...path, ...this.#reported() };
   }
 

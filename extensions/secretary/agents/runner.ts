@@ -9,6 +9,7 @@ import { availabilityResetAt, isAvailabilityError } from "./availability.ts";
 import type { AgentRecord, AgentRun, RunnerHooks, RunningChild } from "./records.ts";
 import { childDelegationAuthorized, runInChildSession } from "./child-context.ts";
 import { inspectBashCommand, isReadOnly } from "./read-only-guard.ts";
+import { CHILD_TASK_PREFIX } from "./child-task.ts";
 
 /** Delegation tools (SA-12): issued to a child session only when it may delegate further. */
 export const DELEGATION_TOOL_NAMES = ["Agent", "SendMessage", "TaskStop", "TaskOutput"];
@@ -265,7 +266,7 @@ export async function createChildRunner(options: {
       try {
         attempt.authorize();
         // Prefix keeps task text out of the SDK slash-command dispatch path.
-        const prompt = attempt.session.prompt(`Current child task (plain user text):\n\n${run.prompt}`, { expandPromptTemplates: false });
+        const prompt = attempt.session.prompt(`${CHILD_TASK_PREFIX}${run.prompt}`, { expandPromptTemplates: false });
         attempt.promptSettled = prompt.then(() => {}, () => {});
         await prompt;
         await Promise.all(attempt.pendingUsage);

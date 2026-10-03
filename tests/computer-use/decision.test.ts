@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DEFINITIONS } from "../../extensions/secretary/computer-use/actions.ts";
+import { DEFINITIONS, MACOS_ACTIONS } from "../../extensions/secretary/computer-use/actions.ts";
 import { DecisionServiceClient, DecisionServiceError, type DecisionResponse, type Fetch } from "../../extensions/secretary/computer-use/decision-service-client.ts";
 import { observe, type Observation } from "../../extensions/secretary/computer-use/observer.ts";
 import { decide } from "../../extensions/secretary/computer-use/policy.ts";
-import { buildDecisionRequest, type BuiltRequest, type StepSpec } from "../../extensions/secretary/computer-use/request-builder.ts";
+import { buildDecisionRequest, GROUNDER_MODEL_LENGTH, GROUNDER_REFERENCE, type BuiltRequest, type StepSpec } from "../../extensions/secretary/computer-use/request-builder.ts";
 import { finderRead, textEditRead } from "./fixtures/trees.ts";
 
 const finder = () => observe({ ...finderRead(), readMs: 0 }, { id: "o", maxElements: 240, maxNameLength: 48 }) as Observation;
@@ -18,8 +18,11 @@ test("a grouped window gets a routing question, one UI element question per grou
   assert.deepEqual(Object.keys(built.body.questions.region!.criteria), ["toolbar", "outline", "list"]);
   assert.equal(built.body.samples, 1);
   assert.ok(Object.values(built.body.questions).every(question => !("depends_on" in question) && !("alone" in question)));
-  assert.deepEqual(Object.keys(built.body.questions.operation!.criteria), ["click", "double_click", "right_click", "scroll_up", "scroll_down", "reobserve", "abstain"]);
+  // Design §7.2 (PS-D39): the candidates of both inputs, each described with its input.
+  assert.deepEqual(Object.keys(built.body.questions.operation!.criteria), ["click", "double_click", "right_click", "scroll_up", "scroll_down", "ax_press", "ax_show_menu", "reobserve", "abstain"]);
   assert.equal(built.body.questions.operation!.criteria.double_click, DEFINITIONS.double_click, "the grounder reads the planner's definition");
+  assert.match(built.body.questions.operation!.criteria.click!, /^Input events: /);
+  assert.match(built.body.questions.operation!.criteria.ax_press!, /^Accessibility action: /);
   assert.match(String((built.body.state as { elements: string }).elements), /^TOOLBAR\n {2}A Button "Back"\n/);
   assert.equal(built.historyUsed, 5);
 });
@@ -31,17 +34,35 @@ test("no question exceeds the grounder's 26 alternatives, even with none added t
   assert.equal(Object.keys(built.body.questions.element_3!.criteria).length, 26);
 });
 
-test("a small window has no routing question, and the step's literal or operation decides the only operation offered", () => {
+test("a small window has no routing question, and the step's literal or action decides the operations offered (design §7.2)", () => {
   const built = ready(buildDecisionRequest({ goal: "g", step: { id: "s", intent: "Type the greeting", text: "Hello" }, observation: textEdit(), recent: [] }));
   assert.equal(built.questions.region, undefined);
-  assert.deepEqual(built.offered, ["type"]);
-  const offered = (step: Omit<StepSpec, "id" | "intent">) => ready(buildDecisionRequest({ goal: "g", step: { id: "s", intent: "i", ...step }, observation: textEdit(), recent: [] })).offered;
-  assert.deepEqual(offered({ keys: "delete" }), ["key"], "A step with keys can no longer be answered with a click");
-  assert.equal(built.body.questions.operation, undefined, "A fixed operation is not asked, so the grounder cannot abstain on it");
-  assert.equal(built.questions.fixedOperation, "type");
-  assert.deepEqual(offered({ action: "click" }), ["click"]);
-  assert.ok(offered({}).includes("click") && !offered({}).includes("type") && !offered({}).includes("key"));
-  assert.deepEqual(Object.keys(built.body.questions.element_1!.criteria), ["A", "none"], "Every UI element question offers none");
+  assert.deepEqual(built.offered, ["type", "ax_set_value"], "A step with text is offered both ways to enter it");
+  assert.deepEqual(Object.keys(built.body.questions.operation!.criteria), ["type", "ax_set_value", "reobserve", "abstain"]);
+  const offered = (step: Omit<StepSpec, "id" | "intent">) => ready(buildDecisionRequest({ goal: "g", step: { id: "s", intent: "i", ...step }, observation: textEdit(), recent: [] }));
+  assert.deepEqual(offered({ keys: "delete" }).offered, ["key"], "A step with keys can no longer be answered with a click");
+  const typed = offered({ text: "Hello", action: "type" });
+  assert.deepEqual(typed.offered, ["type"]);
+  assert.equal(typed.body.questions.operation, undefined, "A fixed operation is not asked, so the grounder cannot abstain on it");
+  assert.equal(typed.questions.fixedOperation, "type");
+  assert.deepEqual(offered({ text: "Hello", action: "ax_set_value" }).offered, ["ax_set_value"]);
+  assert.deepEqual(offered({ action: "click" }).offered, ["click"]);
+  assert.deepEqual(offered({ action: "ax_press" }).offered, ["ax_press"]);
+  assert.ok(!offered({}).offered.includes("type") && !offered({}).offered.includes("key") && !offered({}).offered.includes("ax_set_value"));
+  assert.deepEqual(Object.keys(built.body.questions.element_1!.criteria), ["A", "B", "none"], "Every UI element question offers none");
+});
+
+test("every request carries the delegated request as written and the reference table (design §7.1, PS-D39)", () => {
+  const request = "As an accessibility test, set the TextEdit document's text to Hello through its accessibility functions.";
+  const built = ready(buildDecisionRequest({ goal: "Set the text", request, step: { id: "s", intent: "Set the text", text: "Hello" }, observation: textEdit(), recent: [] }));
+  const state = built.body.state as Record<string, unknown>;
+  assert.equal(state.request, request);
+  assert.equal(state.reference, GROUNDER_REFERENCE);
+  assert.deepEqual(Object.keys(state).slice(0, 4), ["goal", "step", "request", "reference"]);
+  assert.match(GROUNDER_REFERENCE, /An accessibility QA tester\./);
+  assert.match(GROUNDER_REFERENCE, /A mention of a disability or of an assistive technology, such as VoiceOver, is not a request for accessibility actions\./);
+  const without = ready(buildDecisionRequest({ goal: "g", step: { id: "s", intent: "i" }, observation: textEdit(), recent: [] }));
+  assert.equal((without.body.state as Record<string, unknown>).request, undefined);
 });
 
 test("history is dropped oldest first to fit the budget, and a request over the estimate is still built without history", () => {
@@ -49,10 +70,32 @@ test("history is dropped oldest first to fit the budget, and a request over the 
     buildDecisionRequest({ goal: "g", step: { id: "s", intent: "i" }, observation: finder(), recent: history, answerReserveTokens });
   const full = ready(build(recent, 0)).estimatedTokens, bare = ready(build([], 0)).estimatedTokens;
   assert.ok(bare < full);
-  const trimmed = ready(build(recent, 4096 - Math.floor((full + bare) / 2)));
+  const trimmed = ready(build(recent, GROUNDER_MODEL_LENGTH - Math.floor((full + bare) / 2)));
   assert.ok(trimmed.historyUsed > 0 && trimmed.historyUsed < 5, "Older records are dropped first until the request fits");
-  const over = ready(build(recent, 4096 - bare + 1));
+  const over = ready(build(recent, GROUNDER_MODEL_LENGTH - bare + 1));
   assert.equal(over.historyUsed, 0, "Only the grounder can say that a request without history is too long");
+});
+
+test("the whole tree outline marks each offered UI element with its group and letter, and gives way to priority 1 when it does not fit (PS-D28)", () => {
+  const observation = finder();
+  assert.ok(observation.groups.length > 1);
+  const build = (history: typeof recent, answerReserveTokens = 0) =>
+    ready(buildDecisionRequest({ goal: "g", step: { id: "s", intent: "i" }, observation, recent: history, answerReserveTokens, elementDetail: "tree" }));
+  const elements = (built: BuiltRequest) => String((built.body.state as Record<string, unknown>).elements);
+  const full = build(recent);
+  const toolbar = observation.groups.find(group => group.name === "toolbar")!.elements[0]!;
+  assert.match(elements(full), new RegExp(`\\[toolbar ${toolbar.letter}\\] ${toolbar.role.replace(/^AX/, "")} `));
+  assert.equal(full.historyUsed, 5);
+  assert.equal(elements(full).split("\n").length, observation.outline.length);
+
+  const bare = build([]);
+  const noHistory = build(recent, GROUNDER_MODEL_LENGTH - bare.estimatedTokens);
+  assert.equal(noHistory.historyUsed, 0, "History goes first");
+  assert.equal(elements(noHistory), elements(full));
+  const table = build(recent, GROUNDER_MODEL_LENGTH - bare.estimatedTokens + 1);
+  assert.equal(elements(table), elements(ready(buildDecisionRequest({ goal: "g", step: { id: "s", intent: "i" }, observation, recent: [], elementDetail: "roles" }))),
+    "Then priority 1 alone");
+  assert.ok(table.smallest);
 });
 
 function response(answers: Record<string, [string, number]>): DecisionResponse {
@@ -100,6 +143,24 @@ test("each policy rule produces its outcome", () => {
   assert.equal((run({ ...base, region: ["sidebar", 0.9] }) as { reason: string }).reason, "grounder_unavailable");
 });
 
+test("the policy acts with the action the grounder chose, an accessibility action on the UI element's index (design §7.2, PS-D39)", () => {
+  const observation = finder();
+  const step = { id: "s", intent: "i" };
+  const { questions } = ready(buildDecisionRequest({ goal: "g", step, observation, recent: [] }));
+  const run = (answers: Record<string, [string, number]>) => decide({ observation, step, questions, confidenceGate: 0.4, response: response(answers) });
+  const base = { region: ["toolbar", 0.9], element_1: ["A", 0.9], operation: ["click", 0.9], risk: ["safe", 0.9] } as Record<string, [string, number]>;
+  const back = observation.groups[0]!.elements[0]!;
+  assert.deepEqual((run(base) as { request: unknown }).request, { operation: "click", frame: back.frame });
+  assert.deepEqual((run({ ...base, operation: ["ax_press", 0.9] }) as { request: unknown }).request, { operation: "ax_press", element: back.index });
+  assert.deepEqual((run({ ...base, operation: ["ax_show_menu", 0.9] }) as { request: unknown }).request, { operation: "ax_show_menu", element: back.index });
+  const text = textEdit();
+  const typed = { id: "s", intent: "Set the text", text: "Hello", position: "end" as const };
+  const built = ready(buildDecisionRequest({ goal: "g", step: typed, observation: text, recent: [] }));
+  const set = decide({ observation: text, step: typed, questions: built.questions, confidenceGate: 0.4, response: response({ element_1: ["B", 0.9], operation: ["ax_set_value", 0.9], risk: ["safe", 0.9] }) });
+  assert.deepEqual((set as { request: unknown }).request, { operation: "ax_set_value", element: 5, text: "Hello", position: "end" });
+  assert.ok(MACOS_ACTIONS.every(entry => /^(Input events|Accessibility action): /.test(entry.definition)), "Every definition starts with its input");
+});
+
 test("the client reports timeout, rejection, malformed answers and usage", async () => {
   const body = { state: {}, questions: { q: { type: "choice" as const, instructions: "", criteria: { A: null, B: null } } }, samples: 1 as const };
   const reply = (status: number, text: string): Fetch => async () => ({ ok: status < 300, status, text: async () => text });
@@ -124,6 +185,7 @@ test("the client reports timeout, rejection, malformed answers and usage", async
 test("the priority table removes closed menus, then history, then inactive UI elements, then shortens shown text", () => {
   const value = textEditRead();
   value.appActive = true;
+  value.elements.find(element => element.role === "AXButton")!.enabled = false;
   const window = value.elements.find(element => element.role === "AXWindow")!;
   value.descendantText = { [window.element_index]: `Shown ${"y".repeat(120)}` };
   const observation = observe({ ...value, readMs: 0 }, { id: "o", maxElements: 240, maxNameLength: 48 }) as Observation;
@@ -134,18 +196,18 @@ test("the priority table removes closed menus, then history, then inactive UI el
   const full = build(0);
   assert.match(elements(full), /TextArea "Disposable document text"/);
   assert.match(elements(full), /SHOWN TEXT \(not clickable\)\n {2}"Shown y+"/);
-  assert.match(elements(full), /NOT CLICKABLE NOW\n {2}Button \(unnamed\)/);
+  assert.match(elements(full), /NOT CLICKABLE NOW\n {2}Button \(no name\) disabled/);
   assert.match(elements(full), /CLOSED MENUS \(not clickable until the menu is open\)\n {2}File ▸ Save…/);
   assert.equal(full.historyUsed, 5, "Nothing is removed while the request fits");
 
-  const fitting = (tokens: number) => build(4096 - tokens);
+  const fitting = (tokens: number) => build(GROUNDER_MODEL_LENGTH - tokens);
   const noMenus = fitting(full.estimatedTokens - 1);
   assert.doesNotMatch(elements(noMenus), /CLOSED MENUS/);
   assert.equal(noMenus.historyUsed, 5, "Closed menus go before any history");
   const noHistory = fitting(noMenus.estimatedTokens - 1);
   assert.ok(noHistory.historyUsed < 5);
   assert.match(elements(noHistory), /NOT CLICKABLE NOW/, "History goes before inactive elements");
-  const bare = build(4096 - 1);
+  const bare = build(GROUNDER_MODEL_LENGTH - 1);
   assert.equal(bare.historyUsed, 0);
   assert.doesNotMatch(elements(bare), /NOT CLICKABLE NOW/);
   assert.match(elements(bare), /"Shown y{53}…"/, "Shown text is shortened last, and the request is still built");

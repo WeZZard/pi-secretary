@@ -73,21 +73,56 @@ test("each step records the relay steps of its reads and action and the driver's
   assert.deepEqual(labels, ["run-1 submit: initial", "run-1 submit: after"]);
 });
 
-test("in ordinary input mode, an action the driver performed through accessibility stops the plan and is not repeated (design §11.4)", async (t) => {
-  const ordinary = setup(t, [form, form]);
-  ordinary.backend.reportEvidence = true;
-  ordinary.backend.pointerPath = "ax";
-  const step = { id: "submit", intent: "Submit the form" };
-  const stopped = await runPlan(ordinary.deps(scriptedGrounder(() => ({ element: "Submit", operation: "click" }))), plan([step]));
-  assert.equal(stopped.escalation?.reason, "input_mode");
-  assert.match(stopped.escalation!.detail, /click "Submit" through accessibility \(path ax\)/);
-  assert.equal(ordinary.backend.actions.length, 1);
-  assert.deepEqual(stopped.steps[0]!.inputPaths, ["ax"]);
-  const testing = setup(t, [form, submitted], { inputMode: "accessibility-test" });
-  testing.backend.reportEvidence = true;
-  testing.backend.pointerPath = "ax";
-  const allowed = await runPlan(testing.deps(scriptedGrounder(() => ({ element: "Submit", operation: "click" }))), plan([step]));
-  assert.equal(allowed.outcome, "completed", "An accessibility test may use accessibility input");
+test("the driver's reported path is recorded, and nothing acts on it: a click reported as ax goes on to the next step (design §11.4, PS-D39)", async (t) => {
+  const { backend, deps } = setup(t, [form, form, submitted]);
+  backend.reportEvidence = true;
+  backend.pointerPath = "ax";
+  const result = await runPlan(deps(scriptedGrounder(() => ({ element: "Submit", operation: "click" }))), plan([{ id: "a", intent: "Submit" }, { id: "b", intent: "Submit again" }]));
+  assert.equal(result.outcome, "completed");
+  assert.deepEqual(result.steps.map(step => step.inputPaths), [["ax"], ["ax"]]);
+  assert.equal(backend.actions.length, 2);
+});
+
+test("each action is sent as named: an accessibility action names the UI element by its index, and the next step can send input events (PS-D39)", async (t) => {
+  const { backend, deps } = setup(t, [form, form, form, submitted]);
+  backend.reportEvidence = true;
+  const operations = ["ax_press", "click", "ax_show_menu"];
+  const grounder = scriptedGrounder((_body, call) => ({ element: "Submit", operation: operations[call - 1]! }));
+  const result = await runPlan(deps(grounder), plan([{ id: "a", intent: "Press Submit" }, { id: "b", intent: "Click Submit" }, { id: "c", intent: "Show Submit's menu" }]));
+  assert.equal(result.outcome, "completed");
+  assert.deepEqual(backend.actions.map(entry => entry.action), [
+    { kind: "accessibility", tool: "click", element: 1, label: 'run-1 a: ax_press "Submit"' },
+    { kind: "click", point: { x: 140, y: 60 }, button: "left", count: 1, label: 'run-1 b: click "Submit"' },
+    { kind: "accessibility", tool: "right_click", element: 1, label: 'run-1 c: ax_show_menu "Submit"' }]);
+  assert.deepEqual(result.steps.map(step => [step.action, step.inputPaths]), [["ax_press", ["ax"]], ["click", ["cgevent_hid"]], ["ax_show_menu", ["ax"]]]);
+  assert.ok(grounder.bodies.every(body => !("input" in body.questions)), "No request asks an input question");
+});
+
+test("ax_set_value sets the field's value from the read before the step, with any character; no position replaces it", async (t) => {
+  const field = window([{ role: "AXTextField", name: "Name", value: "Ada" }]);
+  const set = async (position?: "end" | "start" | "replace") => {
+    const { backend, deps } = setup(t, [field]);
+    await runPlan(deps(scriptedGrounder(() => ({ element: "Name", operation: "ax_set_value" }))),
+      plan([{ id: "t", intent: "Set the name", text: " Lovelace!", ...(position ? { position } : {}) }]));
+    return backend.actions.map(entry => entry.action);
+  };
+  assert.deepEqual(await set(), [{ kind: "accessibility", tool: "set_value", element: 1, value: " Lovelace!", label: 'run-1 t: ax_set_value "Name"' }]);
+  assert.deepEqual((await set("end")).map(action => action.kind === "accessibility" ? action.value : undefined), ["Ada Lovelace!"]);
+  assert.deepEqual((await set("start")).map(action => action.kind === "accessibility" ? action.value : undefined), [" Lovelace!Ada"]);
+});
+
+test("the grounder request carries the delegated request as written, at every step (design §7.1, PS-D39)", async (t) => {
+  const { deps } = setup(t, [form, form, submitted]);
+  const grounder = scriptedGrounder(() => ({ element: "Submit", operation: "click" }));
+  const request = "I use VoiceOver. Please submit the form twice.";
+  await runPlan(deps(grounder), { ...plan([{ id: "a", intent: "Submit" }, { id: "b", intent: "Submit" }]), request });
+  const decisions = grounder.bodies.filter(body => "operation" in body.questions);
+  assert.equal(decisions.length, 2);
+  assert.ok(decisions.every(body => (body.state as { request?: string }).request === request));
+});
+
+test("a plan rejects an ax_set_value step without text", () => {
+  assert.equal(validatePlan(plan([{ id: "s", intent: "Set", action: "ax_set_value" }]), 50)?.rule, "needs_text");
 });
 
 test("the first read refuses to guess among several windows, and every later read uses the same window", async (t) => {
@@ -126,12 +161,11 @@ test("a scroll acts once, like any other step", async (t) => {
 
 test("a stopped step names the action it sent, and later steps are not run", async (t) => {
   const { backend, deps } = setup(t, [form, submitted]);
-  backend.reportEvidence = true;
-  backend.pointerPath = "ax";
+  backend.actionFailures.push(new Error("driver lost the window"));
   const result = await runPlan(deps(scriptedGrounder(() => ({ element: "Submit", operation: "click" }))), plan([{ id: "a", intent: "Submit" }, { id: "b", intent: "Close" }]));
-  assert.equal(result.escalation?.reason, "input_mode");
+  assert.equal(result.escalation?.reason, "backend_failed");
   assert.deepEqual(result.steps.map(step => [step.id, step.result, step.action]), [["a", "stopped", "click"], ["b", "not_run", undefined]]);
-  assert.match(result.steps[0]!.detail!, /^input_mode: /);
+  assert.match(result.steps[0]!.detail!, /^backend_failed: driver lost the window/);
 });
 
 test("policy escalations stop the plan with their reason and prior", async (t) => {

@@ -16,8 +16,8 @@ export const planStepSchema = Type.Object({
   action: Type.Optional(Type.Union(ACTION_NAMES.map(value => Type.Literal(value)), { description: ACTION_DESCRIPTION })),
   /** The field's name before the allowlist; recorded plans and older planners still send it. */
   operation: Type.Optional(Type.Union([...ACTION_NAMES, ...Object.keys(ACTION_ALIASES)].map(value => Type.Literal(value)), { description: "Older name for action. Use action." })),
-  text: Type.Optional(Type.String({ maxLength: 2000, description: "Complete literal text for type. Only letters, digits, space, newline and tab can be typed." })),
-  position: Type.Optional(Type.Union([Type.Literal("end"), Type.Literal("start"), Type.Literal("replace")], { description: "For type: where the text goes. end and start move the insertion point with Cmd+Down or Cmd+Up after the click; replace selects all first. Omit to type at the click point, which is unreliable." })),
+  text: Type.Optional(Type.String({ maxLength: 2000, description: "Complete literal text for type or ax_set_value. For type, only letters, digits, space, newline and tab can be typed." })),
+  position: Type.Optional(Type.Union([Type.Literal("end"), Type.Literal("start"), Type.Literal("replace")], { description: "Where the text goes. For type: end and start move the insertion point with Cmd+Down or Cmd+Up after the click; replace selects all first; omit to type at the click point, which is unreliable. For ax_set_value: end and start keep the field's value after or before the text; replace or omitted sets the value to the text." })),
   keys: Type.Optional(Type.String({ maxLength: 60, description: "A key or key combination for key, for example cmd+shift+n or cmd+w." })),
   ui_element: Type.Optional(Type.Object({
     name: Type.String({ minLength: 1, maxLength: 200, description: "The UI element's name exactly as the observation lists it." }),

@@ -1,0 +1,3005 @@
+{
+ "window": {
+  "pid": 0,
+  "windowId": 59,
+  "app": "Reminders",
+  "title": "Reminders"
+ },
+ "appActive": true,
+ "snapshotId": "s0016",
+ "truncated": false,
+ "elements": [
+  {
+   "depth": 0,
+   "element_index": 0,
+   "element_token": "s0016:0",
+   "frame": {
+    "h": 692,
+    "w": 1235,
+    "x": 264,
+    "y": 263
+   },
+   "label": "Reminders",
+   "role": "AXWindow"
+  },
+  {
+   "depth": 2,
+   "element_index": 1,
+   "element_token": "s0016:1",
+   "enabled": true,
+   "frame": {
+    "h": 634,
+    "w": 361,
+    "x": 271,
+    "y": 314
+   },
+   "label": "Account Lists",
+   "parent_index": 0,
+   "role": "AXOutline"
+  },
+  {
+   "depth": 3,
+   "element_index": 2,
+   "element_token": "s0016:2",
+   "frame": {
+    "h": 137,
+    "w": 359,
+    "x": 272,
+    "y": 315
+   },
+   "parent_index": 1,
+   "role": "AXRow",
+   "selected": false
+  },
+  {
+   "depth": 6,
+   "element_index": 3,
+   "element_token": "s0016:3",
+   "enabled": true,
+   "frame": {
+    "h": 60,
+    "w": 163.5,
+    "x": 286,
+    "y": 318
+   },
+   "label": "Today, 0 reminders",
+   "parent_index": 2,
+   "role": "AXButton"
+  },
+  {
+   "depth": 6,
+   "element_index": 4,
+   "element_token": "s0016:4",
+   "enabled": true,
+   "frame": {
+    "h": 60,
+    "w": 163.5,
+    "x": 455.5,
+    "y": 318
+   },
+   "label": "Scheduled, 0 reminders",
+   "parent_index": 2,
+   "role": "AXButton"
+  },
+  {
+   "depth": 6,
+   "element_index": 5,
+   "element_token": "s0016:5",
+   "enabled": true,
+   "frame": {
+    "h": 60,
+    "w": 163.5,
+    "x": 286,
+    "y": 384
+   },
+   "label": "All, 0 reminders",
+   "parent_index": 2,
+   "role": "AXButton"
+  },
+  {
+   "depth": 6,
+   "element_index": 6,
+   "element_token": "s0016:6",
+   "enabled": true,
+   "frame": {
+    "h": 60,
+    "w": 163.5,
+    "x": 455.5,
+    "y": 384
+   },
+   "label": "Completed",
+   "parent_index": 2,
+   "role": "AXButton"
+  },
+  {
+   "depth": 3,
+   "element_index": 7,
+   "element_token": "s0016:7",
+   "frame": {
+    "h": 127,
+    "w": 359,
+    "x": 272,
+    "y": 465
+   },
+   "parent_index": 1,
+   "role": "AXRow",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 8,
+   "element_token": "s0016:8",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 301,
+    "x": 302,
+    "y": 548
+   },
+   "label": "Go to System Settings",
+   "parent_index": 7,
+   "role": "AXButton"
+  },
+  {
+   "depth": 5,
+   "element_index": 9,
+   "element_token": "s0016:9",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 20,
+    "x": 581.5,
+    "y": 482.5
+   },
+   "label": "Close",
+   "parent_index": 7,
+   "role": "AXButton"
+  },
+  {
+   "depth": 3,
+   "element_index": 10,
+   "element_token": "s0016:10",
+   "frame": {
+    "h": 22,
+    "w": 359,
+    "x": 272,
+    "y": 605
+   },
+   "parent_index": 1,
+   "role": "AXRow",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 11,
+   "element_token": "s0016:11",
+   "frame": {
+    "h": 36,
+    "w": 359,
+    "x": 272,
+    "y": 627
+   },
+   "parent_index": 1,
+   "role": "AXRow",
+   "selected": true
+  },
+  {
+   "depth": 4,
+   "element_index": 12,
+   "element_token": "s0016:12",
+   "enabled": true,
+   "frame": {
+    "h": 36,
+    "w": 339,
+    "x": 282,
+    "y": 627
+   },
+   "label": "Reminders, 0 reminders, Blue",
+   "parent_index": 11,
+   "role": "AXCell",
+   "selected": true
+  },
+  {
+   "depth": 5,
+   "element_index": 13,
+   "element_token": "s0016:13",
+   "frame": {
+    "h": 36,
+    "w": 327,
+    "x": 288,
+    "y": 627
+   },
+   "label": "Reminders, 0 reminders, Blue",
+   "parent_index": 12,
+   "role": "AXUnknown"
+  },
+  {
+   "depth": 6,
+   "element_index": 14,
+   "element_token": "s0016:14",
+   "enabled": true,
+   "frame": {
+    "h": 18,
+    "w": 240,
+    "x": 322,
+    "y": 636
+   },
+   "label": "Reminders",
+   "parent_index": 13,
+   "role": "AXTextField",
+   "value": "Reminders"
+  },
+  {
+   "depth": 3,
+   "element_index": 15,
+   "element_token": "s0016:15",
+   "enabled": true,
+   "frame": {
+    "h": 593,
+    "w": 869,
+    "x": 631,
+    "y": 363
+   },
+   "label": "_NS:13",
+   "parent_index": 0,
+   "role": "AXOutline"
+  },
+  {
+   "depth": 4,
+   "element_index": 16,
+   "element_token": "s0016:16",
+   "frame": {
+    "h": 36,
+    "w": 867,
+    "x": 632,
+    "y": 364
+   },
+   "parent_index": 15,
+   "role": "AXRow",
+   "selected": false
+  },
+  {
+   "depth": 8,
+   "element_index": 17,
+   "element_token": "s0016:17",
+   "enabled": true,
+   "frame": {
+    "h": 18,
+    "w": 39,
+    "x": 1447,
+    "y": 373
+   },
+   "label": "Show",
+   "parent_index": 16,
+   "role": "AXButton"
+  },
+  {
+   "depth": 4,
+   "element_index": 18,
+   "element_token": "s0016:18",
+   "parent_index": 15,
+   "role": "AXRow",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 19,
+   "element_token": "s0016:19",
+   "enabled": true,
+   "parent_index": 18,
+   "role": "AXCell",
+   "selected": false
+  },
+  {
+   "depth": 1,
+   "element_index": 20,
+   "element_token": "s0016:20",
+   "frame": {
+    "h": 52,
+    "w": 1235,
+    "x": 264,
+    "y": 263
+   },
+   "parent_index": 0,
+   "role": "AXToolbar"
+  },
+  {
+   "depth": 2,
+   "element_index": 21,
+   "element_token": "s0016:21",
+   "enabled": false,
+   "frame": {
+    "h": 52,
+    "w": 44,
+    "x": 544,
+    "y": 263
+   },
+   "label": "Add List",
+   "parent_index": 20,
+   "role": "AXButton"
+  },
+  {
+   "depth": 2,
+   "element_index": 22,
+   "element_token": "s0016:22",
+   "enabled": false,
+   "frame": {
+    "h": 52,
+    "w": 44,
+    "x": 588,
+    "y": 263
+   },
+   "label": "Sidebar",
+   "parent_index": 20,
+   "role": "AXButton"
+  },
+  {
+   "depth": 2,
+   "element_index": 23,
+   "element_token": "s0016:23",
+   "enabled": false,
+   "frame": {
+    "h": 52,
+    "w": 44,
+    "x": 1219,
+    "y": 263
+   },
+   "label": "Add Reminder",
+   "parent_index": 20,
+   "role": "AXButton"
+  },
+  {
+   "depth": 2,
+   "element_index": 24,
+   "element_token": "s0016:24",
+   "enabled": false,
+   "frame": {
+    "h": 38,
+    "w": 226,
+    "x": 1266,
+    "y": 270
+   },
+   "parent_index": 20,
+   "role": "AXTextField"
+  },
+  {
+   "depth": 3,
+   "element_index": 25,
+   "element_token": "s0016:25",
+   "enabled": false,
+   "frame": {
+    "h": 9,
+    "w": 16,
+    "x": 1277,
+    "y": 285
+   },
+   "label": "Search",
+   "parent_index": 24,
+   "role": "AXButton"
+  },
+  {
+   "depth": 1,
+   "element_index": 26,
+   "element_token": "s0016:26",
+   "enabled": false,
+   "frame": {
+    "h": 16,
+    "w": 16,
+    "x": 282,
+    "y": 281
+   },
+   "parent_index": 0,
+   "role": "AXButton"
+  },
+  {
+   "depth": 1,
+   "element_index": 27,
+   "element_token": "s0016:27",
+   "enabled": true,
+   "frame": {
+    "h": 16,
+    "w": 16,
+    "x": 328,
+    "y": 281
+   },
+   "parent_index": 0,
+   "role": "AXButton"
+  },
+  {
+   "depth": 1,
+   "element_index": 28,
+   "element_token": "s0016:28",
+   "enabled": true,
+   "frame": {
+    "h": 16,
+    "w": 16,
+    "x": 305,
+    "y": 281
+   },
+   "parent_index": 0,
+   "role": "AXButton"
+  },
+  {
+   "depth": 1,
+   "element_index": 29,
+   "element_token": "s0016:29",
+   "frame": {
+    "h": 193,
+    "w": 484,
+    "x": 640,
+    "y": 512
+   },
+   "parent_index": 0,
+   "role": "AXSheet"
+  },
+  {
+   "depth": 2,
+   "element_index": 30,
+   "element_token": "s0016:30",
+   "enabled": true,
+   "frame": {
+    "h": 26,
+    "w": 395.5,
+    "x": 709.5,
+    "y": 567
+   },
+   "label": "_NS:146",
+   "parent_index": 29,
+   "role": "AXTextField"
+  },
+  {
+   "depth": 2,
+   "element_index": 31,
+   "element_token": "s0016:31",
+   "enabled": true,
+   "frame": {
+    "h": 18,
+    "w": 18,
+    "x": 709.5,
+    "y": 607
+   },
+   "label": "Red",
+   "parent_index": 29,
+   "role": "AXCheckBox",
+   "value": "0"
+  },
+  {
+   "depth": 2,
+   "element_index": 32,
+   "element_token": "s0016:32",
+   "enabled": true,
+   "frame": {
+    "h": 18,
+    "w": 18,
+    "x": 733.5,
+    "y": 607
+   },
+   "label": "Orange",
+   "parent_index": 29,
+   "role": "AXCheckBox",
+   "value": "0"
+  },
+  {
+   "depth": 2,
+   "element_index": 33,
+   "element_token": "s0016:33",
+   "enabled": true,
+   "frame": {
+    "h": 18,
+    "w": 18,
+    "x": 757.5,
+    "y": 607
+   },
+   "label": "Yellow",
+   "parent_index": 29,
+   "role": "AXCheckBox",
+   "value": "0"
+  },
+  {
+   "depth": 2,
+   "element_index": 34,
+   "element_token": "s0016:34",
+   "enabled": true,
+   "frame": {
+    "h": 18,
+    "w": 18,
+    "x": 781.5,
+    "y": 607
+   },
+   "label": "Green",
+   "parent_index": 29,
+   "role": "AXCheckBox",
+   "value": "0"
+  },
+  {
+   "depth": 2,
+   "element_index": 35,
+   "element_token": "s0016:35",
+   "enabled": true,
+   "frame": {
+    "h": 18,
+    "w": 18,
+    "x": 805.5,
+    "y": 607
+   },
+   "label": "Blue",
+   "parent_index": 29,
+   "role": "AXCheckBox",
+   "value": "1"
+  },
+  {
+   "depth": 2,
+   "element_index": 36,
+   "element_token": "s0016:36",
+   "enabled": true,
+   "frame": {
+    "h": 18,
+    "w": 18,
+    "x": 829.5,
+    "y": 607
+   },
+   "label": "Purple",
+   "parent_index": 29,
+   "role": "AXCheckBox",
+   "value": "0"
+  },
+  {
+   "depth": 2,
+   "element_index": 37,
+   "element_token": "s0016:37",
+   "enabled": true,
+   "frame": {
+    "h": 18,
+    "w": 18,
+    "x": 853.5,
+    "y": 607
+   },
+   "label": "Brown",
+   "parent_index": 29,
+   "role": "AXCheckBox",
+   "value": "0"
+  },
+  {
+   "depth": 2,
+   "element_index": 38,
+   "element_token": "s0016:38",
+   "enabled": true,
+   "frame": {
+    "h": 26,
+    "w": 68,
+    "x": 959,
+    "y": 664
+   },
+   "label": "Cancel",
+   "parent_index": 29,
+   "role": "AXButton"
+  },
+  {
+   "depth": 2,
+   "element_index": 39,
+   "element_token": "s0016:39",
+   "enabled": false,
+   "frame": {
+    "h": 26,
+    "w": 68,
+    "x": 1037,
+    "y": 664
+   },
+   "label": "OK",
+   "parent_index": 29,
+   "role": "AXButton"
+  },
+  {
+   "depth": 0,
+   "element_index": 40,
+   "element_token": "s0016:40",
+   "enabled": true,
+   "frame": {
+    "h": 30,
+    "w": 1920,
+    "x": 0,
+    "y": 0
+   },
+   "label": "_NS:799",
+   "role": "AXMenuBar",
+   "selected": false
+  },
+  {
+   "depth": 1,
+   "element_index": 41,
+   "element_token": "s0016:41",
+   "enabled": true,
+   "frame": {
+    "h": 30,
+    "w": 34,
+    "x": 10,
+    "y": 0
+   },
+   "label": "Apple",
+   "parent_index": 40,
+   "role": "AXMenuBarItem",
+   "selected": false
+  },
+  {
+   "depth": 2,
+   "element_index": 42,
+   "element_token": "s0016:42",
+   "enabled": true,
+   "parent_index": 41,
+   "role": "AXMenu",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 43,
+   "element_token": "s0016:43",
+   "enabled": true,
+   "label": "About This Mac",
+   "parent_index": 42,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 44,
+   "element_token": "s0016:44",
+   "enabled": true,
+   "label": "System Information",
+   "parent_index": 42,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 45,
+   "element_token": "s0016:45",
+   "enabled": false,
+   "parent_index": 42,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 46,
+   "element_token": "s0016:46",
+   "enabled": true,
+   "label": "System Settings…, 1 update",
+   "parent_index": 42,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 47,
+   "element_token": "s0016:47",
+   "enabled": true,
+   "label": "App Store",
+   "parent_index": 42,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 48,
+   "element_token": "s0016:48",
+   "enabled": false,
+   "parent_index": 42,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 49,
+   "element_token": "s0016:49",
+   "enabled": true,
+   "label": "Recent Items",
+   "parent_index": 42,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 4,
+   "element_index": 50,
+   "element_token": "s0016:50",
+   "enabled": true,
+   "parent_index": 49,
+   "role": "AXMenu",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 51,
+   "element_token": "s0016:51",
+   "enabled": false,
+   "label": "Applications",
+   "parent_index": 50,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 52,
+   "element_token": "s0016:52",
+   "enabled": true,
+   "label": "Calendar",
+   "parent_index": 50,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 53,
+   "element_token": "s0016:53",
+   "enabled": true,
+   "label": "Show “Calendar” in Finder",
+   "parent_index": 50,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 54,
+   "element_token": "s0016:54",
+   "enabled": true,
+   "label": "Contacts",
+   "parent_index": 50,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 55,
+   "element_token": "s0016:55",
+   "enabled": true,
+   "label": "Show “Contacts” in Finder",
+   "parent_index": 50,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 56,
+   "element_token": "s0016:56",
+   "enabled": true,
+   "label": "Reminders",
+   "parent_index": 50,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 57,
+   "element_token": "s0016:57",
+   "enabled": true,
+   "label": "Show “Reminders” in Finder",
+   "parent_index": 50,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 58,
+   "element_token": "s0016:58",
+   "enabled": false,
+   "parent_index": 50,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 59,
+   "element_token": "s0016:59",
+   "enabled": false,
+   "label": "Documents",
+   "parent_index": 50,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 60,
+   "element_token": "s0016:60",
+   "enabled": false,
+   "parent_index": 50,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 61,
+   "element_token": "s0016:61",
+   "enabled": false,
+   "label": "Servers",
+   "parent_index": 50,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 62,
+   "element_token": "s0016:62",
+   "enabled": true,
+   "label": "Macintosh HD",
+   "parent_index": 50,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 63,
+   "element_token": "s0016:63",
+   "enabled": false,
+   "parent_index": 50,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 64,
+   "element_token": "s0016:64",
+   "enabled": true,
+   "label": "Clear Menu",
+   "parent_index": 50,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 65,
+   "element_token": "s0016:65",
+   "enabled": false,
+   "parent_index": 42,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 66,
+   "element_token": "s0016:66",
+   "enabled": true,
+   "label": "Force Quit…",
+   "parent_index": 42,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 67,
+   "element_token": "s0016:67",
+   "enabled": true,
+   "label": "Force Quit Reminders",
+   "parent_index": 42,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 68,
+   "element_token": "s0016:68",
+   "enabled": false,
+   "parent_index": 42,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 69,
+   "element_token": "s0016:69",
+   "enabled": true,
+   "label": "Sleep",
+   "parent_index": 42,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 70,
+   "element_token": "s0016:70",
+   "enabled": true,
+   "label": "Restart…",
+   "parent_index": 42,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 71,
+   "element_token": "s0016:71",
+   "enabled": true,
+   "label": "Restart",
+   "parent_index": 42,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 72,
+   "element_token": "s0016:72",
+   "enabled": true,
+   "label": "Shut Down…",
+   "parent_index": 42,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 73,
+   "element_token": "s0016:73",
+   "enabled": true,
+   "label": "Shut Down",
+   "parent_index": 42,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 74,
+   "element_token": "s0016:74",
+   "enabled": false,
+   "parent_index": 42,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 75,
+   "element_token": "s0016:75",
+   "enabled": true,
+   "label": "Lock Screen",
+   "parent_index": 42,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 76,
+   "element_token": "s0016:76",
+   "enabled": true,
+   "label": "Log Out station…",
+   "parent_index": 42,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 77,
+   "element_token": "s0016:77",
+   "enabled": true,
+   "label": "Log Out station",
+   "parent_index": 42,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 78,
+   "element_token": "s0016:78",
+   "enabled": false,
+   "parent_index": 42,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 1,
+   "element_index": 79,
+   "element_token": "s0016:79",
+   "enabled": true,
+   "frame": {
+    "h": 30,
+    "w": 90,
+    "x": 44,
+    "y": 0
+   },
+   "label": "Reminders",
+   "parent_index": 40,
+   "role": "AXMenuBarItem",
+   "selected": false
+  },
+  {
+   "depth": 2,
+   "element_index": 80,
+   "element_token": "s0016:80",
+   "enabled": true,
+   "label": "_NS:807",
+   "parent_index": 79,
+   "role": "AXMenu",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 81,
+   "element_token": "s0016:81",
+   "enabled": true,
+   "label": "About Reminders",
+   "parent_index": 80,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 82,
+   "element_token": "s0016:82",
+   "enabled": false,
+   "label": "_NS:811",
+   "parent_index": 80,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 83,
+   "element_token": "s0016:83",
+   "enabled": true,
+   "label": "Settings…",
+   "parent_index": 80,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 84,
+   "element_token": "s0016:84",
+   "enabled": false,
+   "label": "_NS:812",
+   "parent_index": 80,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 85,
+   "element_token": "s0016:85",
+   "enabled": true,
+   "label": "Services",
+   "parent_index": 80,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 4,
+   "element_index": 86,
+   "element_token": "s0016:86",
+   "enabled": true,
+   "label": "_NS:817",
+   "parent_index": 85,
+   "role": "AXMenu",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 87,
+   "element_token": "s0016:87",
+   "enabled": false,
+   "label": "No Services Apply",
+   "parent_index": 86,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 88,
+   "element_token": "s0016:88",
+   "enabled": true,
+   "label": "Services Settings…",
+   "parent_index": 86,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 89,
+   "element_token": "s0016:89",
+   "enabled": false,
+   "label": "_NS:822",
+   "parent_index": 80,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 90,
+   "element_token": "s0016:90",
+   "enabled": true,
+   "label": "Hide Reminders",
+   "parent_index": 80,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 91,
+   "element_token": "s0016:91",
+   "enabled": true,
+   "label": "Hide Others",
+   "parent_index": 80,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 92,
+   "element_token": "s0016:92",
+   "enabled": true,
+   "label": "Show All",
+   "parent_index": 80,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 93,
+   "element_token": "s0016:93",
+   "enabled": false,
+   "label": "_NS:823",
+   "parent_index": 80,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 94,
+   "element_token": "s0016:94",
+   "enabled": true,
+   "label": "Quit Reminders",
+   "parent_index": 80,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 95,
+   "element_token": "s0016:95",
+   "enabled": true,
+   "label": "Quit and Keep Windows",
+   "parent_index": 80,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 1,
+   "element_index": 96,
+   "element_token": "s0016:96",
+   "enabled": true,
+   "frame": {
+    "h": 30,
+    "w": 42,
+    "x": 134,
+    "y": 0
+   },
+   "label": "File",
+   "parent_index": 40,
+   "role": "AXMenuBarItem",
+   "selected": false
+  },
+  {
+   "depth": 2,
+   "element_index": 97,
+   "element_token": "s0016:97",
+   "enabled": true,
+   "label": "_NS:829",
+   "parent_index": 96,
+   "role": "AXMenu",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 98,
+   "element_token": "s0016:98",
+   "enabled": false,
+   "label": "New Reminder",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 99,
+   "element_token": "s0016:99",
+   "enabled": false,
+   "label": "New List",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 100,
+   "element_token": "s0016:100",
+   "enabled": false,
+   "label": "New Group",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 101,
+   "element_token": "s0016:101",
+   "enabled": false,
+   "label": "_NS:833",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 102,
+   "element_token": "s0016:102",
+   "enabled": false,
+   "label": "New Section",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 103,
+   "element_token": "s0016:103",
+   "enabled": false,
+   "label": "New Section with Selection",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 104,
+   "element_token": "s0016:104",
+   "enabled": false,
+   "label": "Edit Sections…",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 105,
+   "element_token": "s0016:105",
+   "enabled": false,
+   "label": "Move to Section",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 4,
+   "element_index": 106,
+   "element_token": "s0016:106",
+   "enabled": true,
+   "label": "_NS:291",
+   "parent_index": 105,
+   "role": "AXMenu",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 107,
+   "element_token": "s0016:107",
+   "enabled": false,
+   "label": "_NS:834",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 108,
+   "element_token": "s0016:108",
+   "enabled": false,
+   "label": "Auto-Categorize",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 109,
+   "element_token": "s0016:109",
+   "enabled": false,
+   "label": "_NS:835",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 110,
+   "element_token": "s0016:110",
+   "enabled": false,
+   "label": "Pin List",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 111,
+   "element_token": "s0016:111",
+   "enabled": false,
+   "label": "_NS:836",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 112,
+   "element_token": "s0016:112",
+   "enabled": false,
+   "label": "Share List",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 113,
+   "element_token": "s0016:113",
+   "enabled": false,
+   "label": "_NS:837",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 114,
+   "element_token": "s0016:114",
+   "enabled": false,
+   "label": "Convert to Smart List",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 115,
+   "element_token": "s0016:115",
+   "enabled": false,
+   "label": "Create Smart List",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 116,
+   "element_token": "s0016:116",
+   "enabled": false,
+   "label": "_NS:838",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 117,
+   "element_token": "s0016:117",
+   "enabled": false,
+   "label": "View Templates",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 118,
+   "element_token": "s0016:118",
+   "enabled": false,
+   "label": "Save as Template…",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 119,
+   "element_token": "s0016:119",
+   "enabled": false,
+   "label": "_NS:839",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 120,
+   "element_token": "s0016:120",
+   "enabled": false,
+   "label": "Show List Info",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 121,
+   "element_token": "s0016:121",
+   "enabled": false,
+   "label": "_NS:840",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 122,
+   "element_token": "s0016:122",
+   "enabled": false,
+   "label": "Close",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 123,
+   "element_token": "s0016:123",
+   "enabled": true,
+   "label": "Close All",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 124,
+   "element_token": "s0016:124",
+   "enabled": false,
+   "label": "_NS:841",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 125,
+   "element_token": "s0016:125",
+   "enabled": false,
+   "label": "Print…",
+   "parent_index": 97,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 1,
+   "element_index": 126,
+   "element_token": "s0016:126",
+   "enabled": true,
+   "frame": {
+    "h": 30,
+    "w": 44,
+    "x": 176,
+    "y": 0
+   },
+   "label": "Edit",
+   "parent_index": 40,
+   "role": "AXMenuBarItem",
+   "selected": false
+  },
+  {
+   "depth": 2,
+   "element_index": 127,
+   "element_token": "s0016:127",
+   "enabled": true,
+   "label": "_NS:846",
+   "parent_index": 126,
+   "role": "AXMenu",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 128,
+   "element_token": "s0016:128",
+   "enabled": false,
+   "label": "Undo",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 129,
+   "element_token": "s0016:129",
+   "enabled": false,
+   "label": "Redo",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 130,
+   "element_token": "s0016:130",
+   "enabled": false,
+   "label": "_NS:850",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 131,
+   "element_token": "s0016:131",
+   "enabled": false,
+   "label": "Cut",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 132,
+   "element_token": "s0016:132",
+   "enabled": false,
+   "label": "Copy",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 133,
+   "element_token": "s0016:133",
+   "enabled": false,
+   "label": "Paste",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 134,
+   "element_token": "s0016:134",
+   "enabled": false,
+   "label": "Delete",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 135,
+   "element_token": "s0016:135",
+   "enabled": true,
+   "label": "Select All",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 136,
+   "element_token": "s0016:136",
+   "enabled": false,
+   "label": "_NS:851",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 137,
+   "element_token": "s0016:137",
+   "enabled": true,
+   "label": "Mark Due Date As",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 4,
+   "element_index": 138,
+   "element_token": "s0016:138",
+   "enabled": true,
+   "label": "_NS:859",
+   "parent_index": 137,
+   "role": "AXMenu",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 139,
+   "element_token": "s0016:139",
+   "enabled": false,
+   "label": "None",
+   "parent_index": 138,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 140,
+   "element_token": "s0016:140",
+   "enabled": false,
+   "label": "_NS:863",
+   "parent_index": 138,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 141,
+   "element_token": "s0016:141",
+   "enabled": false,
+   "label": "Today",
+   "parent_index": 138,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 142,
+   "element_token": "s0016:142",
+   "enabled": false,
+   "label": "Tomorrow",
+   "parent_index": 138,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 143,
+   "element_token": "s0016:143",
+   "enabled": false,
+   "label": "This Weekend",
+   "parent_index": 138,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 144,
+   "element_token": "s0016:144",
+   "enabled": false,
+   "label": "Next Week",
+   "parent_index": 138,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 145,
+   "element_token": "s0016:145",
+   "enabled": false,
+   "label": "_NS:864",
+   "parent_index": 138,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 146,
+   "element_token": "s0016:146",
+   "enabled": false,
+   "label": "Mark All Overdue to Today",
+   "parent_index": 138,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 147,
+   "element_token": "s0016:147",
+   "enabled": false,
+   "label": "_NS:865",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 148,
+   "element_token": "s0016:148",
+   "enabled": false,
+   "label": "Indent Reminder",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 149,
+   "element_token": "s0016:149",
+   "enabled": false,
+   "label": "Outdent Reminder",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 150,
+   "element_token": "s0016:150",
+   "enabled": false,
+   "label": "_NS:866",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 151,
+   "element_token": "s0016:151",
+   "enabled": false,
+   "label": "_NS:867",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 152,
+   "element_token": "s0016:152",
+   "enabled": false,
+   "label": "_NS:868",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 153,
+   "element_token": "s0016:153",
+   "enabled": false,
+   "label": "_NS:869",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 154,
+   "element_token": "s0016:154",
+   "enabled": false,
+   "label": "_NS:870",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 155,
+   "element_token": "s0016:155",
+   "enabled": false,
+   "label": "Find",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 156,
+   "element_token": "s0016:156",
+   "enabled": true,
+   "label": "Spelling and Grammar",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 4,
+   "element_index": 157,
+   "element_token": "s0016:157",
+   "enabled": true,
+   "label": "_NS:875",
+   "parent_index": 156,
+   "role": "AXMenu",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 158,
+   "element_token": "s0016:158",
+   "enabled": true,
+   "label": "Show Spelling and Grammar",
+   "parent_index": 157,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 159,
+   "element_token": "s0016:159",
+   "enabled": true,
+   "label": "Check Document Now",
+   "parent_index": 157,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 160,
+   "element_token": "s0016:160",
+   "enabled": false,
+   "label": "_NS:880",
+   "parent_index": 157,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 161,
+   "element_token": "s0016:161",
+   "enabled": true,
+   "label": "Check Spelling While Typing",
+   "parent_index": 157,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 162,
+   "element_token": "s0016:162",
+   "enabled": true,
+   "label": "Check Grammar With Spelling",
+   "parent_index": 157,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 163,
+   "element_token": "s0016:163",
+   "enabled": true,
+   "label": "Correct Spelling Automatically",
+   "parent_index": 157,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 164,
+   "element_token": "s0016:164",
+   "enabled": true,
+   "label": "Substitutions",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 4,
+   "element_index": 165,
+   "element_token": "s0016:165",
+   "enabled": true,
+   "label": "_NS:885",
+   "parent_index": 164,
+   "role": "AXMenu",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 166,
+   "element_token": "s0016:166",
+   "enabled": true,
+   "label": "Show Substitutions",
+   "parent_index": 165,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 167,
+   "element_token": "s0016:167",
+   "enabled": false,
+   "label": "_NS:889",
+   "parent_index": 165,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 168,
+   "element_token": "s0016:168",
+   "enabled": true,
+   "label": "Smart Copy/Paste",
+   "parent_index": 165,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 169,
+   "element_token": "s0016:169",
+   "enabled": true,
+   "label": "Smart Quotes",
+   "parent_index": 165,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 170,
+   "element_token": "s0016:170",
+   "enabled": true,
+   "label": "Smart Dashes",
+   "parent_index": 165,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 171,
+   "element_token": "s0016:171",
+   "enabled": true,
+   "label": "Smart Links",
+   "parent_index": 165,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 172,
+   "element_token": "s0016:172",
+   "enabled": true,
+   "label": "Data Detectors",
+   "parent_index": 165,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 173,
+   "element_token": "s0016:173",
+   "enabled": true,
+   "label": "Text Replacement",
+   "parent_index": 165,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 174,
+   "element_token": "s0016:174",
+   "enabled": true,
+   "label": "Transformations",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 4,
+   "element_index": 175,
+   "element_token": "s0016:175",
+   "enabled": true,
+   "label": "_NS:894",
+   "parent_index": 174,
+   "role": "AXMenu",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 176,
+   "element_token": "s0016:176",
+   "enabled": true,
+   "label": "Make Upper Case",
+   "parent_index": 175,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 177,
+   "element_token": "s0016:177",
+   "enabled": true,
+   "label": "Make Lower Case",
+   "parent_index": 175,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 178,
+   "element_token": "s0016:178",
+   "enabled": true,
+   "label": "Capitalize",
+   "parent_index": 175,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 179,
+   "element_token": "s0016:179",
+   "enabled": true,
+   "label": "Speech",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 4,
+   "element_index": 180,
+   "element_token": "s0016:180",
+   "enabled": true,
+   "label": "_NS:902",
+   "parent_index": 179,
+   "role": "AXMenu",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 181,
+   "element_token": "s0016:181",
+   "enabled": false,
+   "label": "Start Speaking",
+   "parent_index": 180,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 182,
+   "element_token": "s0016:182",
+   "enabled": false,
+   "label": "Stop Speaking",
+   "parent_index": 180,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 183,
+   "element_token": "s0016:183",
+   "enabled": false,
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 184,
+   "element_token": "s0016:184",
+   "enabled": true,
+   "label": "AutoFill",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 4,
+   "element_index": 185,
+   "element_token": "s0016:185",
+   "enabled": true,
+   "parent_index": 184,
+   "role": "AXMenu",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 186,
+   "element_token": "s0016:186",
+   "enabled": true,
+   "label": "Contact…",
+   "parent_index": 185,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 187,
+   "element_token": "s0016:187",
+   "enabled": true,
+   "label": "Passwords…",
+   "parent_index": 185,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 188,
+   "element_token": "s0016:188",
+   "enabled": true,
+   "label": "Credit Card…",
+   "parent_index": 185,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 189,
+   "element_token": "s0016:189",
+   "enabled": true,
+   "label": "Start Dictation…",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 190,
+   "element_token": "s0016:190",
+   "enabled": true,
+   "label": "Emoji & Symbols",
+   "parent_index": 127,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 1,
+   "element_index": 191,
+   "element_token": "s0016:191",
+   "enabled": true,
+   "frame": {
+    "h": 30,
+    "w": 50,
+    "x": 220,
+    "y": 0
+   },
+   "label": "View",
+   "parent_index": 40,
+   "role": "AXMenuBarItem",
+   "selected": false
+  },
+  {
+   "depth": 2,
+   "element_index": 192,
+   "element_token": "s0016:192",
+   "enabled": true,
+   "label": "_NS:910",
+   "parent_index": 191,
+   "role": "AXMenu",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 193,
+   "element_token": "s0016:193",
+   "enabled": false,
+   "label": "as List",
+   "parent_index": 192,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 194,
+   "element_token": "s0016:194",
+   "enabled": false,
+   "label": "as Columns",
+   "parent_index": 192,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 195,
+   "element_token": "s0016:195",
+   "enabled": false,
+   "label": "_NS:914",
+   "parent_index": 192,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 196,
+   "element_token": "s0016:196",
+   "enabled": false,
+   "label": "Sort By",
+   "parent_index": 192,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 4,
+   "element_index": 197,
+   "element_token": "s0016:197",
+   "enabled": true,
+   "parent_index": 196,
+   "role": "AXMenu",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 198,
+   "element_token": "s0016:198",
+   "enabled": false,
+   "label": "Manual",
+   "parent_index": 197,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 199,
+   "element_token": "s0016:199",
+   "enabled": false,
+   "label": "Due Date",
+   "parent_index": 197,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 200,
+   "element_token": "s0016:200",
+   "enabled": false,
+   "label": "Creation Date",
+   "parent_index": 197,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 201,
+   "element_token": "s0016:201",
+   "enabled": false,
+   "label": "Priority",
+   "parent_index": 197,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 202,
+   "element_token": "s0016:202",
+   "enabled": false,
+   "label": "Title",
+   "parent_index": 197,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 203,
+   "element_token": "s0016:203",
+   "enabled": false,
+   "label": "_NS:915",
+   "parent_index": 192,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 204,
+   "element_token": "s0016:204",
+   "enabled": true,
+   "label": "Go To",
+   "parent_index": 192,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 4,
+   "element_index": 205,
+   "element_token": "s0016:205",
+   "enabled": true,
+   "label": "_NS:13",
+   "parent_index": 204,
+   "role": "AXMenu",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 206,
+   "element_token": "s0016:206",
+   "enabled": false,
+   "label": "Today",
+   "parent_index": 205,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 207,
+   "element_token": "s0016:207",
+   "enabled": false,
+   "label": "Scheduled",
+   "parent_index": 205,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 208,
+   "element_token": "s0016:208",
+   "enabled": false,
+   "label": "All",
+   "parent_index": 205,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 209,
+   "element_token": "s0016:209",
+   "enabled": false,
+   "label": "Completed",
+   "parent_index": 205,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 210,
+   "element_token": "s0016:210",
+   "enabled": true,
+   "label": "Show Smart List",
+   "parent_index": 192,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 4,
+   "element_index": 211,
+   "element_token": "s0016:211",
+   "enabled": true,
+   "label": "_NS:929",
+   "parent_index": 210,
+   "role": "AXMenu",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 212,
+   "element_token": "s0016:212",
+   "enabled": false,
+   "label": "Today",
+   "parent_index": 211,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 213,
+   "element_token": "s0016:213",
+   "enabled": false,
+   "label": "Scheduled",
+   "parent_index": 211,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 214,
+   "element_token": "s0016:214",
+   "enabled": false,
+   "label": "All",
+   "parent_index": 211,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 215,
+   "element_token": "s0016:215",
+   "enabled": false,
+   "label": "Completed",
+   "parent_index": 211,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 216,
+   "element_token": "s0016:216",
+   "enabled": false,
+   "label": "_NS:933",
+   "parent_index": 192,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 217,
+   "element_token": "s0016:217",
+   "enabled": false,
+   "label": "Group by Time",
+   "parent_index": 192,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 218,
+   "element_token": "s0016:218",
+   "enabled": false,
+   "label": "_NS:934",
+   "parent_index": 192,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 219,
+   "element_token": "s0016:219",
+   "enabled": false,
+   "label": "Show Completed",
+   "parent_index": 192,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 220,
+   "element_token": "s0016:220",
+   "enabled": false,
+   "label": "_NS:935",
+   "parent_index": 192,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 221,
+   "element_token": "s0016:221",
+   "enabled": false,
+   "label": "Show All Subtasks",
+   "parent_index": 192,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 222,
+   "element_token": "s0016:222",
+   "enabled": false,
+   "label": "Hide All Subtasks",
+   "parent_index": 192,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 223,
+   "element_token": "s0016:223",
+   "enabled": false,
+   "label": "_NS:936",
+   "parent_index": 192,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 224,
+   "element_token": "s0016:224",
+   "enabled": true,
+   "label": "Hide Sidebar",
+   "parent_index": 192,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 225,
+   "element_token": "s0016:225",
+   "enabled": false,
+   "label": "Enter Full Screen",
+   "parent_index": 192,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 1,
+   "element_index": 226,
+   "element_token": "s0016:226",
+   "enabled": true,
+   "frame": {
+    "h": 30,
+    "w": 69,
+    "x": 270,
+    "y": 0
+   },
+   "label": "Window",
+   "parent_index": 40,
+   "role": "AXMenuBarItem",
+   "selected": false
+  },
+  {
+   "depth": 2,
+   "element_index": 227,
+   "element_token": "s0016:227",
+   "enabled": true,
+   "label": "_NS:941",
+   "parent_index": 226,
+   "role": "AXMenu",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 228,
+   "element_token": "s0016:228",
+   "enabled": true,
+   "label": "Minimize",
+   "parent_index": 227,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 229,
+   "element_token": "s0016:229",
+   "enabled": true,
+   "label": "Minimize All",
+   "parent_index": 227,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 230,
+   "element_token": "s0016:230",
+   "enabled": true,
+   "label": "Zoom",
+   "parent_index": 227,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 231,
+   "element_token": "s0016:231",
+   "enabled": true,
+   "label": "Zoom All",
+   "parent_index": 227,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 232,
+   "element_token": "s0016:232",
+   "enabled": true,
+   "label": "Fill",
+   "parent_index": 227,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 233,
+   "element_token": "s0016:233",
+   "enabled": true,
+   "label": "Center",
+   "parent_index": 227,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 234,
+   "element_token": "s0016:234",
+   "enabled": false,
+   "parent_index": 227,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 235,
+   "element_token": "s0016:235",
+   "enabled": true,
+   "label": "Move & Resize",
+   "parent_index": 227,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 4,
+   "element_index": 236,
+   "element_token": "s0016:236",
+   "enabled": true,
+   "parent_index": 235,
+   "role": "AXMenu",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 237,
+   "element_token": "s0016:237",
+   "enabled": false,
+   "label": "Halves",
+   "parent_index": 236,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 238,
+   "element_token": "s0016:238",
+   "enabled": true,
+   "label": "Left",
+   "parent_index": 236,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 239,
+   "element_token": "s0016:239",
+   "enabled": true,
+   "label": "Right",
+   "parent_index": 236,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 240,
+   "element_token": "s0016:240",
+   "enabled": true,
+   "label": "Top",
+   "parent_index": 236,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 241,
+   "element_token": "s0016:241",
+   "enabled": true,
+   "label": "Bottom",
+   "parent_index": 236,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 242,
+   "element_token": "s0016:242",
+   "enabled": false,
+   "parent_index": 236,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 243,
+   "element_token": "s0016:243",
+   "enabled": false,
+   "label": "Quarters",
+   "parent_index": 236,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 244,
+   "element_token": "s0016:244",
+   "enabled": true,
+   "label": "Top Left",
+   "parent_index": 236,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 245,
+   "element_token": "s0016:245",
+   "enabled": true,
+   "label": "Top Right",
+   "parent_index": 236,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 246,
+   "element_token": "s0016:246",
+   "enabled": true,
+   "label": "Bottom Left",
+   "parent_index": 236,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 247,
+   "element_token": "s0016:247",
+   "enabled": true,
+   "label": "Bottom Right",
+   "parent_index": 236,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 248,
+   "element_token": "s0016:248",
+   "enabled": false,
+   "parent_index": 236,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 249,
+   "element_token": "s0016:249",
+   "enabled": false,
+   "label": "Arrange",
+   "parent_index": 236,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 250,
+   "element_token": "s0016:250",
+   "enabled": true,
+   "label": "Left & Right",
+   "parent_index": 236,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 251,
+   "element_token": "s0016:251",
+   "enabled": true,
+   "label": "Left & Quarters",
+   "parent_index": 236,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 252,
+   "element_token": "s0016:252",
+   "enabled": true,
+   "label": "Right & Left",
+   "parent_index": 236,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 253,
+   "element_token": "s0016:253",
+   "enabled": true,
+   "label": "Right & Quarters",
+   "parent_index": 236,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 254,
+   "element_token": "s0016:254",
+   "enabled": true,
+   "label": "Top & Bottom",
+   "parent_index": 236,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 255,
+   "element_token": "s0016:255",
+   "enabled": true,
+   "label": "Top & Quarters",
+   "parent_index": 236,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 256,
+   "element_token": "s0016:256",
+   "enabled": true,
+   "label": "Bottom & Top",
+   "parent_index": 236,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 257,
+   "element_token": "s0016:257",
+   "enabled": true,
+   "label": "Bottom & Quarters",
+   "parent_index": 236,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 258,
+   "element_token": "s0016:258",
+   "enabled": true,
+   "label": "Quarters",
+   "parent_index": 236,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 259,
+   "element_token": "s0016:259",
+   "enabled": false,
+   "parent_index": 236,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 260,
+   "element_token": "s0016:260",
+   "enabled": false,
+   "label": "Return to Previous Size",
+   "parent_index": 236,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 261,
+   "element_token": "s0016:261",
+   "enabled": false,
+   "label": "Full Screen Tile",
+   "parent_index": 227,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 4,
+   "element_index": 262,
+   "element_token": "s0016:262",
+   "enabled": true,
+   "parent_index": 261,
+   "role": "AXMenu",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 263,
+   "element_token": "s0016:263",
+   "enabled": false,
+   "label": "Left of Screen",
+   "parent_index": 262,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 5,
+   "element_index": 264,
+   "element_token": "s0016:264",
+   "enabled": false,
+   "label": "Right of Screen",
+   "parent_index": 262,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 265,
+   "element_token": "s0016:265",
+   "enabled": false,
+   "parent_index": 227,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 266,
+   "element_token": "s0016:266",
+   "enabled": false,
+   "label": "Remove Window from Set",
+   "parent_index": 227,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 267,
+   "element_token": "s0016:267",
+   "enabled": false,
+   "label": "_NS:945",
+   "parent_index": 227,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 268,
+   "element_token": "s0016:268",
+   "enabled": true,
+   "label": "Reminders",
+   "parent_index": 227,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 269,
+   "element_token": "s0016:269",
+   "enabled": false,
+   "label": "_NS:946",
+   "parent_index": 227,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 270,
+   "element_token": "s0016:270",
+   "enabled": true,
+   "label": "Bring All to Front",
+   "parent_index": 227,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 271,
+   "element_token": "s0016:271",
+   "enabled": true,
+   "label": "Arrange in Front",
+   "parent_index": 227,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 1,
+   "element_index": 272,
+   "element_token": "s0016:272",
+   "enabled": true,
+   "frame": {
+    "h": 30,
+    "w": 48,
+    "x": 339,
+    "y": 0
+   },
+   "label": "Help",
+   "parent_index": 40,
+   "role": "AXMenuBarItem",
+   "selected": false
+  },
+  {
+   "depth": 2,
+   "element_index": 273,
+   "element_token": "s0016:273",
+   "enabled": true,
+   "label": "_NS:952",
+   "parent_index": 272,
+   "role": "AXMenu",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 274,
+   "element_token": "s0016:274",
+   "enabled": true,
+   "label": "Reminders Help",
+   "parent_index": 273,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 275,
+   "element_token": "s0016:275",
+   "enabled": false,
+   "label": "_NS:956",
+   "parent_index": 273,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 276,
+   "element_token": "s0016:276",
+   "enabled": false,
+   "label": "Using Tags",
+   "parent_index": 273,
+   "role": "AXMenuItem",
+   "selected": false
+  },
+  {
+   "depth": 3,
+   "element_index": 277,
+   "element_token": "s0016:277",
+   "enabled": false,
+   "label": "Creating Smart Lists",
+   "parent_index": 273,
+   "role": "AXMenuItem",
+   "selected": false
+  }
+ ],
+ "descendantText": {
+  "7": "To access your reminders on all of your devices, sign into iCloud and enable Reminders.",
+  "13": "0",
+  "16": "0 Completed",
+  "29": "New List Name:"
+ }
+}

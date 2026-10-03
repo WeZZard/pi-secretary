@@ -19,7 +19,7 @@ export interface PlanRecord {
   escalation?: { stepId: string; reason: string };
   actions?: number;
 }
-export interface RunRecord { status?: string; output?: string; endedAt?: number }
+export interface RunRecord { status?: string; output?: string; endedAt?: number; prompt?: string }
 export interface LeaseRecord { name: string; released: boolean; finishedAt?: string }
 
 export interface Facts {
@@ -40,6 +40,10 @@ export interface Facts {
   decisions: { kind?: string; risk?: string; reason?: string }[];
   /** The permission check of every judged action, from the executor's permission records (design §12.1). */
   permissions: PermissionRecord[];
+  /** The `request` field of every grounder request, from the executor's step records (design §7.1). */
+  grounderRequests: (string | undefined)[];
+  /** Every driver input the relay recorded, with the input mode the relay labelled it with. */
+  inputs: { tool: string; inputMode?: string }[];
 }
 export interface PermissionRecord { judgment?: { verdict?: string; reason?: string; requests?: { answers?: Record<string, unknown> }[] }; approval?: { answer?: string } }
 
@@ -53,8 +57,9 @@ const text = (content: unknown): string => Array.isArray(content)
 export function collectFacts(artifacts: string, runs: RunRecord[], checks?: CheckResult[]): Facts {
   const plans = walk(join(artifacts, "extension-state", "computer-use"), name => name === "plan.json").map(path => json<PlanRecord>(path))
     .filter((plan): plan is PlanRecord => !!plan).sort((a, b) => a.recordedAt.localeCompare(b.recordedAt));
-  const decisions = walk(join(artifacts, "extension-state", "computer-use"), name => name.startsWith("step-") && name.endsWith(".json"))
-    .map(path => json<{ decision?: { kind?: string; risk?: string; reason?: string } }>(path)?.decision).filter((decision): decision is NonNullable<typeof decision> => !!decision);
+  const steps = walk(join(artifacts, "extension-state", "computer-use"), name => name.startsWith("step-") && name.endsWith(".json"))
+    .map(path => json<{ decision?: { kind?: string; risk?: string; reason?: string }; request?: { state?: { request?: string } } }>(path)).filter((step): step is NonNullable<typeof step> => !!step);
+  const decisions = steps.map(step => step.decision).filter((decision): decision is NonNullable<typeof decision> => !!decision);
   const permissions = walk(join(artifacts, "extension-state", "computer-use"), name => name.startsWith("permission-") && name.endsWith(".json"))
     .map(path => json<PermissionRecord>(path)).filter((record): record is PermissionRecord => !!record);
   const parentTools: string[] = [], parentToolResults: string[] = [];
@@ -71,7 +76,13 @@ export function collectFacts(artifacts: string, runs: RunRecord[], checks?: Chec
     const lifecycle = json<{ released?: boolean; finishedAt?: string }>(join(evidence, `${name}.lifecycle.json`));
     return { name, released: lifecycle?.released === true, ...(lifecycle?.finishedAt ? { finishedAt: lifecycle.finishedAt } : {}) };
   });
-  return { runs, plans, parentTools, parentToolResults, report: runs[0]?.output ?? "", ...(checks ? { checks } : {}), leases, decisions, permissions };
+  // The relay's action records (relay 0.8.0). A driver call's record is titled `cua.<tool>`; bringing a window to the front is not input.
+  const inputs = walk(evidence, name => name.endsWith(".json")).filter(path => path.includes(join("state", "records", "action")))
+    .map(path => json<{ title?: string; inputMode?: string; startRetainedAt?: string }>(path)).filter((record): record is NonNullable<typeof record> => !!record)
+    .sort((a, b) => (a.startRetainedAt ?? "").localeCompare(b.startRetainedAt ?? ""))
+    .flatMap(record => record.title?.startsWith("cua.") && record.title !== "cua.bring_to_front" ? [{ tool: record.title.slice(4), inputMode: record.inputMode }] : []);
+  return { runs, plans, parentTools, parentToolResults, report: runs[0]?.output ?? "", ...(checks ? { checks } : {}), leases, decisions, permissions,
+    grounderRequests: steps.map(step => step.request?.state?.request), inputs };
 }
 
 const verdict = (scenario: string, step: string, holds: boolean | undefined, detail: string): ThenResult =>
@@ -132,6 +143,33 @@ const PAGE = shell([
   "sleep 6",
   SAFARI_TITLES + " | grep -q 'Notes Cleanup'",
 ].join("\n"));
+
+/** ACC-CU-11's preparation: TextEdit with an empty plain-text document. */
+const EMPTY_TEXTEDIT = [shell("defaults write com.apple.TextEdit ApplePersistenceIgnoreState -bool YES; mkdir -p ~/cu-fixtures"
+  + " && : > ~/cu-fixtures/hello.txt && open -a TextEdit ~/cu-fixtures/hello.txt && sleep 3")];
+const TEXTEDIT_TEXT = shell(`osascript -e 'tell application "TextEdit" to get text of document 1'`);
+
+/** ACC-CU-11, one example row: decision PS-D39. */
+function followsRequest(id: string, task: string, inputMode: "ordinary" | "accessibility"): Scenario {
+  return {
+    id, task, prepare: EMPTY_TEXTEDIT, check: [TEXTEDIT_TEXT],
+    then(facts) {
+      const shown = checkOutput(facts);
+      const delegated = facts.runs[0]?.prompt;
+      const actions = facts.plans.flatMap(plan => plan.steps.flatMap(step => step.action ? [step.action] : []));
+      return [
+        verdict("ACC-CU-11", "the run is reported as succeeded", facts.runs.length ? facts.runs.at(-1)!.status === "succeeded" : undefined, facts.runs.map(run => run.status).join(", ") || "no run"),
+        verdict("ACC-CU-11", "the document's text is \"Hello\" when the task's check reads it", shown === undefined ? undefined : shown.trim() === "Hello", shown?.slice(0, 200) ?? "the check did not complete"),
+        verdict("ACC-CU-11", "every grounder request of the run holds the delegated request as written",
+          facts.grounderRequests.length && delegated !== undefined ? facts.grounderRequests.every(request => request === delegated) : undefined,
+          `${facts.grounderRequests.filter(request => request === delegated).length} of ${facts.grounderRequests.length} requests; delegated: ${JSON.stringify(delegated?.slice(0, 200))}`),
+        verdict("ACC-CU-11", `the relay evidence labels every action of the run with the input mode "${inputMode}"`,
+          facts.inputs.length ? facts.inputs.every(input => input.inputMode === inputMode) : undefined,
+          `${facts.inputs.map(input => `${input.tool}=${input.inputMode ?? "unlabelled"}`).join(", ") || "no driver input"}; plan actions: ${actions.join(", ") || "none"}`),
+      ];
+    },
+  };
+}
 
 /** Types into the frontmost application through System Events, as a person would before the task. */
 const keystrokes = (app: string, keys: string) => shell(`osascript -e 'tell application "${app}" to activate' -e 'delay 1' -e 'tell application "System Events" to keystroke "${keys}"'`);
@@ -239,4 +277,7 @@ export const SCENARIOS: Scenario[] = [
       verdict("ACC-CU-08", "the run is reported as cancelled", facts.runs.length ? lastStatus(facts) === "cancelled" : undefined, facts.runs.map(run => run.status).join(", ") || "no run"),
     ],
   },
+  followsRequest("ACC-CU-11-1", "Type Hello into the TextEdit document.", "ordinary"),
+  followsRequest("ACC-CU-11-2", "I use VoiceOver. Please type Hello into the TextEdit document.", "ordinary"),
+  followsRequest("ACC-CU-11-3", "As an accessibility test, set the TextEdit document's text to Hello through its accessibility functions.", "accessibility"),
 ];

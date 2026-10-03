@@ -6,7 +6,7 @@ import type { QuestionMap, StepSpec } from "./request-builder.ts";
 /** Decision policy (design §8): rules applied in order after each grounder response. */
 
 export type EscalationReason = "needs_text" | "state_too_large" | "uncertain" | "target_not_found" | "no_progress"
-  | "approval_required" | "approval_denied" | "grounder_unavailable" | "backend_failed" | "window_unclear" | "window_changed" | "input_mode";
+  | "approval_required" | "approval_denied" | "grounder_unavailable" | "backend_failed" | "window_unclear" | "window_changed";
 
 export interface Prior { region?: string; element?: string; operation?: string; confidences: Record<string, number> }
 
@@ -68,7 +68,6 @@ export function decide(input: {
   if ((operation === "scroll_up" || operation === "scroll_down") && !group.frame) {
     return { kind: "escalate", reason: "uncertain", detail: `the ${group.name} region cannot be scrolled`, prior };
   }
-
   // Rule 6 is the permission check, which the executor runs on the chosen action (design §8.6).
   // The risk answer is recorded and decides nothing: the grounder's measurements were made with the question.
   const risk = answer(questions.risk);
@@ -85,6 +84,9 @@ export function decide(input: {
   const request: ActuatorRequest = operation === "key" ? { operation, keys: step.keys! }
     : operation === "scroll_up" || operation === "scroll_down" ? { operation, frame: group.frame! }
     : operation === "type" ? { operation, frame: element!.frame, text: step.text!, ...(step.position ? { position: step.position } : {}) }
+    // Design §7.2 (decision PS-D39): an accessibility action names the UI element by its index in the read before the step.
+    : operation === "ax_set_value" ? { operation, element: element!.index, text: step.text!, ...(step.position ? { position: step.position } : {}) }
+    : operation === "ax_press" || operation === "ax_show_menu" ? { operation, element: element!.index }
     : { operation, frame: element!.frame };
   return { kind: "act", request, operation, group, ...(element ? { element } : {}), risk: risk?.choice ?? "unknown", prior };
 }

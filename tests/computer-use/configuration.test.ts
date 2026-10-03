@@ -42,10 +42,9 @@ test("unknown fields, invalid values, and an unacknowledged local desktop are re
   assert.throws(() => loadComputerUseConfiguration(cwd, agentDir, false), /unsupported computerUse field backnd/);
   put(global, { computerUse: { confidenceGate: 1.5 } });
   assert.throws(() => loadComputerUseConfiguration(cwd, agentDir, false), /computerUse.confidenceGate must be a number from 0 to 1/);
-  put(global, { computerUse: { inputMode: "accessibility" } });
-  assert.throws(() => loadComputerUseConfiguration(cwd, agentDir, false), /computerUse.inputMode must be ordinary or accessibility-test/);
-  put(global, { computerUse: { inputMode: "accessibility-test" } });
-  assert.equal(loadComputerUseConfiguration(cwd, agentDir, false).inputMode, "accessibility-test");
+  // Design §11.4 (decisions PS-D32 and PS-D39): the grounder chooses each action; configuration cannot choose the input.
+  put(global, { computerUse: { inputMode: "ordinary" } });
+  assert.throws(() => loadComputerUseConfiguration(cwd, agentDir, false), /unsupported computerUse field inputMode/);
   put(global, { computerUse: { permissionMode: "never" } });
   assert.throws(() => loadComputerUseConfiguration(cwd, agentDir, false), /computerUse.permissionMode must be ask, auto, or bypass/);
   put(global, { computerUse: { permissionThink: 1.5 } });
@@ -66,7 +65,7 @@ test("the relay client needs an image key and defaults to the adapter's relay se
   put(global, { computerUse: { backend: "relay", relayImage: "macos26", relayEnv: "default" } });
   const config = loadComputerUseConfiguration(cwd, agentDir, true);
   assert.deepEqual([config.relayImage, config.relayEnv, config.relayTtlHours], ["macos26", "default", 2]);
-  assert.deepEqual(config.relayCommand, ["npx", "-y", "--prefer-offline", "@wezzard/mcp-vm-relay@0.8.0"]);
+  assert.deepEqual(config.relayCommand, ["npx", "-y", "--prefer-offline", "@wezzard/mcp-vm-relay@0.9.0"]);
   put(global, { computerUse: { backend: "relay", relayImage: "macos26", relayCommand: [] } });
   assert.throws(() => loadComputerUseConfiguration(cwd, agentDir, true), /relayCommand must be a non-empty array/);
 });

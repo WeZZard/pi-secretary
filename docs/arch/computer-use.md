@@ -50,7 +50,8 @@ These outcomes are approved requirements. The owner approved them on 2026-09-24 
 These constraints come from the [research record](../research/computer-use-s0-s1.md).
 
 - A choice question accepts at most 26 alternatives, labelled `A` to `Z`. A request with 27 alternatives fails validation with HTTP 422.
-- The grounder model length is 4,096 tokens for the whole request and answer.
+- The grounder model length is 262,144 tokens for the whole request and answer, the model's own limit (decision [PS-D27](../decisions.md)). It was 4,096 tokens until 2026-10-01, and every measurement in the research record before that date was made at 4,096.
+- Long requests are slow and less certain. On 2026-10-01, with each request extending the one before it, 48,000 new tokens took 40 seconds at 64,000 tokens of input and 55,000 new tokens took 226 seconds at 255,000. On a trivial two-way question, confidence fell from 0.98 at 4,088 tokens to 0.54 above 128,000.
 - Several questions asked in one stage are faster and more accurate than questions staged with `depends_on` or `alone`.
 - Confidences from independent questions are not comparable, and a wrong answer was observed at 0.99 confidence.
 - A routing question with one speculative UI element question per group reached 12/12 end to end over 103 candidates.
@@ -63,8 +64,8 @@ These constraints come from the `mcp-vm-relay` and `relay-driver` repositories a
 - The relay runs guest commands through `run` actions. A `cua` run forwards one `cua-driver` tool call to the guest and returns its standard output. The guest receiver stops the command once its output passes 64 KiB and reports `outputTruncated` (`mcp-vm-relay/src/guest/receiver.ts`, `MAX_OUTPUT_BYTES`). The cap is a constant, not a run option.
 - The UI element array of one recorded Finder read, the fixture folder of the Pi batches with 379 UI elements, was 66,253 bytes as compact JSON, before the driver's Markdown rendering. A `cua` run of `get_window_state` would therefore be cut off for that window.
 - Each run captures a before screenshot and an after screenshot in PNG format, and each capture has a 60-second timeout.
-- The relay refuses direct accessibility activation and value setting unless the run declares `inputMode: "accessibility"`.
-- Owner decision D3 in `relay-driver/docs/decisions.md` says that ordinary interactions use real pointer and keyboard input. Accessibility may discover UI elements, resolve coordinates and observe state. Direct accessibility activation is reserved for tests of accessibility behavior and must be identified in the evidence.
+- Relay 0.8.0 accepts direct accessibility activation and value setting, and labels them in the evidence. `relay_run` records a `cua` run as `inputMode: "accessibility"` when it is `set_value`, `type_text` on macOS, or `click`, `double_click`, `right_click` or `press_key` with an `element_index`, and as `ordinary` otherwise (`mcp-vm-relay/src/manager.ts`, `derive`). A call that names its UI element by `element_token` alone is labelled `ordinary`.
+- Owner decision D3 in `relay-driver/docs/decisions.md` says that ordinary interactions use real pointer and keyboard input. Accessibility may discover UI elements, resolve coordinates and observe state. Direct accessibility activation is reserved for tests of accessibility behavior and must be identified in the evidence. Secretary's own policy is decision PS-D31 ([Section 11.4](#114-input-mode)).
 - `mcp-vm-relay` is a Model Context Protocol server over standard input and output. Its package has a binary and no library export. It offers one `relay` tool with the actions `acquire`, `stage`, `run`, `extract`, `finish` and `release`, among others.
 - One server session owns at most one virtual machine. The environment variable `MCP_VM_RELAY_SESSION` names the session, and a restarted server with the same name reconciles its ownership without replaying work.
 - When the server's standard input closes, lease renewal pauses and the machine is kept for an explicit `finish` or `release`. The lease's time limit is the backstop.
@@ -104,8 +105,8 @@ These facts come from `cua-driver describe get_window_state` for version 0.12.6.
 | Code never chooses between questions by comparing confidences. | A wrong answer was observed at 0.99 confidence while the correct question scored lower. | [Research Section 4.7](../research/computer-use-s0-s1.md#47-merging-independent-heads-by-confidence-n--8) |
 | Confidence is a safety gate only. | Wrong answers overlapped correct answers in confidence. | [Research Section 5](../research/computer-use-s0-s1.md#5-findings) |
 | The planner judges each plan's result from the window after it. Nobody writes a check ahead of time, the grounder only executes, code stops only a step that cannot run, and nothing is checked before a step. | A check written ahead of time is a string or tree predicate that code matches without understanding the screen. Run before the step, it stopped a plan that had to click Continue. Owner decision [PS-D19](../decisions.md). | [Section 5.3](#53-who-judges-a-step) |
-| Actions use real pointer and keyboard input at coordinates resolved from the accessibility tree. | Owner decision D3 requires real input for ordinary work. This departs from the investigation's preference for accessibility activation. | [Section 2.3](#23-constraints-from-the-relay) |
-| Only an accessibility test sends accessibility events. Ordinary work sends pointer input in screen coordinates, synthesized key events, or, for browser pages, Chrome DevTools Protocol input, and the executor checks the input path of every action (PS-D8). | The driver turned window-pixel clicks into accessibility presses on the iOS Simulator, and the menu bar is reachable only in screen coordinates. | [Section 11.4](#114-input-mode), [research Section 16.8](../research/computer-use-s0-s1.md#168-driver-input-probes-and-the-ios-simulator) |
+| A task that asks for an accessibility test, or for content reached through the operating system's accessibility functions, operates the computer through those functions. Every other task sends a person's pointer and keyboard input at positions found in the accessibility tree (PS-D31). | The owner stated this policy, replacing PS-D8. Real input is what a person's work sends; an accessibility test must exercise only the accessibility functions. | [Section 11.4](#114-input-mode), [research Section 16.8](../research/computer-use-s0-s1.md#168-driver-input-probes-and-the-ios-simulator) |
+| The grounder reads the delegated request as written and chooses each action, an input-events action or an accessibility action. Each action is sent as it is named. Nothing translates one input into the other, and no check stops a plan for its input (PS-D32, PS-D39). | The owner wants an agent that follows what the person asked and lets the model choose. The checks and translations of earlier designs interrupted plans and changed the input. | [Sections 7.1](#71-request-composition), [7.2](#72-actions) and [11.4](#114-input-mode) |
 | Every UI element has a platform, assigned by the executor from its position, and each platform has a closed action allowlist (PS-D6, PS-D7). | One Simulator window holds macOS and iOS UI elements with the same roles, and the planner confused a key press with a click. | [Sections 6.5](#65-platform-of-each-ui-element) and [7.2](#72-actions) |
 | Before a plan runs, the grounder reads each step's intent against the allowlist, and code edits a step's action fields when the grounder disagrees with confidence (PS-D7). | All 7 recorded steps that said "Press Return" with the click action clicked instead of pressing the key. | [Section 5.5](#55-intent-and-field-consistency) |
 | Every literal value comes from the plan. | The grounder answers choices and cannot produce text. | [Research Section 6](../research/computer-use-s0-s1.md#6-prior-art-consulted) |
@@ -188,6 +189,7 @@ extensions/secretary/computer-use/
 
 - The computer-use agent is a user-level definition in `<getAgentDir()>/agents/computer-use.md`. The computer-use module ships the template `extensions/secretary/computer-use/templates/computer-use.md`, and the README documents how to install it.
 - The template's instructions carry the planner lessons of the Pi batches ([research Section 14](../research/computer-use-s0-s1.md#14-pi-task-batch-2026-09-23)): do only what the task asks, and pass `window_title` and `based_on`. They also tell it to end a plan where a later step depends on how an earlier one turned out, and to report the result as the window after the plan shows it (decision PS-D19). They also carry CU-05: a result already on screen is reported as such.
+- The template's instructions state, as fixed text, that every action runs in a disposable virtual machine that is discarded after the task, and that a message, post, payment or upload still leaves the machine (decision PS-D25). The text does not depend on the backend: with the development-only `local` backend ([Section 4.5](#45-configuration)) it is not true.
 - The definition is not packaged with the subagent module. A packaged definition would place the computer-use tool names inside the subagent module, which [subagent architecture Section 11](subagents.md#11-subsystem-independence) forbids. It would also appear in the delegation catalog on machines where the relay and grounder are not configured.
 - The definition omits `model`. The user assigns the model with `agents.subagentModels`, for example `"computer-use": "computer-use"`, which resolves through the existing `computer-use` fallback list.
 - The definition uses a `tools` allowlist, because this agent needs a hard capability bound ([subagent architecture Section 5.2](subagents.md#52-packaged-definitions)). The allowlist contains `computer_observe` and `computer_run_plan`. It excludes the model-facing `relay` tool, so that the child session has only one lease owner.
@@ -225,7 +227,7 @@ The module reads a top-level `computerUse` object from the same `secretary.json`
 | `localDriverPath` | It is the `cua-driver` executable used by the `local` backend. | `cua-driver` |
 | `foregroundDelivery` | It sends clicks and menu shortcuts with the driver's foreground delivery ([Section 11.3](#113-local-driver-backend-for-development)). | `true` |
 | `stepPictures` | It records a picture of the target window before and after each action, and writes a review page ([Section 12.1](#121-records)). | `false` |
-| `relayCommand` | It is the command that starts the relay client's own `mcp-vm-relay` server ([Section 11.2](#112-relay-client)). | `npx -y --prefer-offline @wezzard/mcp-vm-relay@0.8.0`, the version of the package dependency whose `review-data` export the trajectory viewer reads ([Section 12.3](#123-trajectory-viewer)), so the viewer reads packages from the relay that made them. Which relay version earlier live checks ran on is recorded in [research Section 16.6](../research/computer-use-s0-s1.md#166-relay-061). Without `--prefer-offline`, a registry request reset by the network kept `npx` retrying past the client's 60-second start limit in 3 of 3 starts. |
+| `relayCommand` | It is the command that starts the relay client's own `mcp-vm-relay` server ([Section 11.2](#112-relay-client)). | `npx -y --prefer-offline @wezzard/mcp-vm-relay@0.9.0`, the version of the package dependency whose `review-data` export the trajectory viewer reads ([Section 12.3](#123-trajectory-viewer)), so the viewer reads packages from the relay that made them. Which relay version earlier live checks ran on is recorded in [research Section 16.6](../research/computer-use-s0-s1.md#166-relay-061). Without `--prefer-offline`, a registry request reset by the network kept `npx` retrying past the client's 60-second start limit in 3 of 3 starts. |
 | `relayImage` | It is the relay image key passed to `acquire`. | None; the `relay` backend requires it. |
 | `relayEnv` | It is the relay credential pack passed to `acquire` as `env`. | None. |
 | `relayPrepare` | It lists commands, each an argument array, that the relay client runs in the machine once after staging, such as `["/usr/bin/open", "-a", "Calculator"]`. The tools do not launch applications, so a task that needs one open declares it here. | Empty. |
@@ -270,7 +272,7 @@ The planner calls this tool with a complete plan. The tool returns only when the
 | `action` | It is optional. It names the action from the allowlist of the UI element's platform ([Section 7.2](#72-actions)) when the planner knows it. The earlier field `operation` and its values `press`, `double_press`, `context_press`, `enter_text` and `key_combo` are accepted as aliases of `click`, `double_click`, `right_click`, `type` and `key`, so recorded plans still parse. |
 | `text` | It is an optional literal string for text entry. It must be complete, because the grounder cannot generate text. |
 | `keys` | It is an optional key combination for a keyboard shortcut, for example `cmd+shift+n`. |
-| `position` | It is optional, for `type` only: `end`, `start` or `replace`. It places the insertion point with keys after the click and before typing ([Section 7.2](#72-actions)). |
+| `position` | It is optional, for `type` only: `end`, `start` or `replace`. For `type`, it places the insertion point with keys after the click and before typing; for `ax_set_value`, it says where the new value puts the text ([Section 7.2](#72-actions)). |
 
 The executor checks the whole plan before any observation. The check follows one rule: it rejects only a plan that cannot run. It never rejects a plan on a guess about what the planner meant or about a future screen ([decision PS-D3](../decisions.md)). A check before the run understands only part of what the runtime supports, so a guessing rule rejects correct plans ([research Section 16.2](../research/computer-use-s0-s1.md#162-calculator-with-thinking-off)).
 
@@ -279,7 +281,7 @@ The executor checks the whole plan before any observation. The check follows one
 - It has no steps or more than 50 steps.
 - A step identifier is repeated.
 - A `ui_element` has an empty name or a role that is not an accessibility role.
-- A `type` step has no `text`, or a `key` step has no `keys`.
+- A `type` or `ax_set_value` step has no `text`, or a `key` step has no `keys`.
 - An `action` is not in the allowlist of any platform.
 - A step has both `text` and `keys`.
 - A key combination does not parse. The rejection lists the valid key names. The names `backspace`, `enter` and `esc` are accepted for `delete`, `return` and `escape`.
@@ -344,10 +346,12 @@ The result is compact, because it enters the planner's conversation.
 | `disabled` | The UI element reports `enabled: false`. |
 | `inactive_menu_bar` | The UI element belongs to the menu bar of an application that is not active. |
 | `outside_window` | The UI element's center lies outside the window frame, and it is not part of a menu. |
-| `unnamed` | The UI element has no usable label or value. Automatic identifiers such as `_NS:834` do not count as names. |
+| `represented` | The UI element has no name, and a kept UI element inside it stands for it, such as a sidebar row whose cell carries the name. |
 | `behind_modal` | An open sheet covers the UI element. |
 
 - The `inactive_menu_bar` rule exists because a background application's menu bar reports frames where the active application's menu bar is drawn. A real click there would reach another application. Window stacking order cannot replace this check, because a background launch raised TextEdit's window above the active application's window without activating TextEdit. Both behaviors were observed on 2026-09-23.
+- A UI element's name is its label, else its value, else its descendant text. Automatic identifiers such as `_NS:146` do not count as names.
+- **Decision [PS-D26](../decisions.md), 2026-10-01.** A UI element without a name is kept, because real input can target it. The name field of Reminders' New List sheet has only the identifier `_NS:146`, and discarding it made the task impossible on 2026-09-26 and again on 2026-09-30. Such a UI element has the name `(no name)`, and the planner refers to it by that name with its role and region. When its parent container, other than the window, has descendant text, the UI element carries that text as `near`: the sheet's text is "New List Name:".
 - Names collapse whitespace and are truncated to `maxNameLength`. A plain-text document's text area uses the document text as its label, so an untruncated name would copy the document into every request.
 - The observer uses `parent_index` and `role` to find the containers used for grouping in [Section 6.3](#63-grouping).
 - Each kept UI element keeps its `element_index` and its frame. The index is valid only for the snapshot that produced it, so an action always uses the frame from the latest snapshot.
@@ -360,24 +364,34 @@ The result is compact, because it enters the planner's conversation.
 
 | Priority | Content | Format in `elements` | When the request is too large |
 | --- | --- | --- | --- |
-| 1 | UI elements that can be clicked: the kept UI elements of Section 6.1, the only answers the grounder may choose | `A Button "Save"`, with the role without its `AX` prefix, the name cut at 200 characters, and `selected` or `value="…"` when set | Never removed. A request that does not fit with priority 1 alone is sent, and the grounder's rejection escalates `state_too_large`. |
+| 1 | UI elements that can be clicked: the kept UI elements of Section 6.1, the only answers the grounder may choose | `A Button "Save"`, with the role without its `AX` prefix, the name cut at 200 characters, and `selected` or `value="…"` when set. A UI element without a name reads `B TextField (no name) near "New List Name:"`. | Never removed. A request that does not fit with priority 1 alone is sent, and the grounder's rejection escalates `state_too_large`. |
 | 2 | Text the window shows outside its UI elements, from Section 6.2 below | A `SHOWN TEXT` section, one quoted entry per line | Shortened to 60 characters per entry last |
-| 3 | UI elements in the window that cannot be clicked now: disabled or unnamed, with a frame | A `NOT CLICKABLE NOW` section, such as `MenuButton "document actions" disabled` or `Button (unnamed) ×3` | Removed after the history |
+| 3 | UI elements in the window that cannot be clicked now: disabled, with a frame | A `NOT CLICKABLE NOW` section, such as `MenuButton "document actions" disabled` or `Button (no name) disabled ×3` | Removed after the history |
 | 4 | Items of closed menu-bar menus, which have no frame | A `CLOSED MENUS` section with one path per line, such as `Format ▸ Text ▸ Align Left` | Removed first |
 
 - Only priority 1 carries letters. The other sections are context, because a UI element without a frame has no point to click, and a UI element question offers at most 26 answers.
 - The history of recent steps ([Section 7.1](#71-request-composition)) is removed after priority 4 and before priority 3, oldest first.
 - Through Pi on 2026-09-26, the names-only table showed TextEdit's text area as `I Disposable document for the computer-use batch.…`, and the grounder did not choose it for any step that named it. With the role on every line, it chose the text area in 10 of 10 replayed requests, and in 20 of 20 decisions of the evaluation ([research Section 16.7](../research/computer-use-s0-s1.md#167-element-detail-for-the-executor)).
-- In the full model, the `NOT CLICKABLE NOW` line `Button (unnamed) ×3` led the grounder to press TextEdit's text area for "Close the document window" in 8 of 10 decisions. Priority 1 alone pressed nothing.
+- In the full model, before decision PS-D26, the `NOT CLICKABLE NOW` line `Button (unnamed) ×3` led the grounder to press TextEdit's text area for "Close the document window" in 8 of 10 decisions. Priority 1 alone pressed nothing.
 
 **Common to every variant:**
 
 - The names-only table, measured in [research Section 4.5](../research/computer-use-s0-s1.md#45-name-only-labels-compared-with-verbose-descriptors-n--8-26-candidates), had one line per UI element with a label letter and the UI element's name cut at the name length. That measurement used lists of buttons and no text area. It remains available to the evaluation script as `--elements=names`.
-- A UI element without an accessible name uses its value or its help text. A UI element with none of these is discarded with the reason `unnamed`.
+- A UI element without a name is listed as `(no name)`, with its `near` text when it has one ([Section 6.1](#61-reading-the-tree)). The window's three title-bar buttons have no names, so a step such as "Close the window" can be answered with the minimize or zoom button. A keyboard shortcut is the safer plan for window commands.
 - UI elements are listed under their group name, in the same format that was measured in [research Section 4.8](../research/computer-use-s0-s1.md#48-a-routing-question-with-one-speculative-question-per-group-n--12).
 - In the planner's table, a text field or text area also shows the last 200 characters of its content. Its name is the start of its content and is cut at the name length, so without this line a planner could not see a line it had just added. Through Pi, a planner in that position typed probe letters into the document to find its own edit ([research Section 14](../research/computer-use-s0-s1.md#14-pi-task-batch-2026-09-23)).
 - The planner's table in [Section 5.1](#51-computer_observe) ends with the text that the window shows outside its UI elements, under a line that says it is text, not UI elements. The text is the descendant text of the window and of on-screen containers, with at most 8 entries of at most 200 characters. Calculator's display is such text, and the planner could not read a result without it.
 - A shown text is listed even when it equals a UI element name, because Calculator's display can read "0" while a button is also named "0".
+
+**Whole tree outline, decision [PS-D28](../decisions.md), 2026-10-01.** The `tree` detail sends the whole accessibility tree instead of the table. It becomes the default only if replayed decisions are at least as accurate as priority 1 alone. Until then, the evaluation script sends it with `--elements=tree`.
+
+- The outline has one line per node of the read, in tree order, indented two spaces per depth. Nothing is left out: containers, disabled UI elements, closed menus, UI elements outside the window and UI elements behind a sheet all appear where the tree has them.
+- Each line reads `Role "name"`, with the role without its `AX` prefix and the name cut at 200 characters. The name is the label, then the value; a node without either reads `(no name)`. An automatic identifier such as `_NS:146` is not a name.
+- State follows the name: `selected`; `disabled`; `value="…"` when the value is not the name; `off screen` for a node without a frame, with a collapsed frame, or outside the window and outside any menu.
+- Text the tree shows outside any UI element is a line of its own, `Text "New List Name:"`, at its place in the tree. The text comes from the unindexed `AXStaticText` lines of `tree_markdown` ([Section 6.1](#61-reading-the-tree)). A read without `tree_markdown`, such as a recorded tree, has only each UI element's descendant text, which then follows its owner's line as `text "…"`.
+- A UI element that the grounder may choose starts with its group and letter, such as `[sidebar C] Row (no name)`. When the window is one group, the marker is the letter alone, `[C]`. The questions are those of [Section 7.1](#71-request-composition): the group and letter in the marker are the alternatives of the `region` and `element_<n>` questions.
+- Only the UI elements of the groups offered for the step carry a marker. For an iOS step in the Simulator, the macOS UI elements appear without one ([Section 6.5](#65-platform-of-each-ui-element)).
+- The planner's table does not change.
 
 ### 6.3 Grouping
 
@@ -403,6 +417,7 @@ For every observation, the executor records the following items in the step tele
 - It records the UI element table in the form sent to the grounder.
 - It records every discarded UI element with its reason.
 - It records the group assignment of every kept UI element.
+- It records the relay step identifiers of the read, so the trajectory viewer finds the read's machine steps ([Section 12.3](#123-trajectory-viewer)).
 
 With this record, a wrong answer can be classified as a retrieval failure, when the correct UI element was missing from the table, or as a judgment failure, when it was present but not chosen.
 
@@ -433,6 +448,8 @@ The executor sends one `POST /v1/systemone` request per step with `samples` set 
 | --- | --- |
 | `goal` | It holds the plan goal. |
 | `step` | It holds the current step's intent and, when given, the expected operation. |
+| `request` | It holds the delegated request as written, the computer-use agent's first prompt (PS-D39). |
+| `reference` | It holds the reference table, a Markdown template in the extension with guidance for the grounder, such as when accessibility actions are used ([Section 11.4](#114-input-mode)). |
 | `step_ui_element` | When the step names a `ui_element`, it holds it as `Role "name"` with its region, for example `Button "3" in content`. It is the planner's pointer, not a constraint: the grounder may choose another UI element. |
 | `app` and `window` | They hold the application name and window title. |
 | `elements` | It holds the grouped UI element table from [Section 6.2](#62-ui-element-table). |
@@ -444,29 +461,39 @@ The executor sends one `POST /v1/systemone` request per step with `samples` set 
 | --- | --- | --- |
 | `region` | The table has more than one group. | One alternative per group name. Each alternative's description lists the names of the group's UI elements and states how many more are hidden beyond the visible area. |
 | `element_<n>` | Always, with one question per group. | The group's UI element letters, plus `none`, described as "None of these UI elements carries out the step." |
-| `operation` | The step does not fix the operation. | The operations that the step allows ([Section 7.2](#72-actions)), plus `reobserve` and `abstain`. |
+| `operation` | The step does not fix the operation. | The operations that the step allows ([Section 7.2](#72-actions)), plus `reobserve` and `abstain`. Each operation's description starts with its input, "Input events:" or "Accessibility action:". |
 | `risk` | Always. Its answer is recorded and decides nothing. | `safe`, `reversible` and `destructive`. |
 
 - The request never uses `depends_on` or `alone` ([research Section 4.3](../research/computer-use-s0-s1.md#43-question-coupling-on-a-mixed-role-list-of-26-candidates-n--48)).
 - The `reobserve` alternative means that the window is changing or loading. The `abstain` alternative means that no listed UI element fits the step. Every question's instructions describe these meanings explicitly, because conventions must be stated rather than assumed.
 - Region descriptions carry the member names because routing over meaningless part names failed. Over three seeds on recorded trees, judgment misses fell from 11 of 39 to 0 of 39 when the descriptions were added. The cost is more input tokens, up to 61 percent of the grounder's model length on Calculator ([research Section 9.3](../research/computer-use-s0-s1.md#93-executor-decisions-on-recorded-trees)).
 - Every UI element question offers `none` because the grounder otherwise clicked some other UI element when the target was not listed. Over three seeds, such wrong actions fell from 16 of 18 to 7 of 18, while correct actions fell from 35 to 33 of 57.
+- The grounder chooses each action's input from the request and the reference table. Code does not filter the candidates by input ([Section 11.4](#114-input-mode)).
 - The request may carry the fork's `seed` extension for evaluation. Production requests omit it, so the server's default seed makes them deterministic.
 
 ### 7.2 Actions
 
-**Decision [PS-D7](../decisions.md), 2026-09-26.** Every action comes from a closed allowlist for its platform. Each entry has a name, a definition that the planner sees in the tool schema, and the host input the executor sends. The grounder's `operation` question offers only the entries of the step's platform.
+**Decision [PS-D7](../decisions.md), 2026-09-26.** Every action comes from a closed allowlist for its platform. Each entry has a name, an input, a definition that the planner sees in the tool schema and the grounder sees in its `operation` question, and the host input the executor sends. The grounder's `operation` question offers only the entries of the step's platform.
+
+**Decision [PS-D39](../decisions.md).** Every action is either an input-events action or an accessibility action, and its definition starts with "Input events:" or "Accessibility action:". Each action is sent as it is named: an input-events action as a person's pointer or key events, and an accessibility action through the operating system's accessibility functions. No action is translated into the other input ([Section 11.4](#114-input-mode)).
 
 **macOS allowlist:**
 
-| Action | Definition | Host input |
-| --- | --- | --- |
-| `click` | Click the UI element once with the left button. | A left click in screen coordinates at the UI element's frame centre (Section 11.4). |
-| `double_click` | Click the UI element twice quickly, for example to open a file. | Two left clicks in screen coordinates. |
-| `right_click` | Click the UI element with the right button to open its context menu. | A right click in screen coordinates. |
-| `type` | Type the step's `text` into the UI element. | A click on the UI element, then one key event per character. With `position`, it first sends Cmd+Down for `end`, Cmd+Up for `start`, or Cmd+Up and then Shift+Cmd+Down for `replace`. Characters outside the key vocabulary of Section 11.2 are refused before any input. |
-| `key` | Press the key or key combination in the step's `keys`, such as `return` or `cmd+down`. | Key events to the frontmost window. |
-| `scroll_up` and `scroll_down` | Scroll the region of the chosen group by one page. | A scroll-wheel event at the centre of the group's visible frame; a page moves about 80 percent of that frame's height. |
+| Action | Input | Definition | Host input |
+| --- | --- | --- | --- |
+| `click` | events | Click the UI element once with the left button. | A left click in screen coordinates at the UI element's frame centre (Section 11.4). |
+| `double_click` | events | Click the UI element twice quickly, for example to open a file. | Two left clicks in screen coordinates. |
+| `right_click` | events | Click the UI element with the right button to open its context menu. | A right click in screen coordinates. |
+| `type` | events | Click the text field and type the step's `text`. | A click on the UI element, then one key event per character. With `position`, it first sends Cmd+Down for `end`, Cmd+Up for `start`, or Cmd+Up and then Shift+Cmd+Down for `replace`. Characters outside the key vocabulary of Section 11.2 are refused before any input. |
+| `key` | events | Press the key or key combination in the step's `keys`, such as `return` or `cmd+down`. | Key events to the frontmost window. |
+| `scroll_up` and `scroll_down` | events | Scroll the region of the chosen group by one page. | A scroll-wheel event at the centre of the group's visible frame; a page moves about 80 percent of that frame's height. |
+| `ax_press` | accessibility | Perform the UI element's press action. | `click` with `element_index`: the driver's accessibility press. |
+| `ax_show_menu` | accessibility | Show the UI element's context menu through its show-menu action. | `right_click` with `element_index`: the driver's accessibility show-menu action. |
+| `ax_set_value` | accessibility | Set the text field's value so that it holds the step's `text`. | `set_value` with `element_index`. The value is the step's `text` for `replace` or no position, the text followed by the UI element's value in the read for `start`, and that value followed by the text for `end`. Any character can be set, so the key vocabulary does not apply. `type_text` is not used, because it falls back to key events when the accessibility insert fails. |
+
+- An accessibility action names the chosen UI element by its `element_index` in the read before the step, with the window's `pid` and `window_id`. The relay labels these runs as accessibility input.
+- Keys and scrolls have no accessibility action, because `cua-driver` sends them only as events.
+- The value for `start` and `end` comes from the read before the step, not from the observer's shortened name. Whether `cua-driver` shortens a long value in its tree has not been checked, and a shortened value would lose the rest of the field's text.
 
 **iOS allowlist, for UI elements inside the iOS Simulator's device screen.** It is not built yet.
 
@@ -480,21 +507,25 @@ The executor sends one `POST /v1/systemone` request per step with `samples` set 
 - Long press is not in the allowlist, because `click` has no hold time and a held drag has not been tried.
 - A name appears once per platform. `type` appears on both platforms with the same definition.
 
+- The iOS actions all use input events; they have no accessibility actions yet.
+
 **Which actions a step is offered:**
 
-- A step with `keys` is offered only `key`, and a step with `text` is offered only `type`.
+- A step with `keys` is offered only `key`. A step with `text` is offered `type` and `ax_set_value`.
 - A step that names an `action` is offered only that action.
-- Only a step with none of these is offered its platform's pointer and scroll actions: `click`, `double_click`, `right_click`, `scroll_up` and `scroll_down` on macOS, and `tap`, `swipe_up` and `swipe_down` on iOS.
+- Only a step with none of these is offered its platform's element and scroll actions: `click`, `double_click`, `right_click`, `scroll_up`, `scroll_down`, `ax_press` and `ax_show_menu` on macOS, and `tap`, `swipe_up` and `swipe_down` on iOS.
+- The candidates of both inputs are offered, each with its input. The grounder chooses from the request and the reference table (PS-D39).
 - The reason is a Pi run in which a step with the key "Backspace" was answered with a click, which clicked the text area instead of pressing the key ([research Section 14](../research/computer-use-s0-s1.md#14-pi-task-batch-2026-09-23)).
-- When the step fixes the action, the request has no `operation` question. Through Pi, the grounder answered `abstain` to such a question for a clear text-entry step. A missing target is still reported through each UI element question's `none`.
+- When the step fixes the action, the request has no `operation` question; a step with `keys` or a named action fixes it. Through Pi, the grounder answered `abstain` to such a question for a clear text-entry step. A missing target is still reported through each UI element question's `none`.
 - The `risk` question stays because the grounder's measurements were made with it. Whether an action may be sent is decided by the permission guardian in its own requests, after the policy has chosen the action ([Section 8.6](#86-where-the-check-runs)).
 
 ### 7.3 Token budget
 
-- The grounder accepts a request when its input tokens plus its answer tokens are at most 4,096 ([research Section 13.1](../research/computer-use-s0-s1.md#13-executor-token-budget-2026-09-23)).
+- The grounder accepts a request when its input tokens plus its answer tokens are at most its model length, 262,144 tokens since 2026-10-01 (decision [PS-D27](../decisions.md)). The limit was 4,096 when [research Section 13.1](../research/computer-use-s0-s1.md#13-executor-token-budget-2026-09-23) measured it.
 - The answer length depends only on the questions, and the questions depend only on the group count. The largest answer one read can need is 127 tokens, so the answer reserve is 128 tokens ([research Section 13.2](../research/computer-use-s0-s1.md#13-executor-token-budget-2026-09-23)).
 - The builder estimates the request size as the request body's characters divided by three. The estimate was off by −17 to +26 percent against the service's count, depending on the window's text ([research Section 13.3](../research/computer-use-s0-s1.md#13-executor-token-budget-2026-09-23)). It therefore decides only how much history to send, and it never refuses a request.
-- Each way of making the request smaller is a trim step. With priority 1 alone, the trim steps drop the oldest `recent` record, one at a time. The builder sends the first trim step whose estimate fits within 4,096 tokens minus the reserve. When no trim step is left, it sends the request anyway.
+- Each way of making the request smaller is a trim step. With priority 1 alone, the trim steps drop the oldest `recent` record, one at a time. The builder sends the first trim step whose estimate fits within the model length minus the reserve. When no trim step is left, it sends the request anyway.
+- With the whole tree outline of [Section 6.2](#62-ui-element-table), the trim steps drop history records from the oldest, then replace the outline with priority 1 alone.
 - With the full priority table of [Section 6.2](#62-ui-element-table), the trim steps remove content in this order: closed menus, then history records from the oldest, then UI elements that cannot be clicked now, then they shorten each shown text to 60 characters. UI elements that can be clicked are never removed.
 - The grounder is the only exact counter. When it rejects a request as longer than its model length, the executor builds the request again from the next trim step and sends it. A rejection at the last trim step escalates `state_too_large`. The retry is safe, because a decision request acts on nothing.
 - The estimate undercounts closed-menu paths: a TextEdit request estimated at 3,092 tokens was counted at more than 4,079. With the retry, one extra request was enough for every live TextEdit and Finder read ([research Section 16.7](../research/computer-use-s0-s1.md#167-element-detail-for-the-executor)).
@@ -571,10 +602,10 @@ This is the format production sends. The [guardian evaluation](../testing/comput
 | --- | --- | --- |
 | `app` | The window's application name. | 80 characters |
 | `window` | The window title. | 160 characters |
-| `action` | The allowlist name: `click`, `double_click`, `right_click`, `type` or `key`. | |
+| `action` | The allowlist name: `click`, `double_click`, `right_click`, `type`, `key`, `ax_press`, `ax_show_menu` or `ax_set_value`. | |
 | `ui_element` | The chosen UI element as `Role "name"`, the role without its `AX` prefix and the name as JSON. Absent for `key`. | 200 characters of name |
 | `ui_element_value` | The UI element's value, when it has one. | 200 characters |
-| `text` | The text that `type` will enter. | 200 characters |
+| `text` | The text that `type` or `ax_set_value` will enter. | 200 characters |
 | `keys` | The key combination that `key` will press, such as `cmd+delete`. | |
 | `shown_text` | The window's shown text, in observed order, such as a dialog's message or a page's paragraphs. | 12 items of 160 characters |
 
@@ -687,7 +718,6 @@ An escalation ends the `computer_run_plan` call and returns control to the plann
 | `grounder_unavailable` | The grounder service failed or timed out. | Report the failure. The planner must not perform the steps itself in this release. |
 | `backend_failed` | The relay refused an action, reported an uncertain outcome, or lost the lease. | Report the failure. The executor never replays an uncertain action. |
 | `window_unclear` | Several windows of the app match and none was named, or the window the plan started on has closed. No action was taken on another window. | Name the window with `window_title`, or observe it and plan with `based_on`. |
-| `input_mode` | In ordinary mode, the driver reported that it performed an action through accessibility (Section 11.4). The action may have taken effect. | Report the failure. The planner cannot change the input path. |
 | `window_changed` | Before the first step, the window differs from the `based_on` observation: another window or title, a UI element gone, or a sheet, dialog, popover or menu opened over it. No action was taken. | Plan again from the returned observation. |
 
 - Every escalation carries the step identifier, the reason and the last grounder answers. The result then carries the window after the plan ([Section 5.4](#54-result)).
@@ -700,7 +730,7 @@ An escalation ends the `computer_run_plan` call and returns control to the plann
 The backend interface has four operations.
 
 - `readWindow(app, windowTitle?, withScreenshot)` returns the parsed UI elements, the screenshot when requested, whether the output was truncated, and whether the window's application is the active application.
-- `act(action)` performs one real-input action and returns the relay's outcome kind.
+- `act(action)` performs one action and returns the relay's outcome kind and the driver's input path. An action is an input-events action, a person's pointer or key events, or an accessibility action on a UI element of the latest read ([Section 11.4](#114-input-mode)).
 - `screenshot()` returns the latest after-screenshot for the planner.
 - `close(outcome)` finishes or releases the lease.
 - Each action may carry a delivery mode, `background` or `foreground`. The local driver backend also offers two optional read-and-raise operations: `foreground(window, point)` reports whether the app is active and which windows are drawn over the point, and `bringToFront(window)` activates the app.
@@ -727,13 +757,13 @@ The relay client is the part of Secretary that sends the executor's reads and ac
 - A window screenshot is written by `get_window_state` into the declared screenshot directory in the guest workspace. The client retrieves it with `relay_image` and the source `application`, and reads the untouched original from the host path the relay reports in `image.originalPath`. The image block in the tool result is not used, because the relay resamples an image wider or taller than 2000 pixels for presentation, and scale learning needs the original width.
 - Each relay run captures two display screenshots. With one relay run per read, a read took a median of 5,042 ms and a click 7,127 ms ([research Section 15.1](../research/computer-use-s0-s1.md#151-one-relay-run-per-read)), against well under 2 seconds locally. Budgets must allow for this.
 - The guest read program removes a screenshot's `iCCP`, `zTXt`, `iTXt`, `eXIf` and `iDOT` chunks, because the relay 0.4 `image` action refused a PNG with compressed metadata, and every macOS window screenshot has it.
-- Every read and action passes the run's input mode to the relay as `inputMode` ([Section 11.4](#114-input-mode)).
+- Reads are sent with the relay's `inputMode: "ordinary"`, because they are not input. The relay labels each action's input mode itself from the driver call ([Section 2.3](#23-constraints-from-the-relay)).
 - The backend labels each relay step with a sequence identifier, such as `cu-0007`. The executor passes a step label with every read and action, made of the run identifier, the plan step identifier and, for an action, the action and the UI element's name, for example `run-muhqd509 new_line: key return`. The relay step's title is the sequence identifier followed by that label, shortened to 200 characters, because the relay refuses a title over 500 characters with a generic input error. A `relay_run` call takes no title, so the same text is its reason.
 - The backend returns the sequence identifier with every read and action, and the step record stores it ([Section 12.1](#121-records)). The relay's evidence package and the step records are therefore joined by identifier instead of by time.
 - An `uncertain` or `refused` outcome from the relay becomes `backend_failed`. The backend never retries such an action.
 - Pointer actions take screen coordinates ([Section 11.4](#114-input-mode)). The driver's desktop scope takes desktop-screenshot pixels, which were 2 × screen points in the probe machine while `get_screen_size` reported a scale factor of 1. The backend therefore learns the display scale once per lease from a display screenshot: the screenshot's pixel width divided by the width of the menu bar UI element in points, which spans the display.
 - The earlier window-pixel path is kept only for the local development backend, where the driver's window-local screenshot scale is learned from a window screenshot. The driver's reported display scale cannot be used there either, because it reported 1.0 while a 656-point window produced a 1312-pixel screenshot.
-- Text entry uses `press_key` once per character. `type_text` is not used, because it inserts text through accessibility first and falls back to keystrokes only when that fails.
+- For `type`, text entry uses `press_key` once per character. `type_text` is not used, because it inserts text through accessibility first and falls back to keystrokes only when that fails.
 - The key vocabulary covers printable US-layout ASCII. A character is sent as its own key name, such as `-` or `/`, or as the key name of its unshifted character with Shift, such as `1` with Shift for `!`. The driver refused spelled-out names such as `minus` ([research Section 16.8](../research/computer-use-s0-s1.md#168-driver-input-probes-and-the-ios-simulator)). Characters outside printable ASCII are refused before any input. A check that types all 95 printable characters in a machine must pass before the vocabulary is enabled, because only 11 were tried.
 
 ### 11.3 Local driver backend for development
@@ -750,22 +780,26 @@ The relay client is the part of Secretary that sends the executor's reads and ac
 
 ### 11.4 Input mode
 
-**Decision [PS-D8](../decisions.md), 2026-09-26.** A delegation runs in one of two input modes, and only an accessibility test sends accessibility events.
+**Decisions [PS-D31, PS-D32 and PS-D39](../decisions.md).** The computer-use agent follows what the person asked, and the grounder chooses each action's input.
 
-| Mode | Used for | Allowed input |
+| Who asks | What they ask for | Input |
 | --- | --- | --- |
-| `ordinary` | Every task, unless the delegation says otherwise. | Pointer events in screen coordinates, synthesized key events, and for browser pages the Chrome DevTools Protocol `Input` events, which the page receives as trusted user input. |
-| `accessibility-test` | A delegation that tests an application's accessibility behaviour. | Accessibility actions, such as a press or a value set, in addition to the ordinary input. The relay evidence labels these steps as accessibility input. |
+| A person who wants a task done, over 90 percent of users. | The task, for example "In Reminders, add a list named Groceries." | Input events only: pointer events in screen coordinates and synthesized key events, as a person sends them. Accessibility data only finds the UI element and its position. For browser pages, the Chrome DevTools Protocol `Input` events, which the page receives as trusted user input. |
+| An accessibility QA tester. | A test of accessibility features, or content reached through the operating system's accessibility functions. | Accessibility actions: `ax_press`, `ax_show_menu` and `ax_set_value` ([Section 7.2](#72-actions)). |
+| A disabled person who wants a task done. | The task, sometimes with a need or an assistive technology, for example "I use VoiceOver. Save this document as a PDF." | Input events only, as for any person who wants a task done. |
 
-- The mode is configuration, `computerUse.inputMode`, with `ordinary` as the default. It is not a field of the delegation tool, because the subagent subsystem must not know this subsystem's options ([Section 2.4](#24-constraints-from-secretary)). It is fixed for the child run.
-- The relay does not receive the mode yet. In relay 0.6.1, `relay_run`, which carries every driver action, has no `inputMode` field, and the relay records its steps as `ordinary`. `relay_exec` and `relay_code` accept `ordinary` or `accessibility`, but they carry only reads, which are not input. So the mode governs only the input path check below.
-- **Pointer input in screen coordinates.** In a relay machine, every click, double click, right click and scroll is sent in screen coordinates: `click` with `scope: "desktop"`, with `button: "right"` for a right click and `count: 2` for a double click, and `scroll` with `scope: "desktop"`. A drag, when the iOS actions add one, is sent with foreground delivery. The local driver backend keeps window pixels, because a desktop click moves the pointer of the user's own Mac.
+- **Disabled users.** People with disabilities ask an AI assistant for the task and state a need, not an input method. In a three-week diary study, 8 blind users gave a computer-use agent 1,258 commands across 12 desktop applications ([Kodandaram et al., 2026](https://arxiv.org/abs/2609.00524)). In interviews with 12 adults with disabilities who use LLM assistants, participants "disclosed by need rather than by name, translating disability into task-scoped instructions" ([Taheri et al., 2026](https://arxiv.org/abs/2609.22720)). So a mention of a disability or an assistive technology is not a request for accessibility actions.
+- **The grounder chooses.** Every grounder request holds the delegated request as written and the reference table ([Section 7.1](#71-request-composition)). The reference table states the rows above. The grounder chooses among the candidates of both inputs. Code does not filter them, and no configuration chooses the input (PS-D32).
+- **Sent as named.** An input-events action is sent as input events, and an accessibility action through accessibility functions. Nothing translates one into the other, and no check stops a plan for its input. Keys and scrolls have no accessibility action.
+- **The result.** Every action step's result names its action, so the planner can tell the parent which input each step used.
+- **Pointer input in screen coordinates.** For an input-events action in a relay machine, every click, double click, right click and scroll is sent in screen coordinates: `click` with `scope: "desktop"`, with `button: "right"` for a right click and `count: 2` for a double click, and `scroll` with `scope: "desktop"`. A drag, when the iOS actions add one, is sent with foreground delivery. The local driver backend keeps window pixels, because a desktop click moves the pointer of the user's own Mac.
 - Desktop coordinates are pixels of a whole-display screenshot. The relay client learns the pixels per point once per lease: its first window read also takes a `get_desktop_state` screenshot in a temporary file, divides its width by the width of the widest menu bar in the tree, and deletes the file. A result outside 1 to 4 is ignored, and until a scale is known, clicks and scrolls use window pixels. The menu bar and open menus are outside the window and can be clicked only this way. A window-pixel click on the iOS Simulator was performed as an accessibility press, twice ([research Section 16.8](../research/computer-use-s0-s1.md#168-driver-input-probes-and-the-ios-simulator)).
 - A click in screen coordinates reaches whatever window is at that point. Before each pointer action, the backend brings the target window to the front with `bring_to_front`, which is one more relay run per action. The coverage check of [Section 11.3](#113-local-driver-backend-for-development) is not run before a desktop click yet.
 - A pointer action in screen coordinates moves the real pointer. This is acceptable in a relay machine, which is its purpose.
-- **Input path check.** Every driver result reports a `path`. In `ordinary` mode, `ax` is not allowed. An action whose result reports `ax` stops the plan with `input_mode`, because the action may already have taken effect and must not be sent again. The step record stores the path of every action.
-- **Browser pages.** A task that drives a page through Playwright or Chrome DevTools uses their mouse and keyboard input, which the browser treats as trusted user input. DOM-level shortcuts, such as calling `element.click()` in page JavaScript, are not ordinary input.
-- Key events from `press_key` and `hotkey` reported `path: "key_events"`. They are synthesized events posted to the application, not accessibility actions, and they are ordinary input.
+- **Accessibility actions.** An accessibility action names the UI element by `element_index` with the window's `pid` and `window_id`, from the read before the step. Nothing is brought to the front, because an accessibility action works on a background window. The driver keeps one element index cache per window and replaces it at the window's next read. The executor reads the window before every step and sends nothing else to that window between that read and the action, so the index is that read's. A `relay_code` read and a `relay_run` action reach the same guest driver daemon. Whether its cache serves an index from a read made through the command line to an action made through its Model Context Protocol server has not been checked in a relay machine yet.
+- **Input path.** Every driver result reports a `path`, such as `ax`, `cgevent_hid` or `key_events`. The step record stores the path of every action, and nothing acts on it.
+- **Browser pages.** A task that drives a page through Playwright or Chrome DevTools uses their mouse and keyboard input, which the browser treats as trusted user input. DOM-level shortcuts, such as calling `element.click()` in page JavaScript, are not allowed: browsers mark them as untrusted synthetic events.
+- Key events from `press_key` and `hotkey` reported `path: "key_events"`. They are synthesized events posted to the application, not accessibility actions, so they are input events.
 
 ## 12. Telemetry and metrics
 
@@ -806,27 +840,42 @@ Step wall time includes the relay's screenshot captures, so it must not be compa
 
 ### 12.3 Trajectory viewer
 
-Decisions [PS-D17 and PS-D18](../decisions.md) and [CU-08](../user-stories/computer-use.md#cu-08-review-what-the-agent-was-asked-said-and-did): the viewer is the relay's review app, moved into the extension under `extensions/secretary/computer-use/viewer/`, and its model is one computer-use agent's timeline instead of one machine's steps. The page is specified in the [interaction design](../ux/computer-use.md#1-trajectory-viewer).
+Decisions [PS-D17, PS-D18 and PS-D40](../decisions.md) and [CU-08](../user-stories/computer-use.md#cu-08-review-what-the-agent-was-asked-said-and-did): the viewer is the relay's review app, moved into the extension under `extensions/secretary/computer-use/viewer/`. Its model is one computer-use agent's session transcript, extended with the extension's records. The page is specified in the [interaction design](../ux/computer-use.md#1-trajectory-viewer).
 
-**Inputs**
+**Source.** The agent's Pi session file is the one source of the trajectory's items. Its user messages are the prompts: the first is the spawning prompt, and each later one is a message from the parent that started another run. Its assistant messages hold the agent's text, thinking and tool calls, and its tool results hold the text, the screenshot and the details the agent's tools returned. The items keep the session's order.
 
-- The agent's Pi session file. Its user messages are the prompts: the first is the spawning prompt, and each later one is a message from the parent that started another run. Its assistant messages hold the agent's text, thinking and tool calls, and its tool results hold the text and the screenshot the agent received. Every entry has a timestamp.
-- The session's computer-use state directory, named by the SHA-256 hash of the session identifier (Section 12.1). Its `leases/` directory names the evidence packages of the machines the session acquired.
-- Each package's review data, from the relay's published `@wezzard/mcp-vm-relay/review-data` export (`reviewData(dir)`, relay 0.7.0). The relay stays the one that interprets its own package: steps, their times and command output, verdicts, reasons, findings, outputs and files. The extension depends on that export, not on the package's file layout.
+**Extension.** The session's computer-use state directory, named by the SHA-256 hash of the session identifier (Section 12.1), holds the records that extend the items. Each record is reached from the item it extends, never by time alone:
+
+| Item | Record | How the item names it | What it adds |
+| --- | --- | --- | --- |
+| `computer_observe` result | `observations/<observation>.json` | The result's `recordPath` | The application, the window, the UI element count, the read time, and the relay step identifiers of the read. |
+| `computer_run_plan` result | `runs/<run>/plan.json` | The result's `runId` | The plan's steps in plan order, each with its result, action, UI element, detail and relay step identifiers (`evidence`). |
+| Plan step | `runs/<run>/step-<step>-<attempt>-<ms>.json` | The plan's `runId` and the step's identifier | The grounder's answers, its decision and its round trip. |
+| Plan step | `runs/<run>/permission-<step>-<attempt>-<ms>.json` | The plan's `runId` and the step's identifier | The guardian's requests and answers, the verdict and its reason, and the approval's answer and wait. |
+| Plan step or observation | A machine's review data | The record's relay step identifiers, in the machine whose lease was held when the call ran | The machine step, its times, snapshots and receipts. |
+
+- `computer_run_plan` returns the plan's `runId` in its result details. For a session recorded before it did, the viewer takes the plan record whose goal equals the call's goal and which was written between the call and its result.
+- A plan step's time span runs from the start of its first grounder request to the later of its last guardian record and the end of its last machine step. A plan step that did not run has no time span.
+- Relay step identifiers are unique only within one machine. A record's identifiers belong to the machine whose lease record is the latest one written before the call's result.
+- A machine step that no record names is not an item. The Overview counts these steps per machine. They are the lease steps, the checks after the agent's run, and the reads of sessions recorded before observation records kept their relay step identifiers.
+
+**Machines.** Each package's review data comes from the relay's published `@wezzard/mcp-vm-relay/review-data` export (`reviewData(dir)`, relay 0.7.0). The relay stays the one that interprets its own package: steps, their times and command output, verdicts, reasons, findings, outputs and files. The extension depends on that export, not on the package's file layout.
 
 **Lease record.** The relay names a package `relay-computer-use-<8 hex digits>`, and the `relay_acquire` result contains that name. When an acquisition succeeds, the relay client reports the name, and the extension writes `leases/<package>.json` with the package name, the package's host directory and the time. For sessions recorded before this record existed, the viewer takes every package whose first step started between the session's first and last message, and the Overview says the machines were chosen by time.
 
-**Join.** The timeline holds the session's items and the machine steps, in time order. A machine step belongs to the tool call whose call time and result time enclose its start. Time is used, not identifiers, because reads and lease steps do not carry a plan's run identifier. The join is exact because both computer-use tools run sequentially, one agent's machines serve only that agent, and the relay and Pi write their times on the same host. A step that no call encloses keeps its place by time and records that no tool call asked for it. Step identifiers and file paths are prefixed with their package, because two machines both have a step `cu-0001`.
+**Order.** The model's step list is the page's order: each session item in the session's order, with each call's extension after the call and before its result. The page does not sort by time. Step identifiers and file paths of machine steps are prefixed with their package, because two machines both have a step `cu-0001`.
+
+**Place and interval.** The track and the monitor's heading place each step in the host or the guest ([PS-D41, PS-D42](../decisions.md)): a step with `machine` set ran in the guest, and every other step, an agent item or a plan step, was done in the host. A step's start is its `at` time, or its before snapshot's time when `at` is missing. The pill after a step shows the start of the next step that has a start, minus the step's own start; steps without a start are passed over. The page computes both from the model; the model gains no field.
 
 **The moved app**
 
 - `page.ts` renders the page from the model, as a pure function; `behaviour.ts` adds the keys, the lightbox and the file windows; `main.ts` fetches the model and renders it. They keep the relay's structure, so a change to one app can be carried to the other by reading the diff.
 - `server.ts` serves the app on 127.0.0.1 with the relay's content security policy and host check: the app at `/.app/`, one agent's model at `/.api/<agent>.json`, the session's pictures under `/<agent>/.session/`, and each package's files under `/<agent>/<package>/`.
 - The browser loads the app's TypeScript modules as the server strips their types with Node's `stripTypeScriptTypes`. No bundler is needed, and a reload shows an edit to the app.
-- `trajectory.ts` builds the model on every request, so a reload also shows new evidence. It takes the package reader as a parameter, the relay's `reviewData` unless given, so the join is tested on review data without building raw packages.
+- `trajectory.ts` builds the model. The server builds it again each time the page asks for the model, so a reload also shows new evidence. Requests that arrive while a build runs share it, and the pictures and package files are served from the last build: a page's hundreds of picture requests never build the model again, because a build verifies every package's files and takes about a second for a run of 176 steps. It takes the package reader as a parameter, the relay's `reviewData` unless given, so the extension is tested on review data without building raw packages.
 - `scripts/computer-use/trajectory.ts <artifact directory>` serves every computer-use agent in the directory and prints their addresses. `npm run dev:trajectory-viewer -- <artifact directory>` runs it under `node --watch`, so an edit to the server or the model restarts it.
 
-**Where it runs.** The viewer only reads: the session, the lease records and the packages. Nothing is written for it after a run. The test runner prints the command that opens the run's trajectories. The trajectory can contain window contents, prompts and typed text, so it is served only on 127.0.0.1 and stays in local, ignored storage like the other records. It is recorded evidence, not human review.
+**Where it runs.** The viewer only reads: the session, the extension's records and the packages. Nothing is written for it after a run. The test runner prints the command that opens the run's trajectories. The trajectory can contain window contents, prompts and typed text, so it is served only on 127.0.0.1 and stays in local, ignored storage like the other records. It is recorded evidence, not human review.
 
 ## 13. Open questions
 
@@ -839,7 +888,7 @@ Decisions [PS-D17 and PS-D18](../decisions.md) and [CU-08](../user-stories/compu
 | Does a click reach a covered window? | Closed. A background click depends on whether the app was recently active, not on the covering window. Foreground delivery moved the insertion point in 6 of 6 trials, and it is now the default for clicks ([Section 11.3](#113-local-driver-backend-for-development), [research Section 12.1](../research/computer-use-s0-s1.md#12-fix-checks-through-pi-2026-09-23)). A `type` step places the insertion point with its `position` field. | No. |
 | How does a step close or zoom a window? | The title-bar buttons have no name in the tree. The planner should use key combinations such as `cmd+w` until the driver exposes their names. Menu shortcuts had no effect in the checks so far, so this depends on the next question. | No. |
 | How does a step run a menu command, such as Save? | Closed by PS-D8 on 2026-09-26. With clicks in screen coordinates, the menu bar item and then the menu item are clicked as two steps, and an open menu's items are in the tree with frames ([Section 11.4](#114-input-mode)). Before that change, Cmd+A and Cmd+S had no effect in 0 of 12 trials, and menu bar items were not in the UI element table ([research Section 14.6](../research/computer-use-s0-s1.md#146-fourth-batch-on-the-fixes)). | No. |
-| Should actions use direct accessibility activation? | Closed by PS-D8 on 2026-09-26: only a delegation in `accessibility-test` mode sends accessibility events ([Section 11.4](#114-input-mode)). | No. |
+| Should actions use direct accessibility activation? | Closed by PS-D31, PS-D32 and PS-D39: only a request to test accessibility features, or to reach content through accessibility functions, uses them; the grounder chooses each action from the request ([Section 11.4](#114-input-mode)). | No. |
 | What does a real screenshot cost the planner? | Measured in Phase 1: the cost is proportional to pixel area, and a 1312×844 window screenshot costs 1,068 input tokens on Qwen 3.8 27B ([research Section 8](../research/computer-use-s0-s1.md#8-phase-1-observations-2026-09-23)). Choose the default image scale when the planner prompt is written in Phase 6. | No. |
 | Should the grounder also receive screenshots? | Do not send them in the first release. The accessibility tree is the grounder's only input until screenshot cost is measured. | No. |
 | Should the fallback list keep models without image input? | Remove them, or accept planning without screenshots when they are selected. | Yes, because the list is user configuration. |

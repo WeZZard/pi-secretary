@@ -1,17 +1,17 @@
 /**
- * Serves the trajectory viewer (decisions PS-D17 and PS-D18, design §12.3) for every computer-use
- * agent in a run's artifact directory: the prompts, the agent's messages and tool calls, and each
- * call's machine steps.
+ * Serves the trajectory viewer (decisions PS-D17, PS-D18 and PS-D40, design §12.3) for every computer-use
+ * agent in a run's artifact directory: the agent's session, extended with the extension's records
+ * of each computer-use call and the machine steps those records name (decision PS-D40).
  *
  *   npm run dev:trajectory-viewer -- <artifact directory>      (PORT=8765 by default)
  *
- * It reads the agents' session files under extension-state/agents/, their lease records under
+ * It reads the agents' session files under extension-state/agents/, their records under
  * extension-state/computer-use/, and the packages under relay-evidence/. It writes nothing.
  */
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { leasedPackages, type TrajectoryInput } from "../../extensions/secretary/computer-use/trajectory.ts";
+import type { TrajectoryInput } from "../../extensions/secretary/computer-use/trajectory.ts";
 import { TrajectoryServer } from "../../extensions/secretary/computer-use/viewer/server.ts";
 
 const COMPUTER_TOOLS = /"name":"computer_(observe|run_plan)"/;
@@ -31,8 +31,8 @@ export function computerUseSessions(artifacts: string): { agentId: string; sessi
 /** What the viewer needs to build each computer-use agent's trajectory in `artifacts`. */
 export function trajectoryInputs(artifacts: string): TrajectoryInput[] {
   return computerUseSessions(artifacts).map(({ agentId, session }) => {
-    const packages = leasedPackages(computerUseState(join(artifacts, "extension-state"), session));
-    return { session, evidence: join(artifacts, "relay-evidence"), agentId, ...(packages ? { packages } : {}) };
+    const state = computerUseState(join(artifacts, "extension-state"), session);
+    return { session, evidence: join(artifacts, "relay-evidence"), state, agentId };
   });
 }
 

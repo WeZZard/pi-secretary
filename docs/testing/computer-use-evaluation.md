@@ -30,7 +30,7 @@ Three public macOS benchmarks were checked on 2026-09-26.
 - MacAgentBench runs macOS in a Docker-OSX container, which the relay cannot provide. Its published scores are the most recent, so it stays a candidate for a second comparison.
 - **Comparability limit.** The agent runs MacArena's tasks in relay machines, not in MacArena's image. Tasks whose applications or files the relay image lacks cannot run. A comparison with a published score is therefore approximate, and every result table states how many tasks ran.
 - **Licence.** The macOSWorld tasks inside MacArena are licensed CC BY-NC. The task files are fetched at a pinned revision into a cache outside this repository and are never committed here.
-- **Other agents.** Other agents are compared through their published scores. This project does not run another vendor's agent itself.
+- **Other agents.** Other agents are compared through their published scores. The one exception is the time comparison with Claude Code in Section 7.1 ([PS-D29](../decisions.md)).
 
 ## 3. Running one task
 
@@ -59,7 +59,7 @@ Each failed run gets one cause, taken from the run's records in this order. The 
 | `false_success` | The agent's last plan completed, and the task's check scored below 1. This breaks CU-05 and is the most serious agent cause. The agent's written report is kept for review, but the cause is decided from the plan record, not from its wording. |
 | `destructive` | An action ran that the risk question judged destructive, without authority. This breaks CU-04. |
 | `out_of_scope` | The task needs something the approved requirements exclude, such as launching an application, several applications, or a browser page through a browser protocol. It is found from the agent's report and from `app_not_running` observations. |
-| An escalation reason | The last plan stopped with a reason such as `target_not_found`, `no_progress`, `uncertain` or `input_mode`. |
+| An escalation reason | The last plan stopped with a reason such as `target_not_found`, `no_progress` or `uncertain`. |
 | A rejection rule | Every plan was rejected, with rules such as `needs_text` or `ios_target`. |
 | `no_plan` | No plan ran and none was rejected, for example when the agent only observed. |
 | `wrong_result` | None of the above, and the check scored below 1. |
@@ -106,6 +106,38 @@ Each failed run gets one cause, taken from the run's records in this order. The 
 - A task run took 4 to 7.5 minutes through Pi on 2026-09-26, including the relay finish. The host runs at most 2 macOS machines, which other sessions also use.
 - The ship gate is 60 runs, about 4 to 8 hours on one machine.
 - A benchmark run of up to 421 tasks is about 28 to 53 hours on one machine. It runs only after the ship gate's runner works, and it can be split by category.
+
+### 7.1 Time comparison with Claude Code
+
+Decision [PS-D29](../decisions.md). The same MacArena task runs once through Pi and once through Claude Code, and a timing report shows where each run spent its time.
+
+**The Claude Code run.** `scripts/computer-use/claude-code-run.ts` runs one task through Claude Code in print mode (`claude -p`, `stream-json` output).
+
+- Claude Code runs as the owner uses it: user settings, the installed `mcp-vm-relay` plugin, and the models they select (the main session's default model; the subagent's model from its definition). The project is a new empty directory outside the owner's home, so no project instructions load.
+- The main session has only the `Agent`, `Read`, `Glob` and `Grep` tools, so it cannot act on the host's desktop, as Pi's parent cannot (Section 3). Only the relay tools and `Agent` are allowed without a prompt; anything else that would prompt is denied.
+- The prompt is Pi's delegation prompt with the subagent named: delegate to `mcp-vm-relay:vm-relay-operator`, and do not use the relay tools yourself. Claude Code's main session can call the relay tools; whether it did is reported.
+- Claude Code has no `relayPrepare` or `relayCheck`, so the subagent runs the task's preparation and check itself, with `relay_exec`, from a file in the project that holds their exact `argv`. The task is scored from the check's output recorded in the relay evidence, not from the agent's report.
+- The run ends when Claude Code exits, or after 25 minutes. Its artifacts are a new directory under `test-results/e2e/claude-code-<task>/`: the `stream-json` output, the session transcripts of the main session and the subagent, and the relay evidence package.
+
+**The timing report.** `scripts/computer-use/timing-report.ts` reads one or more runs of either kind and writes a Markdown report into a new directory under `test-results/computer-use/`.
+
+- **Rows.** One row per user message, assistant message and tool call, of the main session and each subagent, in time order. A row gives its start time, its offset from the run's start, its duration and a short summary.
+- **Duration of a message.** An assistant message lasts from the entry before it to its own time: the model's response time. A user message or a tool result is a point in time.
+- **Duration of a tool call.** From the assistant message that issued it to its result. A tool call that started relay machine steps lists their count and the time the relay spent on them.
+- **Totals.** Per run: wall-clock time, time in model responses, time in tool calls by tool, time spent waiting between them, and the time from the last subagent message to the end of the run, which includes saving the relay evidence.
+- **Comparison.** A table of the totals of every run side by side.
+- The two runs differ in more than the agent: models, the parent's waiting, and who runs the preparation and check. The report states these differences rather than adjusting for them.
+
+### 7.2 Pi with the relay tools directly
+
+Decision [PS-D30](../decisions.md). The same task runs a third time: through Pi and `qwen3.8-27b`, as the computer-use run does, but delegated to a subagent that drives the relay's MCP tools itself, as Claude Code's subagent does.
+
+- **The run.** `scripts/computer-use/pi-relay-run.ts` uses the clean Pi environment of Section 3, in RPC mode, with the secretary extension and `pi-mcp-adapter`. The secretary's computer-use backend is off, so `computer_observe` and `computer_run_plan` are not registered and no grounder or permission guardian is called.
+- **The relay.** The adapter starts the published `@wezzard/mcp-vm-relay` from an MCP configuration that the run writes, with the relay's tools under their own names. A child session loads its extensions from the environment's settings, not from the parent's command line, so the run lists the adapter there and writes the configuration as the adapter's global configuration in the agent directory, where the parent's and the subagent's adapter instances both read it. The relay keeps its state under the owner's home and writes evidence into the project's `relay-evidence/`.
+- **The parent.** It keeps `read`, the relay tools and the delegation tools; every other built-in tool is excluded, so it cannot act on the host. Its prompt is the Claude Code run's prompt with the subagent's Pi name. Whether it called a relay tool itself is reported.
+- **The subagent.** Its definition is `vm-relay-operator`: the plugin's instructions for Claude Code's subagent, unchanged, with `read` and the relay tools. Its model is the parent's model, and its thinking level is the parent's.
+- **Preparation, check and score** are as in Section 7.1: the subagent runs them with `relay_exec` from `macarena-task.json` in the project, and the score comes from the check's output in the relay evidence. The check's argv is matched in the action's execution request, since an action record carries the argv only when the agent gives the step no title of its own.
+- **Ending.** The run waits for every agent run to end and for the parent's report, then stops Pi as Section 3's runner does. Its artifacts are a new directory under `test-results/e2e/pi-relay-<task>/`, in the layout of a computer-use run, so the timing report of Section 7.1 reads it unchanged.
 
 ## 8. Permission guardian evaluation
 

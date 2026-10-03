@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { defineTool, getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { defineTool, getAgentDir, type ExtensionAPI, type ExtensionContext, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { channelApprover, confirmApprover, openApprovalChannel } from "./approval.ts";
 import type { ExecutionBackend } from "./backend/backend.ts";
 import { cuaDriverRunner, LocalDriverBackend, lsappinfoFrontmost } from "./backend/local-backend.ts";
@@ -33,6 +33,8 @@ export interface ComputerUseInstallOptions {
   agentDir?: () => string;
   /** Whether this session runs a delegated agent. Only a delegated session registers the tools (decision PS-D11). */
   delegated?: boolean;
+  /** The text the delegating runner puts before the task in a delegated session's first prompt; it is not part of the request. */
+  taskPrefix?: string;
 }
 
 export function createBackend(config: ComputerUseConfiguration, cwd: string, telemetry?: Telemetry): ExecutionBackend {
@@ -130,13 +132,14 @@ export function installComputerUse(pi: ExtensionAPI, options: ComputerUseInstall
     pi.registerTool(defineTool<typeof runPlanSchema, RunPlanDetails>({
       name: "computer_run_plan",
       label: "Run Plan",
-      description: "Carry out a complete plan in one application window. For each step, the tool reads the window, a grounder (a structured-decision model) chooses the UI element and the action, real pointer and keyboard input performs it, and the step acts once. Nothing is checked before or after a step: the result lists what each step did and then shows the window after the plan, with a screenshot when the current model accepts images, and you judge from it whether the steps worked. Returns when every step has acted, when a step cannot run (a typed reason), or when cancelled. End a plan where a later step depends on how an earlier one turned out. Every literal text must be complete in the plan. Plan scroll steps for UI elements that are not visible. Menu bar items are not in the table, and menu shortcuts had no effect in checks so far.",
+      description: "Carry out a complete plan in one application window. For each step, the tool reads the window, a grounder (a structured-decision model) chooses the UI element and the action, the action is sent as it is named, input events or an accessibility action, and the step acts once. Nothing is checked before or after a step: the result lists what each step did and then shows the window after the plan, with a screenshot when the current model accepts images, and you judge from it whether the steps worked. Returns when every step has acted, when a step cannot run (a typed reason), or when cancelled. End a plan where a later step depends on how an earlier one turned out. Every literal text must be complete in the plan. Plan scroll steps for UI elements that are not visible. Menu bar items are not in the table, and menu shortcuts had no effect in checks so far.",
       parameters: runPlanSchema,
       executionMode: "sequential",
       async execute(_id, params, signal, _onUpdate, toolCtx) {
         if (!backend || !config || !telemetry || !grounder) throw new Error("Computer use plan execution is not configured for this session.");
         const limit = config.maxEscalationsPerRun;
-        return executeRunPlan({ deps: { backend, grounder, telemetry, config, approve: channelApprover }, observation: id => observations.get(id),
+        const request = delegatedRequest(toolCtx.sessionManager.getEntries(), options.taskPrefix);
+        return executeRunPlan({ deps: { backend, grounder, telemetry, config, approve: channelApprover }, ...(request !== undefined ? { request } : {}), observation: id => observations.get(id),
           previousPlanRead: id => lastPlanRead && lastPlanRead.at > (observedAt.get(id) ?? Infinity) ? lastPlanRead.observation : undefined,
           recordPlanRead: observation => { lastPlanRead = { observation, at: ++sequence }; },
           observeAfter: (target, afterSignal) => executeObserve({ backend: backend!, config: config!, telemetry: telemetry!, remember }, target,
@@ -165,4 +168,18 @@ export function installComputerUse(pi: ExtensionAPI, options: ComputerUseInstall
     backend = undefined;
   });
   return { childTools: tools => delegated ? tools : [...tools, ...offered.filter(name => !tools.includes(name))] };
+}
+
+/**
+ * The delegated request as written: the session's first user message, without the prefix the runner adds
+ * (design §7.1, decision PS-D39). The grounder reads it to choose each action.
+ */
+export function delegatedRequest(entries: readonly SessionEntry[], taskPrefix = ""): string | undefined {
+  for (const entry of entries) {
+    if (entry.type !== "message" || entry.message.role !== "user") continue;
+    const { content } = entry.message;
+    const text = typeof content === "string" ? content : content.flatMap(part => part.type === "text" ? [part.text] : []).join("\n");
+    return taskPrefix && text.startsWith(taskPrefix) ? text.slice(taskPrefix.length) : text;
+  }
+  return undefined;
 }

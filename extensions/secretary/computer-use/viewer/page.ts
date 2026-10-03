@@ -43,15 +43,46 @@ export interface AgentItem {
   pair?: string;
   /** When a call's result arrived. */
   endAt?: string;
+  /** What the extension recorded for a computer-use call (decision PS-D40, design §12.3). */
+  record?: CallRecord;
+}
+
+/** A computer-use call's record: its plan, or the observation it read. `found` is false when the call names no record that exists. */
+export type CallRecord =
+  | { kind: "plan"; found: boolean; runId?: string; outcome?: string; by?: "run" | "goal" }
+  | { kind: "observation"; found: boolean; observation?: ObservationItem };
+
+/** What an observation record says about the window it read. */
+export interface ObservationItem { id: string; status: string; app?: string; window?: string; elements?: number; readMs?: number }
+
+/** A choice and its confidence, as the grounder and the guardian answer. */
+export type Answers = Record<string, { choice?: string; confidence?: number }>;
+
+/** A plan step as the extension recorded it (design §12.3, Extension). */
+export interface PlanStepItem {
+  runId: string;
+  stepId: string;
+  intent?: string;
+  /** The planned action, such as `key return` or `click "Add Reminder"`. */
+  action?: string;
+  /** `acted` says input was sent, not that the step worked. */
+  result: string;
+  detail?: string;
+  /** The grounder's decisions, one per attempt. */
+  decisions: { attempt: number; at?: string; roundTripMs?: number; answers: Answers; decision?: string }[];
+  /** The permission guardian's judgements, one per judged action, with a person's approval when one was asked. */
+  judgements: { attempt: number; at?: string; verdict: string; reason?: string; requests: { purpose: string; answers: Answers; roundTripMs?: number }[]; approval?: { answer: string; ms?: number } }[];
 }
 
 export interface ReviewPageStep {
   id: string;
   /** Set on the agent's steps; a machine step has none. */
   agent?: AgentItem;
+  /** Set on a plan step, which sits between its call and the call's result. */
+  plan?: PlanStepItem;
   /** A machine step's package and its identifier in that package. */
   machine?: { name: string; id: string };
-  /** The call step that caused a machine step; absent when no tool call asked for it. */
+  /** The plan step that ran a machine step, or the call whose read ran it; for a plan step, its call. */
   cause?: string;
   title: string;
   execution: string;
@@ -67,7 +98,9 @@ export interface ReviewPageStep {
 export interface Reason { text: string; stepIds: string[]; action?: string }
 
 /** One machine the agent used, as its own review data judged it. */
-export interface MachineSummary { name: string; found: boolean; completeness?: string; execution?: string; steps: number; findings: number }
+export interface MachineSummary { name: string; found: boolean; completeness?: string; execution?: string; steps: number; findings: number;
+  /** Machine steps that no plan step or observation asked for, such as the checks after a run; they are not items. */
+  unasked?: number }
 
 export interface ReviewPageModel {
   /** The agent whose trajectory this is. */
@@ -125,15 +158,6 @@ const verdict = (value: string) => `<span class="verdict ${tone(value)}"><i aria
 /** Shell-quote only where needed, so the command reads as it would be typed. */
 const shellWord = (word: string) => /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`;
 
-// A reviewer reads steps in the order they happened. Steps without a time
-// keep their evidence order after the timed ones.
-function chronological(model: ReviewPageModel) {
-  const at = (step: ReviewPageStep) => Date.parse(model.details.get(step.id)?.at ?? "");
-  return model.steps.map((step, index) => ({ step, index }))
-    .sort((a, b) => (Number.isFinite(at(a.step)) ? at(a.step) : Infinity) - (Number.isFinite(at(b.step)) ? at(b.step) : Infinity) || a.index - b.index)
-    .map(({ step }) => step);
-}
-
 // Findings repeat one sentence per identifier; the page states each sentence
 // once with a count and lists the identifiers inside it.
 function groupFindings(findings: string[]) {
@@ -168,9 +192,47 @@ const agentHeadline = (a: AgentItem) => a.kind === "call" ? clip(`${a.name} ${a.
 const agentScreen = (a: AgentItem) => `<p class="term-kind">${escapeHtml(a.kind === "prompt" ? (a.origin === "spawn" ? "Prompt from the spawn" : "Message from the parent")
   : a.kind === "call" ? `Tool call · ${a.name}` : a.kind === "result" ? `Result of ${a.name}` : agentKind[a.kind])}</p><pre class="term-cmd">${escapeHtml(a.text || "No text.")}</pre>`;
 
+/** A person's answer to an approval request, in words. */
+const approvalWords: Record<string, string> = { approved: "approved", declined: "declined", no_interface: "no one could be asked", timeout: "timed out", cancelled: "cancelled" };
+/** A choice with its confidence, such as `outline 2 (1.00)`. */
+const answerWords = (answers: Answers) => Object.entries(answers).map(([name, a]) => `${name} ${a.choice ?? "none"}${a.confidence !== undefined ? ` (${a.confidence.toFixed(2)})` : ""}`);
+/** Why a plan step sent nothing: a person's answer, the guardian's hold, the plan stopping before it, or what the executor said. */
+function unsent(p: PlanStepItem) {
+  if (p.result === "not_run") return "the plan stopped before this step";
+  const last = p.judgements.at(-1);
+  if (last?.approval && last.approval.answer !== "approved") return ({ declined: "a person declined it", timeout: "the approval timed out", no_interface: "no one could be asked for approval", cancelled: "the run was cancelled while it waited for approval" } as Record<string, string>)[last.approval.answer] ?? `the approval was ${last.approval.answer}`;
+  if (last && last.verdict !== "proceed") return "the guardian held it for approval";
+  return p.detail ?? "the executor stopped here";
+}
+/** What a plan step went through, attempt by attempt: the grounder, the guardian and a person's approval, then the input (docs/ux/computer-use.md §1). */
+function phases(p: PlanStepItem, sent: number) {
+  const rows: { name: string; value: string; ms?: number; tone?: string }[] = [];
+  const attempts = [...new Set([...p.decisions.map(d => d.attempt), ...p.judgements.map(j => j.attempt)])].sort((a, b) => a - b);
+  for (const attempt of attempts) {
+    const suffix = attempts.length > 1 ? ` ${attempt}` : "";
+    for (const d of p.decisions.filter(d => d.attempt === attempt)) rows.push({ name: `Grounder${suffix}`, value: d.decision ?? "no decision", ...(d.roundTripMs !== undefined ? { ms: d.roundTripMs } : {}) });
+    for (const j of p.judgements.filter(j => j.attempt === attempt)) {
+      // The guardian sends its requests together, so it takes as long as the slowest one.
+      const trips = j.requests.map(r => r.roundTripMs).filter((ms): ms is number => ms !== undefined);
+      rows.push({ name: `Guardian${suffix}`, value: [j.verdict, j.reason].filter(Boolean).join(" · "), ...(trips.length ? { ms: Math.max(...trips) } : {}), tone: j.verdict === "proceed" ? "ok" : "warn" });
+      if (j.approval) rows.push({ name: "Approval", value: approvalWords[j.approval.answer] ?? j.approval.answer, ...(j.approval.ms !== undefined ? { ms: j.approval.ms } : {}), tone: j.approval.answer === "approved" ? "ok" : "warn" });
+    }
+  }
+  rows.push(p.result === "acted"
+    ? { name: "Input", value: sent ? `sent · ${plural(sent, "machine step")}` : "sent", tone: "ok" }
+    : { name: "Input", value: `nothing was sent · ${unsent(p)}`, tone: "warn" });
+  return rows;
+}
+const planScreen = (step: ReviewPageStep, sent: number) => {
+  const p = step.plan!;
+  return `<p class="term-kind">${escapeHtml(`Plan step · ${p.stepId} · ${step.execution}`)}</p>${p.intent ? `<p class="plan-intent">${escapeHtml(p.intent)}</p>` : ""}`
+    + `<dl class="phases">${phases(p, sent).map(r => `<div class="${r.tone ?? ""}"><dt>${r.name}</dt><dd>${escapeHtml(r.value)}</dd><dd class="ms">${r.ms !== undefined ? duration(r.ms) : ""}</dd></div>`).join("")}</dl>`;
+};
+
 /** How a step reads on the page: a short headline, its kind, and the command it ran if any. */
 function describe(step: ReviewPageStep, detail: StepDetail | undefined) {
   if (step.agent) return { headline: agentHeadline(step.agent), command: undefined, reasonShown: false, kind: agentKind[step.agent.kind] as string };
+  if (step.plan) return { headline: step.title, command: undefined, reasonShown: false, kind: "Plan step" };
   const argv = detail?.argv?.length ? detail.argv.map(shellWord).join(" ") : undefined;
   // A generated title ("Diagnostic command", "exec …") says less than the
   // reason the command was sent; the command itself is shown below it.
@@ -255,6 +317,11 @@ function trajectoryBoxes(steps: ReviewPageStep[], model: ReviewPageModel, number
         body: a.image ? `<img loading="lazy" alt="Screenshot the agent received, enlarged" src="${src(a.image)}">` : `<div class="lb-term agent k-${a.kind}">${agentScreen(a)}</div>`,
         caption: `${at ? `<time>${at} UTC</time>` : ""}${a.image ? `<a href="${src(a.image)}">Open the original</a>` : ""}` }];
     }
+    if (step.plan) {
+      const at = time(detail?.at);
+      return [{ id: boxId(step, "plan"), step: view("plan"), label: `Step ${number} · Plan step`, title: headline,
+        body: `<div class="lb-term plan">${planScreen(step, sentBy(step, steps))}</div>`, caption: at ? `<time>${at} UTC</time>` : "" }];
+    }
     if (!step.snapshots) {
       const at = time(detail?.at);
       return [{ id: boxId(step, "command"), step: view("command"), label: `Step ${number} · ${step.inputMode === "diagnostic" ? "Diagnostic" : "Command"}`, title: headline,
@@ -275,21 +342,24 @@ function trajectoryBoxes(steps: ReviewPageStep[], model: ReviewPageModel, number
  * trajectory is read view by view: a step with snapshots has a before view and
  * an after view, and any other step has a command view.
  */
-type View = { step: ReviewPageStep; role: "before" | "after" | "command" | "agent"; id: string; index: number; first: boolean };
+type View = { step: ReviewPageStep; role: "before" | "after" | "command" | "agent" | "plan"; id: string; index: number; first: boolean };
 function viewsOf(steps: ReviewPageStep[]): View[] {
   const views: View[] = [];
-  for (const step of steps) (step.agent ? ["agent"] as const : step.snapshots ? ["before", "after"] as const : ["command"] as const).forEach((role, i) =>
+  for (const step of steps) (step.agent ? ["agent"] as const : step.plan ? ["plan"] as const : step.snapshots ? ["before", "after"] as const : ["command"] as const).forEach((role, i) =>
     views.push({ step, role, id: `step-${step.id}--${role}`, index: views.length, first: i === 0 }));
   return views;
 }
 const viewLink = (view: View) => `#${encodeURIComponent(view.id)}`;
-const roleName = (view: View) => view.step.agent ? agentKind[view.step.agent.kind] : view.role === "before" ? "Before" : view.role === "after" ? "After" : view.step.inputMode === "diagnostic" ? "Diagnostic" : "Command";
+const roleName = (view: View) => view.step.agent ? agentKind[view.step.agent.kind] : view.role === "plan" ? "Plan step" : view.role === "before" ? "Before" : view.role === "after" ? "After" : view.step.inputMode === "diagnostic" ? "Diagnostic" : "Command";
+
+/** The machine steps a plan step ran: they follow it in the track, and name it as their cause. */
+const sentBy = (step: ReviewPageStep, steps: readonly ReviewPageStep[]) => steps.filter(s => s.machine && s.cause === step.id).length;
 
 /** The views around a view: adjacent ones, and the nearest ones of steps with errors. */
 type Around = { previous?: View; next?: View; previousError?: View; nextError?: View };
 
 /** A view in the viewport: one snapshot, or the command, with its label and the step's name below it. */
-function stage(view: View, detail: StepDetail | undefined, numbers: ReadonlyMap<string, string>, around: Around) {
+function stage(view: View, detail: StepDetail | undefined, numbers: ReadonlyMap<string, string>, around: Around, sent = 0) {
   const step = view.step, { headline, command } = describe(step, detail), number = numbers.get(step.id)!;
   const numberOf = (target: View) => numbers.get(target.step.id)!;
   // Two pairs of arrows: to the adjacent views, and to the nearest views of
@@ -299,13 +369,13 @@ function stage(view: View, detail: StepDetail | undefined, numbers: ReadonlyMap<
   const back = arrow(around.previous, "prev", "all") + arrow(around.previousError, "prev", "errs");
   const forward = arrow(around.next, "next", "all") + arrow(around.nextError, "next", "errs");
   const span = took(detail);
-  const at = view.role === "command" || view.role === "agent" ? (time(detail?.at) ? `${time(detail?.at)} UTC` : undefined) : preciseTime(view.role === "before" ? detail?.beforeAt : detail?.afterAt);
+  const at = view.role === "command" || view.role === "agent" || view.role === "plan" ? (time(detail?.at) ? `${time(detail?.at)} UTC` : undefined) : preciseTime(view.role === "before" ? detail?.beforeAt : detail?.afterAt);
   // The step's name heads the view, so the panel beside it stays put while
   // the views of one step change. The view sits on a monitor whose chin names
   // it, with the arrows to the neighbouring views at its two ends.
   const chin = (name: string, enlarge = "") => `<div class="chin"><span class="nav">${back}</span><p class="info" data-role="${view.role}"><img class="plate" src="/.app/icon.svg" alt="" width="24" height="24"><b>${name}</b>${at ? `<time>${at}</time>` : ""}</p><span class="nav">${enlarge}${forward}</span></div>`;
-  const title = `<h2 class="sname" title="${escapeHtml(headline)}"><span class="d">${number}</span><span class="h">${escapeHtml(headline)}</span>${span ? `<span class="took" title="Time from the before snapshot to the after snapshot">${span}</span>` : ""}</h2>`;
-  const open = `<section class="stage view${view.role === "command" || (view.role === "agent" && !step.agent?.image) ? " terminal" : ""}${view.first ? " first" : ""}" id="${escapeHtml(view.id)}" data-v="${view.index}" aria-label="Step ${number}, ${roleName(view).toLowerCase()}"><div class="unit">${title}`;
+  const title = `<h2 class="sname" title="${escapeHtml(headline)}"><span class="d">${number}</span><span class="nm"><span class="h">${escapeHtml(headline)}</span>${span ? `<span class="took" title="${tookTip(step)}">${span}</span>` : ""}</span>${place(step)}</h2>`;
+  const open = `<section class="stage view${view.role === "command" || view.role === "plan" || (view.role === "agent" && !step.agent?.image) ? " terminal" : ""}${view.first ? " first" : ""}" id="${escapeHtml(view.id)}" data-v="${view.index}" aria-label="Step ${number}, ${roleName(view).toLowerCase()}"><div class="unit">${title}`;
   if (step.agent) {
     // An agent step shows its text on the monitor, or the screenshot a result carried.
     const a = step.agent;
@@ -313,6 +383,8 @@ function stage(view: View, detail: StepDetail | undefined, numbers: ReadonlyMap<
     return `${open}<div class="monitor"><div class="term agent k-${a.kind}">${agentScreen(a)}</div>
 ${chin(roleName(view), `<button type="button" class="enlarge" popovertarget="${escapeHtml(boxId(step, "agent"))}" title="Enlarge the text">${expandIcon}Enlarge</button>`)}</div></div></section>`;
   }
+  if (step.plan) return `${open}<div class="monitor"><div class="term plan">${planScreen(step, sent)}</div>
+${chin("Plan step", `<button type="button" class="enlarge" popovertarget="${escapeHtml(boxId(step, "plan"))}" title="Enlarge the plan step">${expandIcon}Enlarge</button>`)}</div></div></section>`;
   if (view.role === "command") {
     const kind = step.inputMode === "diagnostic" ? "Diagnostic command" : "Command";
     return `${open}<div class="monitor"><div class="term"><pre class="term-cmd"><span class="prompt" aria-hidden="true">$</span>${escapeHtml(command ?? headline)}</pre>${detail?.output ? streamsOf(detail.output) || `<p class="quiet">No output.</p>` : ""}
@@ -340,13 +412,37 @@ function agentBlocks(step: ReviewPageStep, detail: StepDetail | undefined, links
   const heading = a.kind === "prompt" ? (a.origin === "spawn" ? "Prompt from the spawn" : "Message from the parent")
     : a.kind === "call" ? "Arguments" : a.kind === "result" ? "Text the agent received" : a.kind === "thinking" ? "Thinking" : "Message";
   const caused = links.caused.get(step.id) ?? [];
+  const planned = caused.filter(s => s.plan), read = caused.filter(s => s.machine);
   const span = Date.parse(a.endAt ?? "") - Date.parse(detail?.at ?? "");
+  const r = a.record, o = r?.kind === "observation" ? r.observation : undefined;
+  // What the extension recorded for the call (design §12.3, Extension).
+  const record = !r ? "" : !r.found ? section("Record", `<p class="quiet">No ${r.kind === "plan" ? "plan" : "observation"} record was found for this call.</p>`, "cause none")
+    : r.kind === "plan" ? section("Plan", `<p><code>${escapeHtml(r.runId)}</code> · ${verdict(r.outcome ?? "unknown")}</p>${r.by === "goal" ? `<p class="quiet">Found by the call's goal: the result does not name its run.</p>` : ""}${planned.length ? `<p class="steps">${planned.map(s => ref(s.id)).join("")}</p>` : `<p>The plan has no steps.</p>`}`)
+    : o ? section("Observation", `<dl class="facts">${[["Identifier", o.id], ["Status", o.status], ["Application", o.app], ["Window", o.window], ["UI elements", o.elements], ["Read", o.readMs !== undefined ? duration(o.readMs) : undefined]]
+      .filter(([, v]) => v !== undefined && v !== "").map(([t, v]) => `<div><dt>${t}</dt><dd>${escapeHtml(v)}</dd></div>`).join("")}</dl>`) : "";
   return (a.name ? section("Tool", `<p><code>${escapeHtml(a.name)}</code></p>`) : "")
     + section(heading, `<pre class="plain whole">${escapeHtml(a.text || "No text.")}</pre>`)
-    + (a.kind === "call" ? section("Machine steps", caused.length ? `<p class="steps">${caused.map(s => ref(s.id)).join("")}</p>` : `<p>No machine step started while this call ran.</p>`)
+    + (a.kind === "call" ? record + section("Machine steps", read.length ? `<p class="steps">${read.map(s => ref(s.id)).join("")}</p>` : `<p>${planned.length ? "The call's own reads ran no machine step that was recorded." : "No machine step is recorded for this call."}</p>`)
       + section("Result", a.pair ? `<p>${ref(a.pair)}${Number.isFinite(span) && span >= 0 ? ` · after ${duration(span)}` : ""}</p>` : `<p>No result was recorded.</p>`) : "")
     + (a.kind === "result" ? (a.pair ? section("Call", `<p>${ref(a.pair)}</p>`) : "")
       + (a.image ? section("Screenshot", `<p><a href="${src(a.image)}">Open the screenshot the agent received</a></p>`) : "") : "");
+}
+
+/** The panel of a plan step: what was planned, what the grounder and the guardian answered, a person's approval, and the machine steps it ran. */
+function planBlocks(step: ReviewPageStep, links: Links) {
+  const p = step.plan!, ref = (id: string) => stepRef(links.numbers, id);
+  const ran = links.caused.get(step.id) ?? [], call = step.cause ? links.byId.get(step.cause) : undefined;
+  const list = (items: string[]) => `<ul class="answers">${items.map(i => `<li>${escapeHtml(i)}</li>`).join("")}</ul>`;
+  const attempt = (n: number, all: number) => all > 1 ? ` <span class="quiet">attempt ${n}</span>` : "";
+  return section("Plan step", `<p><code>${escapeHtml(p.stepId)}</code> in <code>${escapeHtml(p.runId)}</code></p>${p.intent ? `<p>${escapeHtml(p.intent)}</p>` : ""}${p.action ? `<p>Action: <code>${escapeHtml(p.action)}</code></p>` : ""}`)
+    + section("Result", `<p>${verdict(step.execution)}${p.detail ? ` ${escapeHtml(p.detail)}` : ""}</p>`)
+    + section("Grounder", p.decisions.length ? p.decisions.map(d => `<p>${escapeHtml(d.decision ?? "No decision")}${d.roundTripMs !== undefined ? ` · ${duration(d.roundTripMs)}` : ""}${attempt(d.attempt, p.decisions.length)}</p>${list(answerWords(d.answers))}`).join("")
+      : `<p class="quiet">The grounder was not asked.</p>`)
+    + section("Guardian", p.judgements.length ? p.judgements.map(j => `<p>${verdict(j.verdict)}${j.reason ? ` · ${escapeHtml(j.reason)}` : ""}${attempt(j.attempt, p.judgements.length)}</p>${j.requests.map(r => `<p class="request"><b>${escapeHtml(r.purpose.replace(/_/g, " "))}</b>${r.roundTripMs !== undefined ? ` · ${duration(r.roundTripMs)}` : ""}</p>${list(answerWords(r.answers))}`).join("")}`
+      + (j.approval ? `<p>Approval: <b>${escapeHtml(approvalWords[j.approval.answer] ?? j.approval.answer)}</b>${j.approval.ms !== undefined ? ` after ${duration(j.approval.ms)}` : ""}</p>` : "")).join("")
+      : `<p class="quiet">The guardian judged no action for this step.</p>`)
+    + section("Machine steps", ran.length ? `<p class="steps">${ran.map(s => ref(s.id)).join("")}</p>` : `<p>No machine step ran for this step.</p>`)
+    + (call ? section("Call", `<p>${ref(call.id)}${call.agent?.pair ? ` · Result ${ref(call.agent.pair)}` : ""}</p>`) : "");
 }
 
 /** The right panel of a step: what it was, why it was sent, and what came back. */
@@ -356,13 +452,16 @@ function panel(step: ReviewPageStep, detail: StepDetail | undefined, number: str
   const at = time(detail?.at);
   const fact = (term: string, value: string) => `<div><dt>${term}</dt><dd>${value}</dd></div>`;
   const cause = step.cause ? links.byId.get(step.cause) : undefined;
-  // A machine step names the call that caused it (design §12.3, Join).
-  const askedBy = step.machine ? section("Asked for by", `<p>${cause ? `${stepRef(links.numbers, cause.id)} · Tool call <code>${escapeHtml(cause.agent?.name)}</code>` : "No tool call asked for this step."}</p>`, `cause${cause ? "" : " none"}`) : "";
+  // A machine step names the plan step that ran it, or the call whose read ran it (design §12.3, Extension).
+  const askedBy = step.machine ? section("Asked for by", `<p>${cause ? `${stepRef(links.numbers, cause.id)} · ${cause.plan ? `Plan step <code>${escapeHtml(cause.plan.stepId)}</code>` : `Tool call <code>${escapeHtml(cause.agent?.name)}</code>`}` : "No plan step or tool call asked for this step."}</p>`, `cause${cause ? "" : " none"}`) : "";
   const head = `<aside class="panel" aria-label="Step ${number} details"><div class="panel-scroll">
 <div class="stephead"><h2 class="stepno"><span class="lg">Step</span> <span class="disp"><span class="d">${number}</span> <span class="of">of <span class="d">${String(total).padStart(2, "0")}</span></span></span></h2><a class="permalink" href="${escapeHtml(link(step))}" title="Stable link to this step" aria-label="Stable link to step ${number}">${linkIcon}</a></div>
 <p class="meta"><span>${kind}</span>${at ? `<time>${at} UTC</time>` : ""}<span class="state"><span class="sr">Execution: </span>${verdict(step.execution)}</span></p>`;
   if (step.agent) return `${head}
 ${agentBlocks(step, detail, links)}
+</div></aside>`;
+  if (step.plan) return `${head}
+${planBlocks(step, links)}
 </div></aside>`;
   return `${head}
 ${askedBy}
@@ -378,19 +477,43 @@ ${command && step.snapshots ? `<section class="block"><h3>Command</h3><pre class
 const linkIcon = `<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M6.6 9.4l2.8-2.8M7.2 4.6l.9-.9a2.8 2.8 0 0 1 4 4l-.9.9M8.8 11.4l-.9.9a2.8 2.8 0 0 1-4-4l.9-.9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>`;
 const downloadIcon = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 2.5v7.5M4.8 7.2 8 10.4l3.2-3.2M3 13h10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
-/** One step of the bottom track: a thumbnail per view (before and after, or the command) over the step's caption. */
+// Where a step happened (decision PS-D41): the agent did its items and plan
+// steps in the host; a machine step ran in the guest.
+const robotIcon = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.4v2.1M4 4.5h8A1.5 1.5 0 0 1 13.5 6v6.5A1.5 1.5 0 0 1 12 14H4a1.5 1.5 0 0 1-1.5-1.5V6A1.5 1.5 0 0 1 4 4.5zM1 8v3M15 8v3M6.2 11.3h3.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="8" cy="1.6" r="1" fill="currentColor"/><circle cx="6" cy="8.3" r="1.1" fill="currentColor"/><circle cx="10" cy="8.3" r="1.1" fill="currentColor"/></svg>`;
+const vmIcon = `<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="1" width="14" height="14" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="2.2 1.6"/><path d="M5.3 4.6h5.4a.8.8 0 0 1 .8.8v3.6a.8.8 0 0 1-.8.8H5.3a.8.8 0 0 1-.8-.8V5.4a.8.8 0 0 1 .8-.8zM8 9.8v1.6M6.2 11.6h3.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+/** Where a step happened, as the track and the monitor's heading show it (decision PS-D42): the word Host or VM and an icon. */
+const place = (step: ReviewPageStep) => step.machine
+  ? `<span class="place guest" title="${escapeHtml(`Ran in the virtual machine ${step.machine.name}`)}"><span class="pl">VM</span>${vmIcon}</span>`
+  : `<span class="place host" title="Done by the agent in the host"><span class="pl">Host</span>${robotIcon}</span>`;
+/** What a step's time measures, for its tooltip. */
+const tookTip = (step: ReviewPageStep) => step.plan ? "Time from the grounder's request to the step's last judgement or machine step, with any wait for approval" : "Time from the before snapshot to the after snapshot";
+
+/** When a step started: its action start, or its before snapshot when the start is missing. */
+const startOf = (detail: StepDetail | undefined) => Date.parse(detail?.at ?? detail?.beforeAt ?? "");
+/**
+ * The track's pill after step `i` (decision PS-D41): from its start to the start of the next step
+ * that has one. A step without a start, such as a plan step that never ran, is passed over, so a
+ * wait before it still shows after the step that waited.
+ */
+function gap(starts: number[], i: number) {
+  const next = starts.slice(i + 1).find(Number.isFinite), ms = next === undefined ? NaN : next - starts[i]!;
+  return `<li class="gap" aria-hidden="true">${Number.isFinite(ms) && ms >= 0 ? `<span class="iv">${duration(ms)}</span>` : ""}</li>`;
+}
+
+/** One step of the bottom track: where it happened and its number, a thumbnail per view (before and after, or the command), and its status, name and time. */
 function thumb(step: ReviewPageStep, detail: StepDetail | undefined, number: string, flagged: string | undefined, views: View[]) {
   const { headline, command } = describe(step, detail);
   const span = took(detail);
   const a = step.agent;
-  const faces = a ? views.map(view => `<a data-t="${view.index}" href="${escapeHtml(viewLink(view))}" title="${escapeHtml(`Step ${number} · ${agentKind[a.kind]} · ${headline}`)}"><span class="face agent k-${a.kind}${a.image ? "" : " text"}">${a.image
+  const faces = step.plan ? views.map(view => `<a data-t="${view.index}" href="${escapeHtml(viewLink(view))}" title="${escapeHtml(`Step ${number} · Plan step · ${headline}`)}"><span class="face plan text"><pre aria-hidden="true">${escapeHtml(`${step.plan!.stepId}\n${step.plan!.intent ?? step.plan!.action ?? ""}`)}</pre><span class="role">Plan step</span>${flagged ? `<span class="flag ${flagged}" title="This step affects the verdicts">!</span>` : ""}</span></a>`).join("")
+    : a ? views.map(view => `<a data-t="${view.index}" href="${escapeHtml(viewLink(view))}" title="${escapeHtml(`Step ${number} · ${agentKind[a.kind]} · ${headline}`)}"><span class="face agent k-${a.kind}${a.image ? "" : " text"}">${a.image
     ? `<img loading="lazy" alt="" src="${src(a.image)}">` : `<pre aria-hidden="true">${escapeHtml(a.kind === "call" ? `${a.name}\n${a.text}` : a.text)}</pre>`}<span class="role">${agentKind[a.kind]}</span></span></a>`).join("") : views.map((view, i) => {
-    const image = view.role === "command" || view.role === "agent" ? undefined : step.snapshots?.[view.role];
+    const image = view.role === "command" || view.role === "agent" || view.role === "plan" ? undefined : step.snapshots?.[view.role];
     const face = view.role === "command" ? `<pre aria-hidden="true"><span class="prompt">$</span>${escapeHtml(command ?? headline)}</pre>`
       : image ? `<img loading="lazy" alt="" src="${src(image)}">` : `<span class="none">No ${view.role} snapshot</span>`;
     return `<a data-t="${view.index}" href="${escapeHtml(viewLink(view))}" title="${escapeHtml(`Step ${number} · ${roleName(view)} · ${headline}`)}"><span class="face${view.role === "command" ? " text" : ""}">${face}${view.role === "command" ? "" : `<span class="role">${roleName(view)}</span>`}${flagged && i === 0 ? `<span class="flag ${flagged}" title="This step affects the verdicts">!</span>` : ""}</span></a>`;
   }).join("");
-  return `<li class="${tone(step.execution)}${a ? ` agent k-${a.kind}` : " machine"}${step.inputMode === "diagnostic" ? " diagnostic" : ""}${erred(step) ? " err" : ""}"><div class="faces">${faces}</div><span class="cap"><span class="n">${number}</span><i class="dot" aria-hidden="true"></i><span class="t">${escapeHtml(headline)}</span>${span ? `<span class="took">${span}</span>` : ""}</span><span class="sr">${escapeHtml(step.execution)}</span></li>`;
+  return `<li class="s ${tone(step.execution)}${a ? ` agent k-${a.kind}` : step.plan ? " k-plan" : " machine"}${step.inputMode === "diagnostic" ? " diagnostic" : ""}${erred(step) ? " err" : ""}"><span class="tline"><span class="d">${number}</span>${place(step)}</span><div class="faces">${faces}</div><span class="cap"><i class="dot" aria-hidden="true"></i><span class="t" title="${escapeHtml(headline)}">${escapeHtml(headline)}</span>${span ? `<span class="took" title="${tookTip(step)}">${span}</span>` : ""}</span><span class="sr">${escapeHtml(step.execution)}</span></li>`;
 }
 
 // Without script, the selected view is the :target; a step's own fragment
@@ -399,8 +522,8 @@ function thumb(step: ReviewPageStep, detail: StepDetail | undefined, number: str
 // in the track. :has() cannot nest, so a step's own target and a target inside
 // it are two selectors.
 const selection = (steps: number, firsts: number[], views: number) => !steps ? "" : Array.from({ length: steps }, (_, i) =>
-  `.app:has(.center>.step:nth-of-type(${i + 1}):target) .track li:nth-child(${i + 1}),.app:has(.center>.step:nth-of-type(${i + 1}) :target) .track li:nth-child(${i + 1})`).join(",")
-  + ",.app:not(:has(.center :target)) .track li:first-child{background:color-mix(in oklch,var(--aura) 55%,transparent)}"
+  `.app:has(.center>.step:nth-of-type(${i + 1}):target) .track li:nth-child(${i + 1} of .s),.app:has(.center>.step:nth-of-type(${i + 1}) :target) .track li:nth-child(${i + 1} of .s)`).join(",")
+  + ",.app:not(:has(.center :target)) .track li.s:first-child{background:color-mix(in oklch,var(--aura) 55%,transparent)}"
   + [...Array.from({ length: views }, (_, k) => `.app:has([data-v="${k}"]:target) .track [data-t="${k}"] .face`),
     ...firsts.map(k => `.app:has(.center>.step[data-first="${k}"]:target) .track [data-t="${k}"] .face`),
     `.app:not(:has(.center :target)) .track [data-t="0"] .face`].join(",")
@@ -420,11 +543,13 @@ function fileWindow(id: string, f: FileItem) {
 
 /** The page: its title, its body, and the rules that tie each selected view to its thumbnail. */
 export function renderReview(model: ReviewPageModel): { title: string; html: string; selection: string } {
-  const steps = chronological(model);
+  // The model's order is the session's, with each call's extension before its result (design §12.3, Order).
+  const steps = model.steps;
+  const starts = steps.map(step => startOf(model.details.get(step.id)));
   const numbers = new Map(steps.map((step, i) => [step.id, String(i + 1).padStart(2, "0")]));
   const views = viewsOf(steps);
   const times = steps.map(s => Date.parse(model.details.get(s.id)?.at ?? "")).filter(Number.isFinite);
-  const diagnostics = steps.filter(s => s.inputMode === "diagnostic").length, said = steps.filter(s => s.agent).length, machine = steps.length - said;
+  const diagnostics = steps.filter(s => s.inputMode === "diagnostic").length, said = steps.filter(s => s.agent).length, planned = steps.filter(s => s.plan).length, machine = steps.length - said - planned;
   const caused = new Map<string, ReviewPageStep[]>();
   for (const step of steps) if (step.cause) caused.set(step.cause, [...(caused.get(step.cause) ?? []), step]);
   const links: Links = { numbers, caused, byId: new Map(steps.map(step => [step.id, step])) };
@@ -479,7 +604,7 @@ export function renderReview(model: ReviewPageModel): { title: string; html: str
   // The agent, and each machine it used as that machine's own review judged it.
   const agent = model.agent, dd = (term: string, value: string) => `<div><dt>${term}</dt><dd>${value}</dd></div>`;
   const machines = agent.machines.map(m => `<li><code>${escapeHtml(m.name)}</code>${m.found
-    ? `<span>Snapshots ${verdict(m.completeness ?? "unknown")}</span><span>Execution ${verdict(m.execution ?? "unknown")}</span><span>${plural(m.steps, "step")} · ${plural(m.findings, "finding")}</span>`
+    ? `<span>Snapshots ${verdict(m.completeness ?? "unknown")}</span><span>Execution ${verdict(m.execution ?? "unknown")}</span><span>${plural(m.steps, "step")} · ${plural(m.findings, "finding")}</span>${m.unasked ? `<span title="Machine steps that no plan step or observation asked for, such as the checks after the run. They are not in the track.">${m.unasked} not asked for by the agent</span>` : ""}`
     : `<span>${verdict("missing")} No evidence was found for this machine.</span>`}</li>`).join("");
   const agentBlock = `<section class="block s-agent"><h3>Agent</h3><div><dl class="ids">${agent.id ? dd("Agent", escapeHtml(agent.id)) : ""}${dd("Session", escapeHtml(agent.sessionId))}${agent.model ? dd("Model", escapeHtml(agent.model)) : ""}${dd("Runs", String(agent.runs))}</dl>
 <p class="vwhy">${agent.machinesBy === "lease" ? "The machines are the ones this session's lease records name." : "No lease record was kept, so the machines are the ones whose first step started during the session."}</p>${machines ? `<ul class="machines">${machines}</ul>` : `<p class="quiet">The agent used no machine.</p>`}</div></section>`;
@@ -494,16 +619,16 @@ ${defects.length ? `<section class="block defect"><h3>Relay defects <span class=
 <ul class="files">${generated}</ul></div></section></div></section></article>`;
   return { title: `Computer use: ${model.packageId}`, selection: selection(steps.length, views.filter(v => v.first).map(v => v.index), views.length), html: `<div class="app">
 <header class="top"><div class="brand"><span class="mark" aria-hidden="true">${relayMark}</span><h1 title="${escapeHtml(model.packageId)}">Computer use <span class="who">${escapeHtml(agent.id ?? agent.sessionId)}</span></h1>
-<ul class="stats">${stat(noun(steps.length, "step"), String(steps.length))}${stat("agent", String(said))}${stat("machine", String(machine))}${stat(noun(diagnostics, "diagnostic"), String(diagnostics))}${started ? `<li class="at"><time datetime="${started}" title="Started ${started}">${utcStamp(started)}</time><span class="local" hidden><span class="sep" aria-hidden="true">·</span><time datetime="${started}" data-local title="Started, in your time zone"></time></span></li>` : ""}${times.length ? stat("", duration(Math.max(...times) - Math.min(...times))) : ""}</ul></div>
+<ul class="stats">${stat(noun(steps.length, "step"), String(steps.length))}${stat("agent", String(said))}${stat("plan", String(planned))}${stat("machine", String(machine))}${diagnostics ? stat(noun(diagnostics, "diagnostic"), String(diagnostics)) : ""}${started ? `<li class="at"><time datetime="${started}" title="Started ${started}">${utcStamp(started)}</time><span class="local" hidden><span class="sep" aria-hidden="true">·</span><time datetime="${started}" data-local title="Started, in your time zone"></time></span></li>` : ""}${times.length ? stat("", duration(Math.max(...times) - Math.min(...times))) : ""}</ul></div>
 <nav class="tabs mid" aria-label="View"><a class="t-traj" href="${steps[0] ? escapeHtml(link(steps[0])) : "#"}">Trajectory</a><a class="t-over" href="#overview">Overview<span class="${model.findings.length ? "has" : ""}">${model.findings.length}</span></a></nav>
 <ul class="pills"><li class="keys" title="Keyboard shortcuts"><kbd aria-label="Left arrow">←</kbd><kbd aria-label="Right arrow">→</kbd><span>Steps</span><kbd>Space</kbd><span>Enlarge</span></li>${pill("snapshots", "Snapshots", model.completeness)}${pill("execution", "Execution", model.execution)}</ul></header>
 <main class="center">${errors ? `<label class="focus" title="Highlight the steps with errors, and move between them with the arrows"><input type="checkbox" id="focus-errors">Focus on errors</label>` : ""}${steps.map(step => {
     const own = views.filter(v => v.step === step);
     return `<article id="step-${escapeHtml(step.id)}" data-first="${own[0]!.index}" class="step ${tone(step.execution)}${erred(step) ? " err" : ""}">${own.map(v => stage(v, model.details.get(step.id), numbers, {
-      previous: views[v.index - 1], next: views[v.index + 1], previousError: views.slice(0, v.index).findLast(w => erred(w.step)), nextError: views.slice(v.index + 1).find(w => erred(w.step)) })).join("")}${panel(step, model.details.get(step.id), numbers.get(step.id)!, steps.length, concerns.get(step.id) ?? [], links)}</article>`;
+      previous: views[v.index - 1], next: views[v.index + 1], previousError: views.slice(0, v.index).findLast(w => erred(w.step)), nextError: views.slice(v.index + 1).find(w => erred(w.step)) }, step.plan ? sentBy(step, steps) : 0)).join("")}${panel(step, model.details.get(step.id), numbers.get(step.id)!, steps.length, concerns.get(step.id) ?? [], links)}</article>`;
   }).join("\n")}
 ${overview}</main>
-<footer class="track" aria-label="Steps"><ol>${steps.map(step => thumb(step, model.details.get(step.id), numbers.get(step.id)!, concerns.has(step.id) ? worst(concerns.get(step.id)!.map(c => c.tone)) : undefined, views.filter(v => v.step === step))).join("")}</ol></footer>
+<footer class="track" aria-label="Steps"><ol>${steps.map((step, i) => (i ? gap(starts, i - 1) : "") + thumb(step, model.details.get(step.id), numbers.get(step.id)!, concerns.has(step.id) ? worst(concerns.get(step.id)!.map(c => c.tone)) : undefined, views.filter(v => v.step === step))).join("")}</ol></footer>
 </div>
 ${lightboxes(trajectoryBoxes(steps, model, numbers))}
 ${lightboxes(outputBoxes)}${windows.join("")}` };
@@ -591,7 +716,7 @@ h1{display:flex;align-items:baseline;gap:.6rem;font:700 20px/1.05 var(--sans);le
 .focus{position:absolute;left:1.5rem;bottom:1rem;z-index:4;display:flex;align-items:center;gap:.5rem;padding:.45rem .85rem .45rem .6rem;background:oklch(from var(--s1) l c h / .92);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);border-radius:14px;box-shadow:var(--lift);font:400 12px var(--sans);color:var(--text);cursor:pointer;user-select:none}
 .focus input{appearance:none;margin:0;width:1rem;height:1rem;border-radius:5px;background:var(--s1);box-shadow:inset 0 0 0 1.5px var(--hair);display:grid;place-items:center;cursor:pointer}
 .focus input:checked{background:var(--cherry);box-shadow:none}.focus input:checked::after{content:"";width:.26rem;height:.5rem;border:solid #fff;border-width:0 2px 2px 0;rotate:45deg;translate:0 -1px}
-.app:has(#focus-errors:checked) .track li:not(.err){opacity:.3;filter:grayscale(1)}
+.app:has(#focus-errors:checked) .track li:not(.err,.gap),.app:has(#focus-errors:checked) .track .iv{opacity:.3;filter:grayscale(1)}
 .app:has(#focus-errors:checked) .track li.err .face{box-shadow:0 0 0 3px var(--cherry)}
 .app:has(#focus-errors:checked) .track li.err .t{color:var(--bad)}
 .app:has(#overview:target) .track{display:none}.app:has(#overview:target) .focus{display:none}.app:has(#overview:target) .keys{display:none}
@@ -607,9 +732,9 @@ kbd{display:inline-grid;place-items:center;min-width:1.4rem;height:1.4rem;paddin
 .screen img{display:block;max-width:100%;max-height:calc(100cqh - var(--shot-chrome));object-fit:contain;background:#fff;border-radius:6px;transition:box-shadow .15s}
 .zoom:hover img,.zoom:focus-visible img{box-shadow:0 0 0 3px var(--pop)}.screen .void{width:min(40rem,80cqw);border-radius:6px}
 .unit{display:flex;flex-direction:column;gap:.75rem;min-height:0;max-width:100%}.unit>.monitor{align-self:center}
-.sname{flex:none;display:flex;align-items:center;gap:.75rem;width:0;min-width:100%;margin:0;font:700 16px/1.3 var(--mono);letter-spacing:0;color:var(--text)}
-.sname .d{flex:none;padding:.25rem .5rem;border-radius:6px;background:radial-gradient(120% 120% at 50% 30%,oklch(from var(--navy) l c h / .4),transparent 70%),var(--term);box-shadow:inset 0 1px 2px #000c,0 0 0 1px var(--case-edge),0 1px 0 #fff8;font:700 16px/1 var(--mono);color:var(--orange);text-shadow:0 0 6px oklch(from var(--orange) l c h / .55)}.sname .h{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sname .took{flex:none;align-self:center;padding:.24rem .55rem;border-radius:9px;background:var(--cream);font:700 12px/1 var(--sans);color:var(--ink)}
+.sname{flex:none;display:grid;grid-template-columns:minmax(max-content,1fr) minmax(0,max-content) minmax(max-content,1fr);align-items:center;gap:.75rem;width:0;min-width:100%;margin:0;font:700 16px/1.3 var(--mono);letter-spacing:0;color:var(--text)}
+.sname .d{justify-self:start}.sname .place{justify-self:end}.sname .nm{display:flex;align-items:center;gap:.75rem;min-width:0}.sname .d,.tline .d{flex:none;padding:.25rem .5rem;border-radius:6px;background:radial-gradient(120% 120% at 50% 30%,oklch(from var(--navy) l c h / .4),transparent 70%),var(--term);box-shadow:inset 0 1px 2px #000c,0 0 0 1px var(--case-edge),0 1px 0 #fff8;font:700 16px/1 var(--mono);color:var(--orange);text-shadow:0 0 6px oklch(from var(--orange) l c h / .55)}.sname .h{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
 .lightbox{position:fixed;inset:0;width:auto;height:auto;max-width:none;max-height:none;margin:0;padding:1.5rem 1.5rem 1.25rem;border:0;background:none;color:var(--text);overflow:hidden;transition:overlay .36s allow-discrete,display .36s allow-discrete}
 .lb-body>*{transform-origin:0 0;transition:transform .36s cubic-bezier(.3,.9,.3,1),clip-path .36s cubic-bezier(.3,.9,.3,1),opacity .24s ease}
 .lightbox:not([data-flip]):not(:popover-open) .lb-body>*{opacity:0}@starting-style{.lightbox:popover-open:not([data-flip]) .lb-body>*{opacity:0}}
@@ -693,17 +818,21 @@ kbd{display:inline-grid;place-items:center;min-width:1.4rem;height:1.4rem;paddin
 .gthumb{all:unset;box-sizing:border-box;cursor:zoom-in;display:grid;gap:.4rem;font:12px var(--mono);min-width:0;color:var(--dim)}.gthumb span{display:flex;justify-content:space-between;gap:.5rem;overflow:hidden;white-space:nowrap}.gthumb small{color:var(--faint);font-size:inherit;flex:none}
 .gthumb img{width:100%;aspect-ratio:16/9;object-fit:contain;display:block;background:var(--s2);border-radius:10px;box-shadow:0 0 0 1px oklch(from var(--shade) l c h / .1);transition:box-shadow .15s}.gthumb:hover img,.gthumb:focus-visible img{box-shadow:0 0 0 3px var(--pop)}
 .track{background:var(--chrome);-webkit-backdrop-filter:saturate(160%) blur(20px);backdrop-filter:saturate(160%) blur(20px);border-top:var(--rule)}
-.track ol{min-width:0;list-style:none;margin:0;padding:1rem 1.5rem;display:flex;justify-content:safe center;gap:1rem;overflow-x:auto;scrollbar-width:thin;scrollbar-color:var(--s3) transparent}
-.track li{flex:none;display:grid;gap:.4rem;padding:.3rem;border-radius:14px;transition:background .15s}
+.track ol{min-width:0;list-style:none;margin:0;padding:1rem 1.5rem;display:flex;justify-content:safe center;gap:.35rem;overflow-x:auto;scrollbar-width:thin;scrollbar-color:var(--s3) transparent}
+.track li{flex:none;display:grid;gap:.1rem;padding:.075rem .3rem;border-radius:14px;transition:background .15s}
 .track li:hover{background:color-mix(in srgb,var(--aura) 30%,transparent)}
 .faces{display:flex;gap:.25rem}.faces a{display:block;width:8rem}.faces a:hover{text-decoration:none}
 .face{display:block;aspect-ratio:16/9;overflow:hidden;border-radius:9px;background:var(--s1);box-shadow:0 0 0 1px oklch(from var(--shade) l c h / .12)}
 .face img{width:100%;height:100%;object-fit:cover;display:block}
 .face.text{background:var(--term)}.face.text pre{padding:.5rem .55rem;font-size:9.5px;line-height:1.45;color:var(--term-text);height:100%;overflow:hidden;-webkit-mask-image:linear-gradient(#000 60%,transparent);mask-image:linear-gradient(#000 60%,transparent)}
 .cap{display:flex;align-items:center;gap:.4rem;width:0;min-width:100%;padding:0 .15rem;font-size:12px}.cap .took{flex:none;margin-left:auto;font:400 12px var(--sans);color:var(--dim)}
+.place{flex:none;display:flex;align-items:center;gap:.35rem;color:var(--where);font:700 13px/1 var(--sans);letter-spacing:.02em}.place.host{--where:var(--steel-ink)}.place.guest{--where:var(--blue)}.place svg{flex:none;width:1.5rem;height:1.5rem}
+.tline{display:flex;align-items:center;gap:.5rem;width:0;min-width:100%;padding:0 .15rem}.tline .place{font-size:12px}.tline .place{margin-left:auto}.tline .place svg{width:1.15rem;height:1.15rem}.tline .d{padding:.2rem .4rem;border-radius:5px;font-size:12px}
+.track li.gap{flex:none;align-self:center;display:grid;place-items:center;min-width:.4rem;margin-top:-.4rem}
+.track .iv{padding:.18rem .45rem;border-radius:999px;background:var(--s2);box-shadow:0 0 0 1px oklch(from var(--shade) l c h / .12);font:600 11px/1 var(--sans);color:var(--dim);white-space:nowrap;font-variant-numeric:tabular-nums}
 .face .role{position:absolute;left:.25rem;bottom:.25rem;padding:.16rem .4rem;border-radius:6px;background:oklch(from var(--s1) l c h / .92);font:700 12px/1 var(--sans);color:var(--ink)}
 .face .none{display:grid;place-items:center;height:100%;font-size:12px;color:var(--faint)}
-.cap .n{font:700 12px var(--sans);color:var(--faint)}.dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--dotc,var(--faint))}
+.dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--dotc,var(--faint))}
 .cap .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim)}
 .track li.bad .face{box-shadow:0 0 0 2px var(--cherry)}
 @media(max-width:960px){.top{grid-template-columns:minmax(0,1fr)}.mid,.pills{justify-self:center;justify-content:center}.app{height:auto;min-height:100vh;overflow:visible}.center{grid-template-columns:minmax(0,1fr);grid-template-areas:"stage" "panel"}.panel{border-left:0;border-top:var(--rule)}
@@ -737,7 +866,8 @@ kbd{display:inline-grid;place-items:center;min-width:1.4rem;height:1.4rem;paddin
 .stream pre,.plain,.command,.raw pre{background:radial-gradient(120% 90% at 50% 40%,oklch(from var(--navy) l c h / .3),transparent 70%),var(--term);color:var(--term-text);border:0;border-radius:8px;box-shadow:0 0 0 3px var(--bezel),0 0 0 4px var(--case-edge),inset 0 0 24px oklch(from var(--black) l c h / .7);scrollbar-color:var(--term-line) transparent}
 .stream pre,.plain,.command,.raw pre{margin-inline:4px}.term .stream pre,.lb-term .stream pre{box-shadow:none;margin-inline:0}.stream .label{margin-bottom:.5rem}
 .sname .took,.exit,.face .role,.fw-note,.concern li>.label{border-radius:4px;color:var(--tape-text);background:linear-gradient(oklch(from var(--tape) calc(l + .05) c h),var(--tape));box-shadow:inset 0 1px 0 #fff3,inset 0 -1px 0 #0004,0 1px 1px oklch(from var(--shade) l c h / .25)}
-.sname .took{padding:.3rem .5rem;font:700 12px/1 var(--mono)}
+.sname .took{flex:none;padding:.3rem .5rem;font:700 12px/1 var(--mono)}
+
 .exit{padding:.3rem .5rem;font:700 12px/1 var(--mono);letter-spacing:.04em;text-transform:uppercase}.exit.ok{--tape:var(--ok)}.exit.bad{--tape:var(--bad)}.exit.ok,.exit.bad{color:var(--tape-text);background:linear-gradient(oklch(from var(--tape) calc(l + .05) c h),var(--tape))}
 .face .role{--tape:var(--black);padding:.2rem .35rem;border-radius:3px;font:700 12px/1 var(--sans);letter-spacing:.04em;text-transform:uppercase}
 .concern li>.label{--tape:var(--tone)}.fw-note,.concern li>.label{padding:.2rem .45rem;font:700 12px/1.2 var(--sans);letter-spacing:.06em;text-transform:uppercase}.concern li>.label{justify-self:start}
@@ -758,6 +888,14 @@ kbd{display:inline-grid;place-items:center;min-width:1.4rem;height:1.4rem;paddin
 .term.k-agent .term-cmd,.lb-term.k-agent .term-cmd{color:var(--ink)}.term.k-agent .term-kind,.lb-term.k-agent .term-kind{color:var(--blue)}
 .face.agent.k-prompt{background:var(--navy)}.face.agent.k-agent{background:var(--s1)}.face.agent.k-agent pre{color:var(--ink);font-family:var(--sans)}.face.agent.k-thinking pre{font-style:italic;color:var(--term-dim)}.face.agent.k-prompt pre{font-family:var(--sans)}
 .face.agent .role{--tape:var(--blue)}.face.agent.k-prompt .role,.face.agent.k-agent .role{--tape:var(--orange)}
+/* A plan step reads as its phases, one row each, with the time each took (docs/ux/computer-use.md §1). */
+.term.plan .term-kind,.lb-term.plan .term-kind{color:var(--teal)}.plan-intent{margin:.5rem 1.5rem 0;font:16px/1.5 var(--sans);color:var(--term-text)}
+.phases{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:0 1.5rem;margin:1rem 1.5rem 1.5rem;font:14px/1.5 var(--mono)}.phases>div{display:contents}
+.phases dt{padding:.4rem 0;border-top:1px solid var(--term-line);font:700 12px/1.9 var(--sans);letter-spacing:.06em;text-transform:uppercase;color:var(--term-dim)}
+.phases dd{margin:0;padding:.4rem 0;border-top:1px solid var(--term-line);color:var(--term-text)}.phases .ms{text-align:right;font-variant-numeric:tabular-nums}
+.phases .warn dd{color:var(--orange)}.phases .ok dd:not(.ms){color:var(--teal)}
+.face.plan{background:var(--navy)}.face.plan .role{--tape:var(--steel)}
+.panel .request{margin:.5rem 0 0;font-size:12px;color:var(--faint)}.panel .request b{color:var(--dim)}.panel .answers{list-style:none;margin:.25rem 0 .5rem;padding:0;font:12px/1.6 var(--mono);color:var(--dim)}
 .panel .whole{max-height:none}.panel .steps{display:flex;flex-wrap:wrap;gap:.25rem .75rem}.panel .steps a,.cause a{font:700 12px var(--sans)}.cause.none p{color:var(--faint)}
 .machines{list-style:none;margin:.75rem 0 0;padding:0;display:grid;gap:.5rem}.machines li{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem 1.25rem;font-size:12px;color:var(--dim)}.machines code{font:700 12px var(--mono);color:var(--text)}.doc .s-agent{--sep:var(--orange)}
 @media print{.app{height:auto;display:block}.track,.arrow,.mid,.lightbox,.enlarge{display:none}.center{display:block}.step{display:block!important;break-inside:avoid;margin-bottom:1rem}.view{display:flex!important}.stage{background:none}}`;

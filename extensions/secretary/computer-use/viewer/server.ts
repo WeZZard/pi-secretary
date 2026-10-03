@@ -6,7 +6,9 @@
 // package files on 127.0.0.1, and names the address the browser opens. The app renders the page
 // from the model in the browser. The app's modules are TypeScript; the server strips their
 // types as it serves them, so no bundler is needed and a reload shows an edit to the app. The
-// model is built again on every request, so a reload also shows new evidence.
+// model is built again when the page asks for it, so a reload also shows new evidence; requests
+// that arrive while it is built share that build, and the pictures and package files are served
+// from the last build, so a page's hundreds of picture requests do not each build the model.
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { readFile, realpath } from "node:fs/promises";
 import { stripTypeScriptTypes } from "node:module";
@@ -36,11 +38,14 @@ const APP_MODULES = new Set(["main.ts", "page.ts", "behaviour.ts"]);
 export class TrajectoryServer {
   /** agent → how to build its trajectory */
   private readonly agents = new Map<string, TrajectoryInput>();
+  /** agent → its build in progress, then its last build */
+  private readonly builds = new Map<string, { running?: Promise<AgentTrajectory>; last?: AgentTrajectory }>();
   private server?: Server;
   private listening?: Promise<number>;
   private readonly port: number;
+  private readonly build: (input: TrajectoryInput) => Promise<AgentTrajectory>;
 
-  constructor(port = 0) { this.port = port; }
+  constructor(port = 0, build: (input: TrajectoryInput) => Promise<AgentTrajectory> = buildTrajectory) { this.port = port; this.build = build; }
 
   /** Serve an agent's trajectory; returns the address of its page. */
   async add(agent: string, input: TrajectoryInput): Promise<string> {
@@ -66,9 +71,19 @@ export class TrajectoryServer {
 
   close() { this.server?.close(); }
 
+  /** A new build of the agent's trajectory, shared with any build already running. */
   private async trajectory(agent: string): Promise<AgentTrajectory | undefined> {
     const input = this.agents.get(agent);
-    return input ? buildTrajectory(input) : undefined;
+    if (!input) return undefined;
+    const entry = this.builds.get(agent) ?? {};
+    this.builds.set(agent, entry);
+    entry.running ??= this.build(input).then(built => (entry.last = built), error => { throw error; }).finally(() => { entry.running = undefined; });
+    return entry.running;
+  }
+
+  /** The agent's last build, for its pictures and files; a build only when there is none yet. */
+  private async latest(agent: string): Promise<AgentTrajectory | undefined> {
+    return this.builds.get(agent)?.last ?? this.trajectory(agent);
   }
 
   private async handle(url: string, host: string | undefined, response: ServerResponse) {
@@ -100,7 +115,7 @@ export class TrajectoryServer {
       if (!rest.length) return redirect(href(agent));
       const file = rest.join("/");
       if (!file) return send(200, html, shell);
-      const trajectory = (await this.trajectory(agent))!;
+      const trajectory = (await this.latest(agent))!;
       const image = trajectory.images.find(image => image.path === file);
       if (image) return send(200, image.mimeType, Buffer.from(image.data, "base64"));
       const [name = "", ...inside] = rest;

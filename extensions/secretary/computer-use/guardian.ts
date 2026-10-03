@@ -14,10 +14,10 @@ import { BIDI_MARKS } from "./observer.ts";
 export interface GuardedAction {
   app: string;
   window: string;
-  action: "click" | "double_click" | "right_click" | "type" | "key";
+  action: "click" | "double_click" | "right_click" | "type" | "key" | "ax_press" | "ax_show_menu" | "ax_set_value";
   /** The chosen UI element; absent for `key`. */
   ui_element?: { role: string; name: string; value?: string };
-  /** The text that `type` enters. */
+  /** The text that `type` or `ax_set_value` enters. */
   text?: string;
   /** The key combination that `key` presses. */
   keys?: string;
@@ -61,7 +61,7 @@ export function guardianState(action: GuardedAction): Record<string, unknown> {
     state.ui_element = `${action.ui_element.role.replace(/^AX/, "")} ${JSON.stringify(clean(action.ui_element.name, LIMITS.name))}`;
     if (action.ui_element.value !== undefined && clean(action.ui_element.value, LIMITS.value) !== "") state.ui_element_value = clean(action.ui_element.value, LIMITS.value);
   }
-  if (action.action === "type" && action.text !== undefined) state.text = clean(action.text, LIMITS.text);
+  if ((action.action === "type" || action.action === "ax_set_value") && action.text !== undefined) state.text = clean(action.text, LIMITS.text);
   if (action.action === "key" && action.keys !== undefined) state.keys = clean(action.keys, LIMITS.name);
   const shown = (action.shownText ?? []).map(text => clean(text, LIMITS.shownLength)).filter(text => text !== "").slice(0, LIMITS.shownItems);
   if (shown.length) state.shown_text = shown;

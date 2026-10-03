@@ -14,6 +14,7 @@ import { RequestContextComposer } from "./context/index.ts";
 import { composeGoalAgents } from "./composition/goal-agents.ts";
 import { installComputerUse } from "./computer-use/installation.ts";
 import { inChildSession } from "./agents/child-context.ts";
+import { CHILD_TASK_PREFIX } from "./agents/child-task.ts";
 
 export default function secretaryExtension(pi: ExtensionAPI): void {
   // Child sessions install too (SA-12): the delegation tools are gated by nesting depth at
@@ -26,7 +27,7 @@ export default function secretaryExtension(pi: ExtensionAPI): void {
   // Independent capability (docs/arch/computer-use.md §4.2); it registers nothing unless configured,
   // and only in delegated sessions (decision PS-D11).
   // A delegated session is created inside the child-session marker, so it is read at installation.
-  computerUse = installComputerUse(pi, { root: dir, delegated: inChildSession() });
+  computerUse = installComputerUse(pi, { root: dir, delegated: inChildSession(), taskPrefix: CHILD_TASK_PREFIX });
 }
 
 /** Injectable storage permits tests to exercise the actual installer without touching user goals. */

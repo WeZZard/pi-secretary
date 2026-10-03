@@ -16,7 +16,7 @@ export type DiscardReason =
   | "no_frame"         // not on screen, for example a closed menu's items
   | "collapsed_frame"  // width or height of at most 1 point, for example a virtualized row
   | "disabled"
-  | "unnamed"          // no usable label or value
+  | "represented"      // without a name, and a kept UI element inside it stands for it, such as a row's named cell
   | "behind_modal"     // outside an open sheet
   | "inactive_menu_bar" // menu bar of a background application; its frames belong to another application
   | "outside_window";   // center outside the window frame, outside any menu
@@ -36,7 +36,12 @@ export interface ObservedElement {
   /** cua-driver element_index, valid only for this observation's snapshot. */
   index: number;
   role: string;
+  /** The label, value or descendant text; `(no name)` when there is none (decision PS-D26). */
   name: string;
+  /** True when the UI element has no name of its own and `name` is the placeholder. */
+  unnamed?: boolean;
+  /** For a UI element without a name, the descendant text of its parent container, such as a sheet's "New List Name:". */
+  near?: string;
   /** The name cut at 200 characters rather than the configured name length, for the grounder's priority table (design §6.2). */
   fullName: string;
   value?: string;
@@ -73,10 +78,19 @@ export interface Observation {
   comparison: WindowComparison;
   /** Content that cannot be clicked now, for the grounder's priority table (design §6.2, priorities 3 and 4). */
   context: ObservationContext;
+  /** The whole tree, one entry per node in tree order, for the grounder's `tree` detail (design §6.2, decision PS-D28). */
+  outline: OutlineEntry[];
 }
 
+/**
+ * One line of the whole tree outline: `Role "name"` and its state, or `text "…"` for a UI element's
+ * descendant text, which follows its owner one level deeper. `index` is set on a UI element's line, so
+ * the request builder can mark the UI elements the grounder may choose. `depth` counts the node's ancestors in the read.
+ */
+export interface OutlineEntry { depth: number; index?: number; line: string }
+
 export interface ObservationContext {
-  /** UI elements in the window with a frame that are disabled or unnamed, such as `Button (unnamed) ×3`. */
+  /** UI elements in the window with a frame that are disabled, such as `Button (no name) disabled ×3`. */
   inactive: string[];
   /** Items of closed menu-bar menus, as paths such as `Format ▸ Text ▸ Align Left`. */
   menus: string[];
@@ -96,7 +110,7 @@ const MAX_SHOWN_TEXT_LENGTH = 200;
 /** The name length of the grounder's priority table (design §6.2, priority 1). */
 const FULL_NAME_LENGTH = 200;
 
-/** `Button (unnamed)` three times becomes `Button (unnamed) ×3`, in first-seen order. */
+/** `Button (no name) disabled` three times becomes `Button (no name) disabled ×3`, in first-seen order. */
 function collapseRepeats(lines: string[]): string[] {
   const counts = new Map<string, number>();
   for (const line of lines) counts.set(line, (counts.get(line) ?? 0) + 1);
@@ -119,6 +133,8 @@ const LANDMARKS: Record<string, string> = {
 };
 
 const AUTOMATIC_IDENTIFIER = /^_NS:\d+$/;
+/** The name of a UI element that has none, which the planner copies into a step's `ui_element` (decision PS-D26). */
+export const NO_NAME = "(no name)";
 const TEXT_ROLES = new Set(["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"]);
 /** Characters of a text field's content shown to the planner, from the end. */
 const CONTENT_END_LENGTH = 200;
@@ -212,7 +228,7 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
     ?? cleanName(read.descendantText?.[element.element_index], FULL_NAME_LENGTH);
   const describeInactive = (element: RawElement, reason: string) => {
     const name = nameOf(element);
-    inactive.push(`${element.role.replace(/^AX/, "")} ${name ? JSON.stringify(name) : "(unnamed)"}${reason === "disabled" ? " disabled" : ""}`);
+    inactive.push(`${element.role.replace(/^AX/, "")} ${name ? JSON.stringify(name) : NO_NAME}${reason === "disabled" ? " disabled" : ""}`);
   };
   const children = new Map<number, RawElement[]>();
   for (const element of read.elements) if (element.parent_index !== undefined) children.set(element.parent_index, [...(children.get(element.parent_index) ?? []), element]);
@@ -240,8 +256,24 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
     return paths;
   };
 
+  // Design §6.2, decision PS-D28: every node, in tree order, with the state that the table's filters act on.
+  // The depth counts ancestors in the read: unindexed nodes between two read nodes would otherwise indent several levels at once.
+  const outline = (): OutlineEntry[] =>
+    read.elements.flatMap(element => {
+      const name = cleanName(element.label, FULL_NAME_LENGTH) ?? cleanName(element.value, FULL_NAME_LENGTH);
+      const value = cleanName(element.value, FULL_NAME_LENGTH);
+      const offScreen = element.role !== "AXApplication" && (!element.frame || !visible(element) || (!underMenu(element) && !insideWindow(element.frame)));
+      const state = [element.selected ? "selected" : "", element.enabled === false ? "disabled" : "",
+        value !== undefined && value !== name ? `value=${JSON.stringify(value)}` : "", offScreen ? "off screen" : ""].filter(Boolean).join(" ");
+      const depth = ancestors(element).length;
+      const own = { depth, index: element.element_index, line: `${element.role.replace(/^AX/, "")} ${name ? JSON.stringify(name) : NO_NAME}${state ? ` ${state}` : ""}` };
+      const text = cleanName(read.descendantText?.[element.element_index], FULL_NAME_LENGTH);
+      return text && text !== name ? [own, { depth: depth + 1, line: `text ${JSON.stringify(text)}` }] : [own];
+    });
+
   const hiddenBy = new Map<number | "content", number>();
-  const kept: { element: RawElement; name: string; landmark?: RawElement; platform: Platform }[] = [];
+  const kept: { element: RawElement; name: string; unnamed?: true; landmark?: RawElement; platform: Platform }[] = [];
+  const unnamed: RawElement[] = [];
   for (const element of read.elements) {
     if (CONTAINER_ROLES.has(element.role)) { discard(element, "container"); continue; }
     if (!element.frame) { discard(element, "no_frame"); continue; }
@@ -258,8 +290,16 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
     }
     const name = cleanName(element.label, options.maxNameLength) ?? cleanName(element.value, options.maxNameLength)
       ?? cleanName(read.descendantText?.[element.element_index], options.maxNameLength);
-    if (!name) { discard(element, "unnamed"); describeInactive(element, "unnamed"); continue; }
+    if (!name) { unnamed.push(element); continue; }
     kept.push({ element, name, landmark: landmarkOf(element), platform: platformOf(element) });
+  }
+  // Decision PS-D26: real input can target a UI element without a name, such as the text field of
+  // Reminders' New List sheet, whose only label is `_NS:146` (2026-09-26 and 2026-09-30). It is kept,
+  // unless a UI element inside it stands for it: a sidebar row without a name and its named cell are one item.
+  const inside = new Set([...kept.map(entry => entry.element), ...unnamed].flatMap(element => ancestors(element).map(ancestor => ancestor.element_index)));
+  for (const element of unnamed) {
+    if (inside.has(element.element_index)) { discard(element, "represented"); continue; }
+    kept.push({ element, name: NO_NAME, unnamed: true, landmark: landmarkOf(element), platform: platformOf(element) });
   }
 
   // Rule 1: an open sheet is the only group.
@@ -277,8 +317,15 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
     return { status: "state_too_large", ...base, detail: `${candidates.length} UI elements remain after filtering; the limit is ${options.maxElements}.` };
   }
 
+  // A container's text near a UI element without a name, such as the label of a sheet's only field.
+  // The window's text is about the whole window, so it is not used.
+  const nearText = (element: RawElement): string | undefined => {
+    const parent = element.parent_index === undefined ? undefined : byIndex.get(element.parent_index);
+    return parent && parent.role !== "AXWindow" ? cleanName(read.descendantText?.[parent.element_index], options.maxNameLength) : undefined;
+  };
   const toElement = (entry: typeof kept[number], group: string, position: number): ObservedElement => ({
     index: entry.element.element_index, role: entry.element.role, name: entry.name, fullName: nameOf(entry.element) ?? entry.name,
+    ...(entry.unnamed ? { unnamed: true, ...(nearText(entry.element) ? { near: nearText(entry.element) } : {}) } : {}),
     ...(entry.element.value !== undefined && cleanName(entry.element.value, options.maxNameLength) !== entry.name
       ? { value: cleanName(entry.element.value, options.maxNameLength) } : {}),
     ...(entry.element.selected ? { selected: true } : {}),
@@ -295,7 +342,7 @@ export function observe(read: WindowRead, options: ObserverOptions): Observation
       .map(element => `${element.role} ${JSON.stringify(element.label ?? "")}`);
     return { status: "ready", id: options.id, window: read.window, snapshotId: read.snapshotId, groups, discards, rawCount: read.elements.length, ...shownTexts(),
       comparison: { windowId: read.window.windowId, title: read.window.title ?? "", uiElements, blocking },
-      context: { inactive: collapseRepeats(inactive), menus: menuPaths() } };
+      context: { inactive: collapseRepeats(inactive), menus: menuPaths() }, outline: outline() };
   };
 
   const hiddenTotal = () => { const total = [...hiddenBy.values()].reduce((sum, count) => sum + count, 0); return total ? { hidden: total } : {}; };
@@ -382,6 +429,12 @@ export function platformView(observation: Observation, platform: Platform): Obse
   return { ...observation, groups: observation.groups.filter(group => group.platform === platform) };
 }
 
+/** A UI element's name as a table shows it: quoted, or `(no name)` with the text near it (design §6.2). */
+export function nameText(element: ObservedElement, name = element.name): string {
+  if (!element.unnamed) return JSON.stringify(name);
+  return `${NO_NAME}${element.near !== undefined ? ` near ${JSON.stringify(element.near)}` : ""}`;
+}
+
 /** The planner's view includes role, state, and the text the window shows (design §5.1, fix plan F-6). */
 export function renderPlannerTable(observation: Observation): string {
   const table = observation.groups.map(group => `${group.name}:\n${group.elements.map(element => {
@@ -391,14 +444,14 @@ export function renderPlannerTable(observation: Observation): string {
     const state = [element.value !== undefined ? `value=${JSON.stringify(element.value)}` : "",
       element.contentEnd !== undefined && element.contentEnd !== element.name ? `content ends with ${JSON.stringify(element.contentEnd)}` : "",
       element.selected ? "selected" : ""].filter(Boolean).join(" ");
-    return `  ${element.letter} ${role} ${JSON.stringify(element.name)}${state ? ` ${state}` : ""}`;
+    return `  ${element.letter} ${role} ${nameText(element)}${state ? ` ${state}` : ""}`;
   }).join("\n")}`).join("\n");
   if (!observation.texts?.length) return table;
   return `${table}\ntext shown in the window (not UI elements):\n${observation.texts.map(text => `  ${JSON.stringify(text)}`).join("\n")}`;
 }
 
 export function discardSummary(discards: Discard[]): Record<DiscardReason, number> {
-  const summary = { container: 0, no_frame: 0, collapsed_frame: 0, disabled: 0, unnamed: 0, behind_modal: 0, inactive_menu_bar: 0, outside_window: 0 };
+  const summary = { container: 0, no_frame: 0, collapsed_frame: 0, disabled: 0, represented: 0, behind_modal: 0, inactive_menu_bar: 0, outside_window: 0 };
   for (const entry of discards) summary[entry.reason]++;
   return summary;
 }

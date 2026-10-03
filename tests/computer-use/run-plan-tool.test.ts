@@ -24,7 +24,7 @@ function context(t: TestContext, used = 0) {
   let recorded = 0;
   const remembered: string[] = [];
   const grounder = { decide: async (): Promise<DecisionResponse> => ({ roundTripMs: 1, answers: { operation: { choice: "abstain", confidence: 0.9 } } }) };
-  const ctx: RunPlanContext = { deps: { backend: new FakeBackend({ Form: [form] }), grounder, telemetry: new Telemetry(root), config: { ...defaultComputerUseConfiguration(), settleMs: 0 }, sleep: async () => {} },
+  const ctx: RunPlanContext = { deps: { backend: new FakeBackend({ Form: [form] }), grounder, telemetry: new Telemetry(root), config: { ...defaultComputerUseConfiguration(), settleMs: 0 }, sleep: async () => {}, newId: () => "run-1" },
     observation: (id: string) => id === "obs-1" ? formObservation : undefined, escalations: { used, limit: 2, record: () => { recorded++; } } };
   // The read after the plan goes through computer_observe's routine, with the backend the test last set.
   ctx.observeAfter = (target, signal) => executeObserve({ backend: ctx.deps.backend, config: ctx.deps.config, telemetry: ctx.deps.telemetry,
@@ -38,7 +38,7 @@ const text = (result: { content: unknown[] }) => (result.content[0] as { text: s
 test("an escalated plan returns the reason, the prior and the window after the plan, and counts toward the limit", async (t) => {
   const { context: ctx, recorded } = context(t);
   const result = await executeRunPlan(ctx, params);
-  assert.deepEqual(result.details, { outcome: "escalated", decisions: 1, actions: 0, escalation: "target_not_found", observationId: "obs-after" });
+  assert.deepEqual(result.details, { runId: "run-1", outcome: "escalated", decisions: 1, actions: 0, escalation: "target_not_found", observationId: "obs-after" });
   assert.match(text(result), /^Outcome: escalated\. Grounder decisions: 1\. Actions: 0\.\n- submit: stopped\n/);
   assert.match(text(result), /Escalation at step submit: target_not_found\./);
   assert.match(text(result), /The window after the plan\. Judge the result from it; no step above was checked\. The next plan's based_on is its Observation\.\nApplication: Form\nWindow: "Form"\nObservation: obs-after\n/);
@@ -49,12 +49,16 @@ test("an escalated plan returns the reason, the prior and the window after the p
 test("a completed plan carries the window after it, with its screenshot and an observation id a next plan can name (design §5.4)", async (t) => {
   const { context: ctx, remembered } = context(t);
   const screenshot = { data: Buffer.from("after").toString("base64"), mimeType: "image/png" };
-  const done: typeof form = { ...form, elements: [form.elements[0]!, { ...form.elements[1]!, label: "Done" }], screenshot };
+  const done: typeof form = { ...form, elements: [form.elements[0]!, { ...form.elements[1]!, label: "Done" }], screenshot, evidence: ["cu-0009"] };
   ctx.deps.backend = new FakeBackend({ Form: [form, done] });
   ctx.deps.config = { ...ctx.deps.config, permissionMode: "bypass" };
   ctx.deps.grounder = { decide: async () => ({ roundTripMs: 1, answers: { element_1: { choice: "A", confidence: 0.9 }, operation: { choice: "click", confidence: 0.9 } } }) };
   const result = await executeRunPlan(ctx, params);
-  assert.deepEqual(result.details, { outcome: "completed", decisions: 1, actions: 1, observationId: "obs-after" });
+  assert.deepEqual(result.details, { runId: "run-1", outcome: "completed", decisions: 1, actions: 1, observationId: "obs-after" });
+  // The result names its plan record, and the read's record keeps its relay steps, so the trajectory finds both (design §12.3).
+  const { root } = ctx.deps.telemetry;
+  assert.equal(JSON.parse(readFileSync(join(root, "runs", "run-1", "plan.json"), "utf8")).runId, "run-1");
+  assert.deepEqual(JSON.parse(readFileSync(join(root, "observations", "obs-after.json"), "utf8")).evidence, ["cu-0009"]);
   assert.match(text(result), /^Outcome: completed\. Grounder decisions: 1\. Actions: 1\.\n- submit: acted, click "Submit"\n\nThe window after the plan\./);
   assert.match(text(result), /A Button "Done"/);
   assert.deepEqual(result.content[1], { type: "image", ...screenshot });
@@ -99,7 +103,7 @@ test("a plan based on an observation acts on that observation's window", async (
 });
 
 test("a result lists what each step did, and judges none of them", () => {
-  assert.equal(formatResult({ outcome: "escalated", decisions: 2, actions: 1, steps: [
+  assert.equal(formatResult({ runId: "run-1", outcome: "escalated", decisions: 2, actions: 1, steps: [
     { id: "a", result: "acted", action: "click", element: "Submit" },
     { id: "b", result: "stopped", detail: "uncertain: the grounder could not choose" },
     { id: "c", result: "not_run" }], escalation: { stepId: "b", reason: "uncertain", detail: "the grounder could not choose" } }),
