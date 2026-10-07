@@ -12,7 +12,7 @@ import { formatGoalSnapshot } from "./goal/steering.ts";
 import { installAgentSupport } from "./agents/installation.ts";
 import { RequestContextComposer } from "./context/index.ts";
 import { composeGoalAgents } from "./composition/goal-agents.ts";
-import { installComputerUse } from "./computer-use/installation.ts";
+import { installVmUse } from "./vm-use/installation.ts";
 import { inChildSession } from "./agents/child-context.ts";
 import { CHILD_TASK_PREFIX } from "./agents/child-task.ts";
 
@@ -21,13 +21,13 @@ export default function secretaryExtension(pi: ExtensionAPI): void {
   // session_start, and the session tool allowlist keeps goal tools out of delegated work.
   const dir = process.env.PI_SECRETARY_DB_DIR ?? path.join(process.env.HOME ?? "", ".pi", "secretary");
   mkdirSync(dir, { recursive: true });
-  let computerUse: ReturnType<typeof installComputerUse> | undefined;
+  let vmUse: ReturnType<typeof installVmUse> | undefined;
   installSecretary(pi, new GoalEngine({ dbPath: path.join(dir, "pi-secretary-goals.sqlite"), enabled: true }), { agentsRoot: dir,
-    childTools: tools => computerUse?.childTools(tools) ?? tools });
-  // Independent capability (docs/arch/computer-use.md §4.2); it registers nothing unless configured,
+    childTools: tools => vmUse?.childTools(tools) ?? tools });
+  // Independent capability (docs/arch/vm-use.md §4.2); it registers nothing unless configured,
   // and only in delegated sessions (decision PS-D11).
   // A delegated session is created inside the child-session marker, so it is read at installation.
-  computerUse = installComputerUse(pi, { root: dir, delegated: inChildSession(), taskPrefix: CHILD_TASK_PREFIX });
+  vmUse = installVmUse(pi, { root: dir, delegated: inChildSession(), taskPrefix: CHILD_TASK_PREFIX });
 }
 
 /** Injectable storage permits tests to exercise the actual installer without touching user goals. */

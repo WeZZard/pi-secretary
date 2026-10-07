@@ -36,15 +36,15 @@
 | [Session rewind investigation](research/subagent-session-rewind.md) | It records the reproduced cross-branch state leak, independent name conflict, selected cancellation policy, and verification limits. |
 | [Upstream research](research/subagent-system-comparison.md) | It records the dated source comparison that informed the design. It does not describe current Secretary behavior. |
 
-## Computer-use documents
+## vm-use documents
 
 | Document | Current role |
 | --- | --- |
-| [Requirements](user-stories/computer-use.md) | They are the required outcomes: CU-01 to CU-07, approved on 2026-09-24, and CU-08, added by decision PS-D17 on 2026-09-30. |
-| [Interaction design](ux/computer-use.md) | It specifies the trajectory viewer, the relay's review app moved into the extension (decisions PS-D17 and PS-D18). It is a draft. |
-| [Technical design](arch/computer-use.md) | It is the design for a computer-use subagent in which a planner model plans, the executor (`computer_run_plan`) runs the plan step by step, and a structured-decision grounder chooses one UI element and action per step (decision PS-D23). Section 8 defines the permission modes and the guardian that judges each action before input is sent (PS-D13 to PS-D16). The observer, grounder client, executor and planner tools are implemented with the local driver backend. The relay backend and delegation from a parent agent are not. |
-| [Evaluation](testing/computer-use-evaluation.md) | It defines the ship gate, the benchmark run on MacArena and how counted failures choose the next change (decision PS-D9), and the evaluation of the permission guardian (PS-D14). |
-| [Computer-use investigation](research/computer-use-s0-s1.md) | It records the measurements of the structured-decision service, which the record calls the executor and the design calls the grounder, from 2026-09-22 and the live checks, through standalone scripts and through Pi, from 2026-09-23, with their verification limits. |
+| [Requirements](user-stories/vm-use.md) | They are the required outcomes: VU-01 to VU-07, approved on 2026-09-24, and VU-08, added by decision PS-D17 on 2026-09-30. VU-04's text for decision PS-D53 awaits the owner's approval. |
+| [Interaction design](ux/vm-use.md) | It specifies the trajectory viewer, the relay's review app moved into the extension (decisions PS-D17 and PS-D18), and the approval dialog of the permission check mode `online` (PS-D53). It is a draft. |
+| [Technical design](arch/vm-use.md) | It is the design for a vm-use subagent in which a planner model plans, the executor (`vm_run_plan`) runs the plan step by step, and a structured-decision grounder chooses one UI element and action per step (decision PS-D23). Section 8 defines the two permission check modes, `none` and `online`, and the approval of a whole plan by a person before its first step (PS-D53). The observer, grounder client, executor, planner tools, online plan check, relay backend and delegation from a parent agent are implemented. |
+| [Evaluation](testing/vm-use-evaluation.md) | It defines the ship gate, the benchmark run on MacArena and how counted failures choose the next change (decision PS-D9), and the evaluation of the permission guardian (PS-D14). Decision PS-D53 removed the guardian; the evaluation's 80 labelled cases are kept for measuring the online plan check. |
+| [vm-use investigation](research/vm-use-s0-s1.md) | It records the measurements of the structured-decision service, which the record calls the executor and the design calls the grounder, from 2026-09-22 and the live checks, through standalone scripts and through Pi, from 2026-09-23, with their verification limits. |
 
 ## Generated test artifacts
 

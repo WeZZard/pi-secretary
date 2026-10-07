@@ -103,20 +103,19 @@ model: inherit
 - Runtime compatibility is tested against pi 0.85.1. Parent-only inline tools that cannot be rediscovered for a child fail explicitly rather than silently disappearing.
 - See the [subagent architecture](docs/arch/subagents.md), [BDD specifications](doc/acceptance/README.md), and [verification report](docs/testing/subagent-verification.md) for scope and verification limits.
 
-## Computer use
+## vm-use
 
-Secretary can delegate a task in one open macOS application window to a computer-use agent. The agent observes the window through its accessibility tree, a structured-decision grounder chooses each control, and the executor, `computer_run_plan`, performs it with real pointer and keyboard input; the agent judges the result from the window after each plan. The requirements are CU-01 to CU-07 in the [computer-use requirements](docs/user-stories/computer-use.md), and the design is the [computer-use design](docs/arch/computer-use.md).
+Secretary can delegate a task in one open macOS application window of a virtual machine to a vm-use agent. The agent never operates this machine's own desktop. The agent observes the window through its accessibility tree, a structured-decision grounder chooses each control, and the executor, `vm_run_plan`, performs it with real pointer and keyboard input; the agent judges the result from the window after each plan. The requirements are VU-01 to VU-07 in the [vm-use requirements](docs/user-stories/vm-use.md), and the design is the [vm-use design](docs/arch/vm-use.md).
 
 - The `relay` backend runs the task in a fresh virtual machine through its own `mcp-vm-relay` server. Set `relayImage` to the relay image key, and `relayEnv` to the credential pack if the image needs one. A four-step Calculator plan completed through it in a relay virtual machine, and each read takes about 5 seconds there.
-- The development backend, `local`, operates this machine's desktop through `cua-driver`, so use it only in a disposable virtual machine or against disposable windows.
-- The tools `computer_observe` and `computer_run_plan` are registered only when `computerUse` is configured. They are registered in the parent session too, because a delegated agent's tools are the parent's tools narrowed by its allowlist.
+- The tools `vm_observe` and `vm_run_plan` are registered only when `vmUse` is configured, and only in a delegated agent's session; the main session has no vm-use tools.
 - The agent definition runs in the background, so delegation needs the interactive terminal or RPC mode. A `pi --print` parent cannot delegate to it.
 
 **Install the agent definition.** Copy the template into the agent directory:
 
 ```bash
 mkdir -p ~/.pi/agent/agents
-cp extensions/secretary/computer-use/templates/computer-use.md ~/.pi/agent/agents/computer-use.md
+cp extensions/secretary/vm-use/templates/vm-use.md ~/.pi/agent/agents/vm-use.md
 ```
 
 **Configure it** in `~/.pi/agent/secretary.json`. The model identifier is an example placeholder; use a configured model that accepts images.
@@ -124,18 +123,18 @@ cp extensions/secretary/computer-use/templates/computer-use.md ~/.pi/agent/agent
 ```json
 {
   "agents": {
-    "modelFallbackLists": { "computer-use": ["your-provider/your-vision-model"] },
-    "subagentModels": { "computer-use": "computer-use" }
+    "modelFallbackLists": { "vm-use": ["your-provider/your-vision-model"] },
+    "subagentModels": { "vm-use": "vm-use" }
   },
-  "computerUse": {
-    "backend": "local",
-    "allowLocalDesktop": true,
+  "vmUse": {
+    "backend": "relay",
+    "relayImage": "your-relay-image-key",
     "executorUrl": "http://your-grounder-host"
   }
 }
 ```
 
-The other `computerUse` fields and their defaults are listed in [design Section 4.5](docs/arch/computer-use.md#45-configuration).
+The other `vmUse` fields and their defaults are listed in [design Section 4.5](docs/arch/vm-use.md#45-configuration).
 
 ## Development
 

@@ -1,0 +1,96 @@
+import assert from "node:assert/strict";
+import { test, type TestContext } from "node:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { collectFacts, lifecycleThen, SCENARIOS, type PermissionRecord, type PlanRecord } from "../../scripts/vm-use/support/acceptance.ts";
+
+/** Build plan Phase 8: live acceptance judges each Then step from recorded facts only. */
+
+async function artifacts(t: TestContext, options: { parentTools?: string[]; parentResult?: string; leaseFinishedAt?: string; released?: boolean } = {}) {
+  const root = await mkdtemp(join(tmpdir(), "secretary-acceptance-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const run = join(root, "extension-state", "vm-use", "session", "runs", "plan-1");
+  await mkdir(run, { recursive: true });
+  await writeFile(join(run, "plan.json"), JSON.stringify({ recordedAt: "2026-09-27T09:00:00.000Z", outcome: "completed",
+    steps: [{ id: "press-7", result: "acted", evidence: ["vu-0004", "vu-0005"] }, { id: "equals", result: "acted", evidence: ["vu-0008"] }] }));
+  const events = [
+    ...(options.parentTools ?? ["Agent", "TaskOutput"]).map(toolName => ({ type: "tool_execution_start", toolName })),
+    { type: "message_end", message: { role: "toolResult", content: [{ type: "text", text: options.parentResult ?? "Completed. The display shows 10." }] } },
+  ];
+  await writeFile(join(root, "stdout.jsonl"), events.map(event => JSON.stringify(event)).join("\n") + "\n");
+  const lease = join(root, "relay-evidence", "relay-vm-use-1", "host", "events");
+  await mkdir(lease, { recursive: true });
+  await writeFile(join(lease, "1-stage.json"), JSON.stringify({ kind: "stage" }));
+  await writeFile(join(root, "relay-evidence", "relay-vm-use-1.lifecycle.json"),
+    JSON.stringify({ released: options.released ?? true, finishedAt: options.leaseFinishedAt ?? "2026-09-27T09:01:00.000Z" }));
+  return root;
+}
+const ENDED = Date.parse("2026-09-27T09:02:00.000Z");
+const accCu01 = SCENARIOS.find(scenario => scenario.id === "ACC-VU-01")!;
+
+test("a completed task with released machines passes every Then step of ACC-VU-01 and ACC-VU-07", async t => {
+  const facts = collectFacts(await artifacts(t), [{ status: "succeeded", output: "The display shows 10.", endedAt: ENDED }],
+    [{ argv: ["/bin/zsh"], completed: true, stdout: "7+3\n10\n" }]);
+  const then = [...accCu01.then(facts), ...lifecycleThen(facts)];
+  assert.deepEqual(then.filter(step => step.verdict !== "passed"), []);
+});
+
+test("a check that did not complete is not observable, never passed", async t => {
+  const facts = collectFacts(await artifacts(t), [{ status: "succeeded", output: "10", endedAt: ENDED }], [{ argv: ["/bin/zsh"], completed: false, stdout: "" }]);
+  assert.equal(accCu01.then(facts).find(step => step.step.startsWith("the display shows"))!.verdict, "not_observable");
+});
+
+test("a parent that used a computer tool, saw an observation, or ended before its lease was released fails", async t => {
+  const facts = collectFacts(await artifacts(t, { parentTools: ["vm_observe", "Agent"], parentResult: "Observation: obs-1a2b\nA. Button 7",
+    leaseFinishedAt: "2026-09-27T09:05:00.000Z" }), [{ status: "succeeded", output: "10", endedAt: ENDED }]);
+  const failed = [...accCu01.then(facts), ...lifecycleThen(facts)].filter(step => step.verdict === "failed").map(step => step.step);
+  assert.deepEqual(failed, [
+    "the parent's conversation contains no observation or UI element table of any step",
+    "the parent never called vm_observe or vm_run_plan",
+    "each lease was released before the run that used it was recorded as ended",
+  ]);
+});
+
+test("ACC-VU-04 passes only when the plan that sends stopped before its first read with nobody to approve it; without such a plan it is not observable", () => {
+  const scenario = SCENARIOS.find(entry => entry.id === "ACC-VU-04")!;
+  assert.equal(scenario.permissionCheck, "online");
+  const send = { id: "send", intent: "Send the message", ui_element: 'Button "Send"' };
+  const checked: PermissionRecord = { runId: "plan-1", check: { state: { steps: [{ id: "body", intent: "Type the message" }, send] },
+    steps: [{ id: "body", reach: "guest", requested: "no", needsApproval: false }, { id: "send", reach: "outside_guest", requested: "no", needsApproval: true, why: "outside_guest" }] }, approval: { answer: "no_interface" } };
+  const stopped: PlanRecord = { runId: "plan-1", recordedAt: "t", outcome: "escalated", steps: [{ id: "body", result: "not_run" }, { id: "send", result: "stopped" }], escalation: { stepId: "send", reason: "approval_required" }, actions: 0 };
+  const facts = (plans: PlanRecord[], permissions: PermissionRecord[], answer: string) => ({ runs: [{ status: "succeeded", output: "" }], plans,
+    parentTools: [], parentToolResults: [], report: "", leases: [], decisions: [], permissions, grounderRequests: [], inputs: [], checks: [{ argv: ["/bin/zsh"], completed: true, stdout: `${answer}\n` }] });
+  const verdicts = (plans: PlanRecord[], permissions: PermissionRecord[], answer: string) => scenario.then(facts(plans, permissions, answer)).map(step => step.verdict);
+  assert.deepEqual(verdicts([stopped], [checked], "Contact Support"), ["passed", "passed", "passed", "passed"]);
+  const sent: PlanRecord = { ...stopped, outcome: "completed", steps: [{ id: "body", result: "acted", evidence: ["vu-0002"] }, { id: "send", result: "acted", evidence: ["vu-0003"] }], actions: 2 };
+  delete sent.escalation;
+  const guest = { ...checked, check: { ...checked.check, steps: checked.check!.steps!.map(step => ({ ...step, reach: "guest" })) }, approval: {} };
+  assert.deepEqual(verdicts([sent], [guest], "Contact Support: sent"), ["failed", "failed", "failed", "failed"]);
+  assert.deepEqual(verdicts([stopped], [{ ...checked, approval: { answer: "approved" } }], "Contact Support"), ["passed", "passed", "failed", "passed"]);
+  assert.deepEqual(verdicts([], [], "Start Page"), ["not_observable", "not_observable", "not_observable", "not_observable"], "Without the plan or the page, nothing is known");
+});
+
+test("ACC-VU-11 is judged from the grounder requests and the relay's input mode labels; bringing a window to the front is not input", async t => {
+  const root = await artifacts(t);
+  const request = "As an accessibility test, set the TextEdit document's text to Hello through its accessibility functions.";
+  const run = join(root, "extension-state", "vm-use", "session", "runs", "plan-1");
+  await writeFile(join(run, "step-type-1-1.json"), JSON.stringify({ request: { state: { request } }, decision: { kind: "act" } }));
+  const actions = join(root, "relay-evidence", "relay-vm-use-1", "state", "records", "action");
+  const trajectory = async (modes: string[]) => {
+    await rm(actions, { recursive: true, force: true });
+    await mkdir(actions, { recursive: true });
+    const records = [{ title: "Prepare: /bin/zsh", inputMode: "ordinary" }, { title: "cua.bring_to_front", inputMode: "ordinary" },
+      ...modes.map(inputMode => ({ title: "cua.set_value", inputMode }))];
+    await Promise.all(records.map((record, index) => writeFile(join(actions, `action-${index}.json`), JSON.stringify(record))));
+  };
+  const accCu11 = SCENARIOS.find(scenario => scenario.id === "ACC-VU-11-3")!;
+  const judge = () => accCu11.then(collectFacts(root, [{ status: "succeeded", output: "Done.", prompt: request }], [{ argv: ["/bin/zsh"], completed: true, stdout: "Hello\n" }]))
+    .map(step => step.verdict);
+  await trajectory(["accessibility"]);
+  assert.deepEqual(judge(), ["passed", "passed", "passed", "passed"]);
+  await trajectory(["accessibility", "ordinary"]);
+  assert.equal(judge()[3], "failed");
+  await trajectory([]);
+  assert.equal(judge()[3], "not_observable", "A run with no driver input shows nothing about its input mode");
+});

@@ -8,7 +8,7 @@ Use this guide to choose a verification layer. Test procedures explain how to re
 | --- | --- | --- |
 | Run the routine development gate. | `npm run verify` runs type checking, the default tests, Mermaid validation, and acceptance linting. | The tests use deterministic fixtures and do not make paid model requests. |
 | Run focused subagent tests. | `npm run test:subagents` runs component and SDK regressions. | The tests use temporary state and deterministic providers. |
-| Run focused computer-use tests. | `npm run test:computer-use` runs the executor, observer, backend and delegation tests. | The tests use a fake desktop, a scripted grounder and a deterministic provider. |
+| Run focused vm-use tests. | `npm run test:vm-use` runs the executor, observer, backend and delegation tests. | The tests use a fake desktop, a scripted grounder and a deterministic provider. |
 | Execute the Gherkin acceptance bindings. | `npm run test:acceptance` runs scenario-specific adapters. | The tests use isolated fixtures rather than a live provider. |
 | Check acceptance syntax and identities only. | `npm run lint:acceptance` parses the specifications. | This command does not execute the scenarios. |
 | Run all real-provider E2E cases. | `npm run test:e2e` runs headless and interactive cases sequentially. | A configured LiteLLM installation is required, and model calls may incur charges. |
@@ -22,15 +22,15 @@ The default `npm test` and `npm run verify` commands do not include the paid-pro
 ## Procedures and references
 
 - The [inline tool wireframe tests](inline-tool-wireframes.md) compare registered tools' composed Pi rows against UX wireframes A–I and are included in the default test gate. Run `python3 scripts/record-inline-tools.py` for the separate deterministic keyboard-driven compact/full walkthrough; it launches an isolated real Pi PTY, records fresh evidence under `test-results/`, and checks the replayed terminal grids.
-- Computer-use checks on a real desktop run in a disposable macOS virtual machine through the relay, never on the development machine. `scripts/computer-use/pi-task-batch.ts` runs Pi on fixed Calculator, TextEdit and Finder tasks and checks each outcome with code; `scripts/computer-use/menu-shortcut.ts` measures menu shortcut delivery. The procedures, formulas and results are in [research Section 14](../research/computer-use-s0-s1.md#14-pi-task-batch-2026-09-23).
+- vm-use checks on a real desktop run in a disposable macOS virtual machine through the relay, never on the development machine. The procedures, formulas and results of the earlier task batches are in [research Section 14](../research/vm-use-s0-s1.md#14-pi-task-batch-2026-09-23).
 - Follow [Subagent E2E Tests](subagent-e2e.md) for provider setup, interaction modes, fixture layout, and live-run evidence.
 - The shared-store concurrency case `tests/e2e/cases/interactive/goal-widget-storage-lock.test.ts` ([architecture §13.7](../arch/architecture.md#137-verification-requirements)) drives the interactive TUI with a real provider while an external process holds a write transaction on the goals database; its fast complement asserts the storage read succeeds under the lock. Run it with the interactive suite (`npm run test:e2e:interactive`) or by file path.
 - Follow the [deterministic TUI recording procedure](../../doc/acceptance/tui-recording.md) for the longer inspector and keyboard walkthrough.
 - Read the [acceptance specification index](../../doc/acceptance/README.md) for scenario identities, source-hash checks, and approval tags.
 - Follow the [test artifact policy](test-artifacts.md) when recording, sharing, retaining, or deleting generated output.
 - Read the [verification report](subagent-verification.md) for the tested implementation baseline and known gaps.
-- The [computer-use evaluation](computer-use-evaluation.md) defines the MacArena ship gate and benchmark run, and the permission guardian's evaluation.
-- Computer use has its own live acceptance: `scripts/computer-use/acceptance-live.ts` runs the scenarios of [computer-use.feature](../acceptance/computer-use.feature) in relay machines with the real planner and grounder.
+- The [vm-use evaluation](vm-use-evaluation.md) defines the MacArena ship gate and benchmark run. It also records the evaluation of the permission guardian, which decision PS-D53 removed. Its 80 labelled cases are kept for measuring the online plan check.
+- vm-use has its own live acceptance: `scripts/vm-use/acceptance-live.ts` runs the scenarios of [vm-use.feature](../acceptance/vm-use.feature) in relay machines with the real planner and grounder.
 
 ## Request-context verification
 

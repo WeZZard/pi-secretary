@@ -1,0 +1,457 @@
+import type { Frame, RawElement, WindowRead, WindowRef } from "./backend/backend.ts";
+import { BLOCKING_ROLES, MENU_BAR_ROLES, type WindowComparison } from "./window-check.ts";
+
+/**
+ * Observation pipeline (design docs/arch/vm-use.md §6): from cua-driver's structured
+ * UI elements to a grouped, lettered UI element table, with every discard recorded (§6.4).
+ */
+
+/** The grounder's limit per question (research §2.4). */
+export const MAX_ALTERNATIVES = 26;
+/** UI elements per group: one alternative of every UI element question is reserved for "none". */
+export const MAX_GROUP_ELEMENTS = MAX_ALTERNATIVES - 1;
+
+export type DiscardReason =
+  | "container"        // structural role used for grouping, not a target
+  | "no_frame"         // not on screen, for example a closed menu's items
+  | "collapsed_frame"  // width or height of at most 1 point, for example a virtualized row
+  | "disabled"
+  | "represented"      // without a name, and a kept UI element inside it stands for it, such as a row's named cell
+  | "behind_modal"     // outside an open sheet
+  | "inactive_menu_bar" // menu bar of a background application; its frames belong to another application
+  | "outside_window";   // center outside the window frame, outside any menu
+
+export interface Discard { index: number; role: string; label?: string; reason: DiscardReason }
+
+/** The platform a UI element belongs to, which decides the actions allowed on it (design §6.5, decision PS-D6). */
+export type Platform = "macos" | "ios";
+/** The application name of the iOS Simulator, whose window holds a device screen of iOS UI elements. */
+export const SIMULATOR_APP = "Simulator";
+/** The group of the Simulator's device screen. Its name says the platform, and the planner copies it as a region. */
+export const IOS_GROUP = "iOS screen";
+/** Points within which a UI element touches the window's side, as the Simulator's hardware buttons do. */
+const BEZEL_TOLERANCE = 2;
+
+export interface ObservedElement {
+  /** cua-driver element_index, valid only for this observation's snapshot. */
+  index: number;
+  role: string;
+  /** The label, value or descendant text; `(no name)` when there is none (decision PS-D26). */
+  name: string;
+  /** True when the UI element has no name of its own and `name` is the placeholder. */
+  unnamed?: boolean;
+  /** For a UI element without a name, the descendant text of its parent container, such as a sheet's "New List Name:". */
+  near?: string;
+  /** The name cut at 200 characters rather than the configured name length, for the grounder's priority table (design §6.2). */
+  fullName: string;
+  value?: string;
+  /** The end of a text field's or text area's content, for the planner only (design §5.1). */
+  contentEnd?: string;
+  selected?: boolean;
+  frame: Frame;
+  group: string;
+  platform: Platform;
+  /** Single letter, unique within its group. */
+  letter: string;
+}
+
+/**
+ * `frame` is the group's container, or the window for the single-group and content cases; scrolling targets it.
+ * `hidden` counts named UI elements of the group's container that lie outside the window, such as rows below the visible part of a list.
+ */
+export interface ObservedGroup { name: string; elements: ObservedElement[]; frame?: Frame; hidden?: number; platform: Platform }
+
+export interface Observation {
+  status: "ready";
+  id: string;
+  window: WindowRef;
+  snapshotId?: string;
+  groups: ObservedGroup[];
+  /**
+   * Text the window shows that is not the name of any kept UI element, such as Calculator's display,
+   * which is static text under the window (fix plan F-6). The planner sees it; the grounder does not.
+   */
+  texts?: string[];
+  discards: Discard[];
+  rawCount: number;
+  /** What the plan-start window check compares (design §9). */
+  comparison: WindowComparison;
+  /** Content that cannot be clicked now, for the grounder's priority table (design §6.2, priorities 3 and 4). */
+  context: ObservationContext;
+  /** The whole tree, one entry per node in tree order, for the grounder's `tree` detail (design §6.2, decision PS-D28). */
+  outline: OutlineEntry[];
+}
+
+/**
+ * One line of the whole tree outline: `Role "name"` and its state, or `text "…"` for a UI element's
+ * descendant text, which follows its owner one level deeper. `index` is set on a UI element's line, so
+ * the request builder can mark the UI elements the grounder may choose. `depth` counts the node's ancestors in the read.
+ */
+export interface OutlineEntry { depth: number; index?: number; line: string }
+
+export interface ObservationContext {
+  /** UI elements in the window with a frame that are disabled, such as `Button (no name) disabled ×3`. */
+  inactive: string[];
+  /** Items of closed menu-bar menus, as paths such as `Format ▸ Text ▸ Align Left`. */
+  menus: string[];
+}
+
+export interface ObservationFailure {
+  status: "window_missing" | "state_too_large";
+  id: string;
+  window: WindowRef;
+  detail: string;
+  discards: Discard[];
+  rawCount: number;
+}
+
+const MAX_SHOWN_TEXTS = 8;
+const MAX_SHOWN_TEXT_LENGTH = 200;
+/** The name length of the grounder's priority table (design §6.2, priority 1). */
+const FULL_NAME_LENGTH = 200;
+
+/** `Button (no name) disabled` three times becomes `Button (no name) disabled ×3`, in first-seen order. */
+function collapseRepeats(lines: string[]): string[] {
+  const counts = new Map<string, number>();
+  for (const line of lines) counts.set(line, (counts.get(line) ?? 0) + 1);
+  return [...counts].map(([line, count]) => count > 1 ? `${line} ×${count}` : line);
+}
+
+export interface ObserverOptions { maxElements: number; maxNameLength: number; id: string }
+
+/** Roles that structure a window rather than being acted on. */
+const CONTAINER_ROLES = new Set([
+  "AXApplication", "AXWindow", "AXGroup", "AXScrollArea", "AXSplitGroup", "AXSplitter", "AXLayoutArea",
+  "AXToolbar", "AXMenuBar", "AXMenu", "AXOutline", "AXList", "AXTable", "AXBrowser", "AXTabGroup",
+  "AXSheet", "AXPopover", "AXColumn", "AXScrollBar", "AXUnknown",
+]);
+
+/** Landmark containers that name a group (design §6.3, rule 3). */
+const LANDMARKS: Record<string, string> = {
+  AXMenuBar: "menu bar", AXMenu: "menu", AXToolbar: "toolbar", AXOutline: "outline", AXList: "list",
+  AXTable: "table", AXBrowser: "browser", AXTabGroup: "tab group", AXSheet: "sheet", AXPopover: "popover",
+};
+
+const AUTOMATIC_IDENTIFIER = /^_NS:\d+$/;
+/** The name of a UI element that has none, which the planner copies into a step's `ui_element` (decision PS-D26). */
+export const NO_NAME = "(no name)";
+const TEXT_ROLES = new Set(["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"]);
+/** Characters of a text field's content shown to the planner, from the end. */
+const CONTENT_END_LENGTH = 200;
+
+/** Bidirectional control marks, which Calculator's display text carries (observed 2026-09-23). */
+export const BIDI_MARKS = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+/** Names compare ignoring case, extra whitespace and Unicode bidirectional marks (the plan-time iOS check, design §6.5). */
+export const normalize = (text: string) => text.replace(BIDI_MARKS, "").replace(/\s+/g, " ").trim().toLowerCase();
+/** An accessibility role, with or without the AX prefix. */
+export const ROLE = /^(AX)?[A-Z][A-Za-z]*$/;
+
+export function cleanName(text: string | undefined, maxLength: number): string | undefined {
+  if (text === undefined || AUTOMATIC_IDENTIFIER.test(text.trim())) return undefined;
+  const collapsed = text.replace(BIDI_MARKS, "").replace(/\s+/g, " ").trim();
+  if (collapsed === "") return undefined;
+  return collapsed.length <= maxLength ? collapsed : `${collapsed.slice(0, maxLength - 1)}…`;
+}
+
+const readingOrder = (a: { frame: Frame }, b: { frame: Frame }): number =>
+  Math.round(a.frame.y) - Math.round(b.frame.y) || Math.round(a.frame.x) - Math.round(b.frame.x);
+
+const letterAt = (position: number): string => String.fromCharCode(65 + position);
+
+export function observe(read: WindowRead, options: ObserverOptions): Observation | ObservationFailure {
+  const byIndex = new Map(read.elements.map(element => [element.element_index, element]));
+  const discards: Discard[] = [];
+  const base = { id: options.id, window: read.window, discards, rawCount: read.elements.length };
+  const discard = (element: RawElement, reason: DiscardReason) =>
+    discards.push({ index: element.element_index, role: element.role, ...(element.label ? { label: cleanName(element.label, options.maxNameLength) } : {}), reason });
+
+  if (read.truncated) {
+    return { status: "state_too_large", ...base, detail: `The accessibility tree was truncated after ${read.elements.length} nodes.` };
+  }
+  // A read taken while a window is still appearing lacks the window element (observed on TextEdit launch).
+  if (!read.elements.some(element => element.role === "AXWindow")) {
+    return { status: "window_missing", ...base, detail: "The window UI element is not in the accessibility tree yet." };
+  }
+
+  const ancestors = (element: RawElement): RawElement[] => {
+    const chain: RawElement[] = [];
+    const seen = new Set<number>();
+    for (let parent = element.parent_index; parent !== undefined && !seen.has(parent); parent = byIndex.get(parent)?.parent_index) {
+      seen.add(parent);
+      const found = byIndex.get(parent);
+      if (!found) break;
+      chain.push(found);
+    }
+    return chain;
+  };
+  const visible = (element: RawElement): boolean => !!element.frame && element.frame.w > 1 && element.frame.h > 1;
+  const landmarkOf = (element: RawElement): RawElement | undefined =>
+    ancestors(element).find(ancestor => LANDMARKS[ancestor.role] !== undefined && (ancestor.role !== "AXMenu" || visible(ancestor)));
+
+  const windowFrame = read.elements.find(element => element.role === "AXWindow")?.frame;
+  const underMenu = (element: RawElement) => ancestors(element).some(ancestor => ancestor.role === "AXMenuBar" || ancestor.role === "AXMenu");
+  const underMenuBar = (element: RawElement) => ancestors(element).some(ancestor => ancestor.role === "AXMenuBar");
+  const insideWindow = (frame: Frame) => !windowFrame || (frame.x + frame.w / 2 >= windowFrame.x && frame.x + frame.w / 2 <= windowFrame.x + windowFrame.w
+    && frame.y + frame.h / 2 >= windowFrame.y && frame.y + frame.h / 2 <= windowFrame.y + windowFrame.h);
+
+  // Design §6.5: the Simulator's window holds its own macOS elements and the device screen, and the
+  // tree lists both flat under the window with the same roles. The macOS ones are the menus, the
+  // toolbar band at the top, and the hardware buttons, which touch the window's left or right side.
+  const toolbarBottom = Math.max(windowFrame?.y ?? 0, ...read.elements.filter(element => element.role === "AXToolbar" && element.frame)
+    .map(element => element.frame!.y + element.frame!.h));
+  const platformOf = (element: RawElement): Platform => {
+    if (read.window.app !== SIMULATOR_APP || !windowFrame || !element.frame || underMenu(element)) return "macos";
+    if (ancestors(element).some(ancestor => ancestor.role === "AXToolbar")) return "macos";
+    const frame = element.frame;
+    if (Math.abs(frame.x - windowFrame.x) <= BEZEL_TOLERANCE || Math.abs(frame.x + frame.w - windowFrame.x - windowFrame.w) <= BEZEL_TOLERANCE) return "macos";
+    return frame.y + frame.h / 2 > toolbarBottom ? "ios" : "macos";
+  };
+
+  // Fix plan F-6: descendant text of containers is content the window shows, such as a display.
+  // Container text is never a UI element's name, so it is listed even when it equals one: Calculator's
+  // display read "0" while a button was named "0" (observed through Pi, 2026-09-23).
+  const shownTexts = (): { texts?: string[] } => {
+    const texts: string[] = [];
+    for (const element of read.elements) {
+      if (!CONTAINER_ROLES.has(element.role) || !element.frame || !visible(element)) continue;
+      if (element.role !== "AXWindow" && !insideWindow(element.frame)) continue;
+      const text = cleanName(read.descendantText?.[element.element_index], MAX_SHOWN_TEXT_LENGTH);
+      if (text && !texts.includes(text)) texts.push(text);
+      if (texts.length >= MAX_SHOWN_TEXTS) break;
+    }
+    return texts.length ? { texts } : {};
+  };
+
+  // Priorities 3 and 4 of the grounder's table (design §6.2): what the window has but cannot be clicked now.
+  const inactive: string[] = [];
+  const nameOf = (element: RawElement) => cleanName(element.label, FULL_NAME_LENGTH) ?? cleanName(element.value, FULL_NAME_LENGTH)
+    ?? cleanName(read.descendantText?.[element.element_index], FULL_NAME_LENGTH);
+  const describeInactive = (element: RawElement, reason: string) => {
+    const name = nameOf(element);
+    inactive.push(`${element.role.replace(/^AX/, "")} ${name ? JSON.stringify(name) : NO_NAME}${reason === "disabled" ? " disabled" : ""}`);
+  };
+  const children = new Map<number, RawElement[]>();
+  for (const element of read.elements) if (element.parent_index !== undefined) children.set(element.parent_index, [...(children.get(element.parent_index) ?? []), element]);
+  const menuPaths = (): string[] => {
+    if (!read.appActive) return [];
+    const paths: string[] = [];
+    const walk = (menu: RawElement, prefix: string, depth: number) => {
+      for (const item of children.get(menu.element_index) ?? []) {
+        if (item.role !== "AXMenuItem") continue;
+        const name = cleanName(item.label, FULL_NAME_LENGTH);
+        if (!name) continue;
+        const path = `${prefix} ▸ ${name}`;
+        // An open menu's items have frames and are clickable elements already.
+        if (!item.frame) paths.push(`${path}${item.enabled === false ? " (disabled)" : ""}`);
+        if (depth < 4) for (const sub of children.get(item.element_index) ?? []) if (sub.role === "AXMenu") walk(sub, path, depth + 1);
+      }
+    };
+    for (const bar of read.elements.filter(element => element.role === "AXMenuBar")) {
+      for (const title of children.get(bar.element_index) ?? []) {
+        const name = cleanName(title.label, FULL_NAME_LENGTH);
+        if (title.role !== "AXMenuBarItem" || !name) continue;
+        for (const menu of children.get(title.element_index) ?? []) if (menu.role === "AXMenu") walk(menu, name, 1);
+      }
+    }
+    return paths;
+  };
+
+  // Design §6.2, decision PS-D28: every node, in tree order, with the state that the table's filters act on.
+  // The depth counts ancestors in the read: unindexed nodes between two read nodes would otherwise indent several levels at once.
+  const outline = (): OutlineEntry[] =>
+    read.elements.flatMap(element => {
+      const name = cleanName(element.label, FULL_NAME_LENGTH) ?? cleanName(element.value, FULL_NAME_LENGTH);
+      const value = cleanName(element.value, FULL_NAME_LENGTH);
+      const offScreen = element.role !== "AXApplication" && (!element.frame || !visible(element) || (!underMenu(element) && !insideWindow(element.frame)));
+      const state = [element.selected ? "selected" : "", element.enabled === false ? "disabled" : "",
+        value !== undefined && value !== name ? `value=${JSON.stringify(value)}` : "", offScreen ? "off screen" : ""].filter(Boolean).join(" ");
+      const depth = ancestors(element).length;
+      const own = { depth, index: element.element_index, line: `${element.role.replace(/^AX/, "")} ${name ? JSON.stringify(name) : NO_NAME}${state ? ` ${state}` : ""}` };
+      const text = cleanName(read.descendantText?.[element.element_index], FULL_NAME_LENGTH);
+      return text && text !== name ? [own, { depth: depth + 1, line: `text ${JSON.stringify(text)}` }] : [own];
+    });
+
+  const hiddenBy = new Map<number | "content", number>();
+  const kept: { element: RawElement; name: string; unnamed?: true; landmark?: RawElement; platform: Platform }[] = [];
+  const unnamed: RawElement[] = [];
+  for (const element of read.elements) {
+    if (CONTAINER_ROLES.has(element.role)) { discard(element, "container"); continue; }
+    if (!element.frame) { discard(element, "no_frame"); continue; }
+    if (!visible(element)) { discard(element, "collapsed_frame"); continue; }
+    if (element.enabled === false) { discard(element, "disabled"); if (!underMenu(element) && insideWindow(element.frame)) describeInactive(element, "disabled"); continue; }
+    if (!read.appActive && underMenuBar(element)) { discard(element, "inactive_menu_bar"); continue; }
+    if (!underMenu(element) && !insideWindow(element.frame!)) {
+      discard(element, "outside_window");
+      if (!CONTAINER_ROLES.has(element.role) && (cleanName(element.label, options.maxNameLength) ?? cleanName(element.value, options.maxNameLength) ?? cleanName(read.descendantText?.[element.element_index], options.maxNameLength))) {
+        const landmark = landmarkOf(element);
+        hiddenBy.set(landmark?.element_index ?? "content", (hiddenBy.get(landmark?.element_index ?? "content") ?? 0) + 1);
+      }
+      continue;
+    }
+    const name = cleanName(element.label, options.maxNameLength) ?? cleanName(element.value, options.maxNameLength)
+      ?? cleanName(read.descendantText?.[element.element_index], options.maxNameLength);
+    if (!name) { unnamed.push(element); continue; }
+    kept.push({ element, name, landmark: landmarkOf(element), platform: platformOf(element) });
+  }
+  // Decision PS-D26: real input can target a UI element without a name, such as the text field of
+  // Reminders' New List sheet, whose only label is `_NS:146` (2026-09-26 and 2026-09-30). It is kept,
+  // unless a UI element inside it stands for it: a sidebar row without a name and its named cell are one item.
+  const inside = new Set([...kept.map(entry => entry.element), ...unnamed].flatMap(element => ancestors(element).map(ancestor => ancestor.element_index)));
+  for (const element of unnamed) {
+    if (inside.has(element.element_index)) { discard(element, "represented"); continue; }
+    kept.push({ element, name: NO_NAME, unnamed: true, landmark: landmarkOf(element), platform: platformOf(element) });
+  }
+
+  // Rule 1: an open sheet is the only group.
+  const inSheet = (entry: typeof kept[number]) => ancestors(entry.element).some(ancestor => ancestor.role === "AXSheet");
+  let candidates = kept;
+  if (kept.some(inSheet)) {
+    candidates = kept.filter(entry => {
+      if (inSheet(entry)) return true;
+      discard(entry.element, "behind_modal");
+      return false;
+    });
+  }
+
+  if (candidates.length > options.maxElements) {
+    return { status: "state_too_large", ...base, detail: `${candidates.length} UI elements remain after filtering; the limit is ${options.maxElements}.` };
+  }
+
+  // A container's text near a UI element without a name, such as the label of a sheet's only field.
+  // The window's text is about the whole window, so it is not used.
+  const nearText = (element: RawElement): string | undefined => {
+    const parent = element.parent_index === undefined ? undefined : byIndex.get(element.parent_index);
+    return parent && parent.role !== "AXWindow" ? cleanName(read.descendantText?.[parent.element_index], options.maxNameLength) : undefined;
+  };
+  const toElement = (entry: typeof kept[number], group: string, position: number): ObservedElement => ({
+    index: entry.element.element_index, role: entry.element.role, name: entry.name, fullName: nameOf(entry.element) ?? entry.name,
+    ...(entry.unnamed ? { unnamed: true, ...(nearText(entry.element) ? { near: nearText(entry.element) } : {}) } : {}),
+    ...(entry.element.value !== undefined && cleanName(entry.element.value, options.maxNameLength) !== entry.name
+      ? { value: cleanName(entry.element.value, options.maxNameLength) } : {}),
+    ...(entry.element.selected ? { selected: true } : {}),
+    ...(TEXT_ROLES.has(entry.element.role) && entry.element.value ? { contentEnd: entry.element.value.replace(BIDI_MARKS, "").slice(-CONTENT_END_LENGTH) } : {}),
+    frame: entry.element.frame!, group, platform: entry.platform, letter: letterAt(position),
+  });
+
+  const ready = (groups: ObservedGroup[]): Observation => {
+    const uiElements = groups.flatMap(group => group.elements).filter(element => !MENU_BAR_ROLES.test(element.role))
+      .map(element => `${element.role} ${JSON.stringify(element.name)}`).sort();
+    // The menu bar's own menus are always in the tree of an active application; only a menu outside
+    // the menu bar, such as a context menu, is open over the window (observed 2026-09-25 in the replay).
+    const blocking = read.elements.filter(element => BLOCKING_ROLES.test(element.role) && !underMenuBar(element))
+      .map(element => `${element.role} ${JSON.stringify(element.label ?? "")}`);
+    return { status: "ready", id: options.id, window: read.window, snapshotId: read.snapshotId, groups, discards, rawCount: read.elements.length, ...shownTexts(),
+      comparison: { windowId: read.window.windowId, title: read.window.title ?? "", uiElements, blocking },
+      context: { inactive: collapseRepeats(inactive), menus: menuPaths() }, outline: outline() };
+  };
+
+  const hiddenTotal = () => { const total = [...hiddenBy.values()].reduce((sum, count) => sum + count, 0); return total ? { hidden: total } : {}; };
+  // Rule 5: a small window is one group, so the request needs no routing question. A group never
+  // mixes platforms (design §6.5), so a window with two platforms is grouped.
+  const ordered = [...candidates].sort((a, b) => readingOrder({ frame: a.element.frame! }, { frame: b.element.frame! }));
+  const mixed = new Set(ordered.map(entry => entry.platform)).size > 1;
+  if (ordered.length <= MAX_GROUP_ELEMENTS && !mixed) {
+    const name = "window";
+    return ready(ordered.length === 0 ? [] : [{ name, elements: ordered.map((entry, position) => toElement(entry, name, position)), ...(windowFrame ? { frame: windowFrame } : {}),
+      ...hiddenTotal(), platform: ordered[0]!.platform }]);
+  }
+
+  // Rules 2 and 3: group by the nearest landmark container instance. Groups follow the reading
+  // order of their containers' frames; ungrouped content comes last.
+  const unsorted = new Map<number | "content" | "ios", typeof kept>();
+  for (const entry of ordered) {
+    const key = entry.platform === "ios" ? "ios" : entry.landmark?.element_index ?? "content";
+    const bucket = unsorted.get(key) ?? [];
+    bucket.push(entry);
+    unsorted.set(key, bucket);
+  }
+  // The device screen's frame spans its elements, so a scroll there stays on the screen.
+  const iosFrame = (): Frame | undefined => {
+    const frames = (unsorted.get("ios") ?? []).map(entry => entry.element.frame!);
+    if (!frames.length) return undefined;
+    const x = Math.min(...frames.map(frame => frame.x)), y = Math.min(...frames.map(frame => frame.y));
+    return { x, y, w: Math.max(...frames.map(frame => frame.x + frame.w)) - x, h: Math.max(...frames.map(frame => frame.y + frame.h)) - y };
+  };
+  const containerFrame = (key: number | "content" | "ios"): Frame | undefined => key === "content" ? undefined : key === "ios" ? iosFrame() : byIndex.get(key)?.frame;
+  // A scroll container's frame spans its whole content, which can extend past the window: Finder's
+  // icon-view list did, so its center was outside the window (observed 2026-09-23). Scrolling
+  // targets the visible part, so a group's frame is clipped to the window.
+  const visiblePart = (frame: Frame | undefined): Frame | undefined => {
+    if (!frame || !windowFrame) return frame;
+    const x = Math.max(frame.x, windowFrame.x), y = Math.max(frame.y, windowFrame.y);
+    const w = Math.min(frame.x + frame.w, windowFrame.x + windowFrame.w) - x;
+    const h = Math.min(frame.y + frame.h, windowFrame.y + windowFrame.h) - y;
+    return w > 1 && h > 1 ? { x, y, w, h } : undefined;
+  };
+  const buckets = new Map([...unsorted].sort(([a, first], [b, second]) => {
+    if (a === "content" || b === "content") return a === "content" ? (b === "content" ? 0 : 1) : -1;
+    if (a === "ios" || b === "ios") return a === "ios" ? 1 : -1;
+    return readingOrder({ frame: containerFrame(a) ?? first[0]!.element.frame! }, { frame: containerFrame(b) ?? second[0]!.element.frame! });
+  }));
+  const kindCount = new Map<string, number>();
+  const kindTotal = new Map<string, number>();
+  const kindOf = (key: number | "content" | "ios") => key === "content" ? "content" : key === "ios" ? IOS_GROUP : LANDMARKS[byIndex.get(key)!.role]!;
+  for (const key of buckets.keys()) {
+    const kind = kindOf(key);
+    kindTotal.set(kind, (kindTotal.get(kind) ?? 0) + 1);
+  }
+  const groups: ObservedGroup[] = [];
+  for (const [key, entries] of buckets) {
+    const kind = kindOf(key);
+    const occurrence = (kindCount.get(kind) ?? 0) + 1;
+    kindCount.set(kind, occurrence);
+    const baseName = kindTotal.get(kind)! > 1 ? `${kind} ${occurrence}` : kind;
+    // Rule 4: split an oversized group in reading order.
+    const parts = Math.ceil(entries.length / MAX_GROUP_ELEMENTS);
+    for (let part = 0; part < parts; part++) {
+      const name = parts > 1 ? `${baseName} part ${part + 1}` : baseName;
+      const slice = entries.slice(part * MAX_GROUP_ELEMENTS, (part + 1) * MAX_GROUP_ELEMENTS);
+      const frame = visiblePart(containerFrame(key) ?? windowFrame);
+      const hidden = part === parts - 1 && key !== "ios" ? hiddenBy.get(key) ?? 0 : 0;
+      groups.push({ name, elements: slice.map((entry, position) => toElement(entry, name, position)), ...(frame ? { frame } : {}), ...(hidden ? { hidden } : {}),
+        platform: key === "ios" ? "ios" : "macos" });
+    }
+  }
+  // The routing question has one option per group, and the grounder accepts at most 26 (research §2.4).
+  if (groups.length > MAX_ALTERNATIVES) {
+    return { status: "state_too_large", ...base, detail: `the window splits into ${groups.length} groups; the grounder can route among at most ${MAX_ALTERNATIVES}.` };
+  }
+  return ready(groups);
+}
+
+/**
+ * The observation with only one platform's groups, which is all the grounder is offered for a step
+ * (design §6.5). Through Pi, the grounder chose the Simulator's macOS search field for a step on the
+ * iOS search field (2026-09-26).
+ */
+export function platformView(observation: Observation, platform: Platform): Observation {
+  if (observation.groups.every(group => group.platform === platform)) return observation;
+  return { ...observation, groups: observation.groups.filter(group => group.platform === platform) };
+}
+
+/** A UI element's name as a table shows it: quoted, or `(no name)` with the text near it (design §6.2). */
+export function nameText(element: ObservedElement, name = element.name): string {
+  if (!element.unnamed) return JSON.stringify(name);
+  return `${NO_NAME}${element.near !== undefined ? ` near ${JSON.stringify(element.near)}` : ""}`;
+}
+
+/** The planner's view includes role, state, and the text the window shows (design §5.1, fix plan F-6). */
+export function renderPlannerTable(observation: Observation): string {
+  const table = observation.groups.map(group => `${group.name}:\n${group.elements.map(element => {
+    const role = element.role.replace(/^AX/, "");
+    // A text area's name is the start of its content, so the planner also sees how the content ends.
+    // Through Pi, a planner that could not see its typed line typed probe letters to find it (observed 2026-09-23).
+    const state = [element.value !== undefined ? `value=${JSON.stringify(element.value)}` : "",
+      element.contentEnd !== undefined && element.contentEnd !== element.name ? `content ends with ${JSON.stringify(element.contentEnd)}` : "",
+      element.selected ? "selected" : ""].filter(Boolean).join(" ");
+    return `  ${element.letter} ${role} ${nameText(element)}${state ? ` ${state}` : ""}`;
+  }).join("\n")}`).join("\n");
+  if (!observation.texts?.length) return table;
+  return `${table}\ntext shown in the window (not UI elements):\n${observation.texts.map(text => `  ${JSON.stringify(text)}`).join("\n")}`;
+}
+
+export function discardSummary(discards: Discard[]): Record<DiscardReason, number> {
+  const summary = { container: 0, no_frame: 0, collapsed_frame: 0, disabled: 0, represented: 0, behind_modal: 0, inactive_menu_bar: 0, outside_window: 0 };
+  for (const entry of discards) summary[entry.reason]++;
+  return summary;
+}

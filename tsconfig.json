@@ -15,5 +15,5 @@
     "types": ["node"]
   },
   "include": ["extensions/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"],
-  "exclude": ["extensions/secretary/computer-use/viewer/main.ts", "extensions/secretary/computer-use/viewer/behaviour.ts"]
+  "exclude": ["extensions/secretary/vm-use/viewer/main.ts", "extensions/secretary/vm-use/viewer/behaviour.ts"]
 }

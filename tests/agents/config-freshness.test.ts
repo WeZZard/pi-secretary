@@ -20,9 +20,9 @@ test("an on-disk list edit between turns resolves in the very next launch", asyn
     setup: async (_root, dir) => {
       await mkdir(join(dir, "agents"));
       await writeFile(join(dir, "agents", "worker.md"),
-        "---\nname: worker\ndescription: Freshness probe\nmodel: computer-use\n---\n");
+        "---\nname: worker\ndescription: Freshness probe\nmodel: vm-use\n---\n");
       await writeFile(join(dir, "secretary.json"),
-        JSON.stringify({ agents: { modelFallbackLists: { "computer-use": ["discovery-test/main", "discovery-test/alt-a"] } } }));
+        JSON.stringify({ agents: { modelFallbackLists: { "vm-use": ["discovery-test/main", "discovery-test/alt-a"] } } }));
     },
     respond: async (_context, index) => index % 2 === 0
       ? [{ type: "toolCall", name: "Agent", id: `launch-${index}`, arguments: {
@@ -32,7 +32,7 @@ test("an on-disk list edit between turns resolves in the very next launch", asyn
   });
   await h.session.prompt("Delegate before the edit");
   await writeFile(join(h.agentDir, "secretary.json"),
-    JSON.stringify({ agents: { modelFallbackLists: { "computer-use": ["discovery-test/alt-a", "discovery-test/main"] } } }));
+    JSON.stringify({ agents: { modelFallbackLists: { "vm-use": ["discovery-test/alt-a", "discovery-test/main"] } } }));
   await h.session.prompt("Delegate after the edit");
   assert.deepEqual(h.childModels, ["discovery-test/main", "discovery-test/alt-a"],
     "A persisted edit lands in the next request's resolution; the catalog is captured fresh per request");
@@ -45,12 +45,12 @@ test("a menu action does not revert a newer edit made after the menu loaded", t 
   const agentDir = join(dir, "agent");
   mkdirSync(agentDir, { recursive: true });
   const file = () => JSON.parse(readFileSync(join(agentDir, "secretary.json"), "utf8"));
-  const seed = { agents: { modelFallbackLists: { "computer-use": ["p/old-head", "p/two"], cheap: ["q/three"] } } };
+  const seed = { agents: { modelFallbackLists: { "vm-use": ["p/old-head", "p/two"], cheap: ["q/three"] } } };
   writeFileSync(join(agentDir, "secretary.json"), JSON.stringify(seed));
   const menu = new SecretaryConfigMenu({ agentDir, models: () => ["p/old-head", "p/two", "p/new-head", "q/three"], definitions: () => [{ name: "Explore" }], onDismiss: () => {} });
   // A newer edit lands after the menu loaded its in-memory copy: the list head is replaced.
   writeFileSync(join(agentDir, "secretary.json"),
-    JSON.stringify({ agents: { modelFallbackLists: { "computer-use": ["p/new-head", "p/two"], cheap: ["q/three"] } } }));
+    JSON.stringify({ agents: { modelFallbackLists: { "vm-use": ["p/new-head", "p/two"], cheap: ["q/three"] } } }));
   // The stale menu performs an unrelated action: add an empty list named "extra".
   menu.handleInput("\x1b[C"); // top → section
   menu.handleInput("\x1b[C"); // section → manager
@@ -58,7 +58,7 @@ test("a menu action does not revert a newer edit made after the menu loaded", t 
   for (const ch of "extra") menu.handleInput(ch);
   menu.handleInput("\r");
   const lists = file().agents.modelFallbackLists;
-  assert.deepEqual(lists["computer-use"], ["p/new-head", "p/two"],
+  assert.deepEqual(lists["vm-use"], ["p/new-head", "p/two"],
     "The newer external edit survives an unrelated stale-menu action");
   assert.deepEqual(lists.cheap, ["q/three"]);
   assert.deepEqual(lists.extra, [], "The menu's own action is still applied");

@@ -16,7 +16,7 @@ export async function discoverySession(t: TestContext, options: {
   respond?: (context: Context, index: number) => Promise<AssistantMessage["content"]>;
   respondChild?: (context: Context, index: number, signal?: AbortSignal) => Promise<AssistantMessage["content"]>;
   mode?: "print" | "rpc";
-  /** A test extension. It may return a hook that adds the tools it offers to delegated agents, as computer use does. */
+  /** A test extension. It may return a hook that adds the tools it offers to delegated agents, as vm-use does. */
   extension?: (pi: ExtensionAPI) => void | { childTools?: (tools: readonly string[]) => readonly string[] };
   trusted?: boolean;
 } = {}) {

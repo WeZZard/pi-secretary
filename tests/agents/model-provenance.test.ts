@@ -46,28 +46,28 @@ async function provenanceLaunch(t: test.TestContext, options: {
 
 test("a definition list starting with the parent model is reported as a list resolution, not inheritance", async t => {
   const h = await provenanceLaunch(t, {
-    definitionModel: "computer-use",
-    lists: { "computer-use": ["discovery-test/main", "discovery-test/alt-a", "discovery-test/alt-b"] },
+    definitionModel: "vm-use",
+    lists: { "vm-use": ["discovery-test/main", "discovery-test/alt-a", "discovery-test/alt-b"] },
   });
   assert.deepEqual(h.childModels, ["discovery-test/main"],
     "The incident symptom: the child runs the parent's model because it is the list's first candidate");
-  assert.match(h.text, /Model: discovery-test\/main \(definition list 'computer-use', candidate 1\/3\)/,
+  assert.match(h.text, /Model: discovery-test\/main \(definition list 'vm-use', candidate 1\/3\)/,
     "The launch result states the resolution source, list name, and candidate position");
 });
 
 test("a definition list starting with another model selects that model and says so", async t => {
   const h = await provenanceLaunch(t, {
-    definitionModel: "computer-use",
-    lists: { "computer-use": ["discovery-test/alt-a", "discovery-test/main"] },
+    definitionModel: "vm-use",
+    lists: { "vm-use": ["discovery-test/alt-a", "discovery-test/main"] },
   });
   assert.deepEqual(h.childModels, ["discovery-test/alt-a"], "The definition's model policy wins over inheritance");
-  assert.match(h.text, /Model: discovery-test\/alt-a \(definition list 'computer-use', candidate 1\/2\)/);
+  assert.match(h.text, /Model: discovery-test\/alt-a \(definition list 'vm-use', candidate 1\/2\)/);
 });
 
 test("an inherit definition is labeled as inheritance", async t => {
   const h = await provenanceLaunch(t, {
     definitionModel: "inherit",
-    lists: { "computer-use": ["discovery-test/alt-a"] },
+    lists: { "vm-use": ["discovery-test/alt-a"] },
   });
   assert.deepEqual(h.childModels, ["discovery-test/main"]);
   assert.match(h.text, /Model: discovery-test\/main \(inherited from the parent model\)/,
@@ -76,9 +76,9 @@ test("an inherit definition is labeled as inheritance", async t => {
 
 test("an invocation override is labeled with the invocation source", async t => {
   const h = await provenanceLaunch(t, {
-    definitionModel: "computer-use",
+    definitionModel: "vm-use",
     lists: {
-      "computer-use": ["discovery-test/alt-a"],
+      "vm-use": ["discovery-test/alt-a"],
       fast: ["discovery-test/alt-b", "discovery-test/main"],
     },
     requestedModel: "fast",
@@ -89,11 +89,11 @@ test("an invocation override is labeled with the invocation source", async t => 
 
 test("skipped candidates and the selected position survive on the run record's result", async t => {
   const h = await provenanceLaunch(t, {
-    definitionModel: "computer-use",
-    lists: { "computer-use": ["discovery-test/missing", "discovery-test/alt-a"] },
+    definitionModel: "vm-use",
+    lists: { "vm-use": ["discovery-test/missing", "discovery-test/alt-a"] },
   });
   assert.deepEqual(h.childModels, ["discovery-test/alt-a"], "The unavailable first candidate is skipped");
-  assert.match(h.text, /Model: discovery-test\/alt-a \(definition list 'computer-use', candidate 2\/2\)/);
+  assert.match(h.text, /Model: discovery-test\/alt-a \(definition list 'vm-use', candidate 2\/2\)/);
   assert.match(h.text, /Fallback: skipped discovery-test\/missing \(model unavailable\)/,
     "Every result surface states which candidates were skipped and why, not only the background launch line");
 });

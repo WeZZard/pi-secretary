@@ -1,0 +1,38 @@
+import { Type } from "typebox";
+import { ACTION_ALIASES, ACTION_NAMES, MACOS_ACTIONS } from "../actions.ts";
+
+export const observeSchema = Type.Object({
+  app: Type.String({ minLength: 1, maxLength: 200, description: "Application name as shown in the menu bar, for example TextEdit or Finder. The application must already be open." }),
+  window_title: Type.Optional(Type.String({ minLength: 1, maxLength: 300, description: "Optional case-insensitive substring of the window title. Omit to use the frontmost titled window of the application." })),
+}, { additionalProperties: false });
+
+/** The planner reads each action's definition here, the same text the grounder reads (design §7.2). */
+const ACTION_DESCRIPTION = `The action, when known. ${MACOS_ACTIONS.map(entry => `${entry.name}: ${entry.definition}`).join(" ")}`;
+
+/** A step carries no check: the planner judges the window after the plan (design §5.3, decision PS-D19). */
+export const planStepSchema = Type.Object({
+  id: Type.String({ minLength: 1, maxLength: 40, pattern: "^[A-Za-z0-9_-]+$" }),
+  intent: Type.String({ minLength: 1, maxLength: 300, description: "One sentence saying what the step achieves, for example \"Open the File menu.\"" }),
+  action: Type.Optional(Type.Union(ACTION_NAMES.map(value => Type.Literal(value)), { description: ACTION_DESCRIPTION })),
+  /** The field's name before the allowlist; recorded plans and older planners still send it. */
+  operation: Type.Optional(Type.Union([...ACTION_NAMES, ...Object.keys(ACTION_ALIASES)].map(value => Type.Literal(value)), { description: "Older name for action. Use action." })),
+  text: Type.Optional(Type.String({ maxLength: 2000, description: "Complete literal text for type or ax_set_value. For type, only letters, digits, space, newline and tab can be typed." })),
+  position: Type.Optional(Type.Union([Type.Literal("end"), Type.Literal("start"), Type.Literal("replace")], { description: "Where the text goes. For type: end and start move the insertion point with Cmd+Down or Cmd+Up after the click; replace selects all first; omit to type at the click point, which is unreliable. For ax_set_value: end and start keep the field's value after or before the text; replace or omitted sets the value to the text." })),
+  keys: Type.Optional(Type.String({ maxLength: 60, description: "A key or key combination for key, for example cmd+shift+n or cmd+w." })),
+  ui_element: Type.Optional(Type.Object({
+    name: Type.String({ minLength: 1, maxLength: 200, description: "The UI element's name exactly as the observation lists it." }),
+    role: Type.Optional(Type.String({ maxLength: 60, description: "The role the observation lists, for example Button." })),
+    region: Type.Optional(Type.String({ maxLength: 60, description: "The region heading the observation lists it under, for example content or toolbar." })),
+  }, { additionalProperties: false, description: "The UI element this step acts on, copied from a line of the observation, for example {region:\"content\", role:\"Button\", name:\"3\"}. The grounder receives it with the step and chooses the UI element; nothing checks it against the window. Omit it for a key combination." })),
+}, { additionalProperties: false });
+
+export const runPlanSchema = Type.Object({
+  app: Type.String({ minLength: 1, maxLength: 200, description: "Application name, as for vm_observe." }),
+  window_title: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })),
+  goal: Type.String({ minLength: 1, maxLength: 500, description: "The task goal in one sentence; the grounder sees it at every step." }),
+  based_on: Type.Optional(Type.String({ description: "The observation id this plan was written against." })),
+  permission_check: Type.Optional(Type.Union([Type.Literal("none"), Type.Literal("online")], {
+    description: "Only when the task states it: none when it asks to run without permission checks, online when it asks for them. Otherwise leave it out, and the configured mode applies.",
+  })),
+  steps: Type.Array(planStepSchema, { minItems: 1, maxItems: 50 }),
+}, { additionalProperties: false });
