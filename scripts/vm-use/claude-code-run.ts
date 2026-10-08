@@ -3,7 +3,9 @@
  * subagent for the relay (the mcp-vm-relay plugin's vm-relay-operator), for a time comparison with the Pi run.
  * It makes model calls through the owner's Claude Code.
  *
- *   node --experimental-strip-types scripts/vm-use/claude-code-run.ts [--open-app] [--out=DIR] <task.json>
+ *   node --experimental-strip-types scripts/vm-use/claude-code-run.ts [--open-app] [--vm-service=URL] [--out=DIR] <task.json>
+ *
+ * `--vm-service` points the plugin's relay server at another vm-service, such as a live test instance, as macarena-run.ts does.
  *
  * The project is a new empty directory outside the owner's home. The subagent runs the task's preparation and
  * check itself with relay_exec, from `macarena-task.json` in the project; the score comes from the check's output
@@ -20,7 +22,7 @@ import { recordedChecks } from "./support/relay-records.ts";
 
 const flags = new Map(process.argv.slice(2).filter(arg => arg.startsWith("--")).map(arg => { const [key, value] = arg.slice(2).split("="); return [key!, value ?? "true"]; }));
 const [taskFile] = process.argv.slice(2).filter(arg => !arg.startsWith("--"));
-if (!taskFile) { console.error("usage: claude-code-run.ts [--open-app] [--out=DIR] <task.json>"); process.exit(2); }
+if (!taskFile) { console.error("usage: claude-code-run.ts [--open-app] [--vm-service=URL] [--out=DIR] <task.json>"); process.exit(2); }
 const stamp = () => new Date().toISOString().replace(/[:.]/g, "-");
 const repository = join(import.meta.dirname, "../..");
 const out = flags.get("out") ?? join(repository, "test-results/vm-use", `claude-code-${stamp()}`);
@@ -51,13 +53,15 @@ const args = ["-p", prompt, "--output-format", "stream-json", "--verbose", "--se
   // The main session cannot act on the host's desktop, as Pi's parent cannot (evaluation §3).
   "--tools", "Agent,Read,Glob,Grep", "--allowedTools", `Agent ${RELAY_SERVER}`,
   "--permission-mode", "dontAsk", "--permission-prompts", "none"];
+// The plugin's relay server inherits Claude Code's environment and reads MCP_VM_RELAY_URL.
+const vmService = flags.get("vm-service");
 const version = spawnSync("claude", ["--version"], { encoding: "utf8" }).stdout.trim();
-writeFileSync(join(artifacts, "invocation.json"), `${JSON.stringify({ claude: version, cwd: project, args, prompt, task: basename(taskFile) }, null, 2)}\n`);
+writeFileSync(join(artifacts, "invocation.json"), `${JSON.stringify({ claude: version, cwd: project, args, prompt, task: basename(taskFile), vmService: vmService ?? null }, null, 2)}\n`);
 
 const TIMEOUT_MS = 25 * 60_000;
 const started = Date.now();
 log(`Claude Code ${version}, session ${sessionId}, project ${project}`);
-const child = spawn("claude", args, { cwd: project, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+const child = spawn("claude", args, { cwd: project, env: { ...process.env, ...(vmService ? { MCP_VM_RELAY_URL: vmService } : {}) }, stdio: ["ignore", "pipe", "pipe"] });
 let stdout = "", stderr = "";
 child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
 child.stdout.on("data", (text: string) => {
@@ -96,7 +100,7 @@ const checks = recordedChecks(join(artifacts, "relay-evidence"), check);
 const taskScore = score(task, checks);
 const result = [...stdout.trim().split("\n")].reverse().map(line => { try { return JSON.parse(line); } catch { return undefined; } })
   .find(event => event?.type === "result") as { result?: string; is_error?: boolean; num_turns?: number; total_cost_usd?: number } | undefined;
-const record = { task: task.id, file: basename(taskFile), run: 1, started: new Date(started).toISOString(), openApp: openApp ?? null, instruction: task.instruction,
+const record = { task: task.id, file: basename(taskFile), run: 1, started: new Date(started).toISOString(), openApp: openApp ?? null, vmService: vmService ?? null, instruction: task.instruction,
   score: taskScore ?? null, elapsedS: Math.round(elapsedMs / 1000), exitCode, claude: version, sessionId,
   agentReport: result?.result ?? null, checks: checks ?? null, artifacts };
 appendFileSync(join(out, "results.jsonl"), `${JSON.stringify(record)}\n`);
