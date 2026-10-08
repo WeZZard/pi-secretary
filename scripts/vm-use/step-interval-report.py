@@ -37,8 +37,9 @@ requests = [r for r in jsonl(os.path.join(run, 'trace', 'vm-service.jsonl')) if 
 requests.sort(key=lambda r: r['start'])
 packages = [p for p in glob.glob(os.path.join(run, 'relay-evidence', '*')) if os.path.isdir(os.path.join(p, 'state'))]
 
-# Request kinds, by text unique to each guest script of mcp-vm-relay 0.9.0 (dist/server.mjs 19643-19660, 20127).
-MARKERS = [('receiver', 'spawnSync(process.execPath,[receiver'), ('image-fact', 'Source changed before image hash'),
+# Request kinds, by text unique to each guest script of mcp-vm-relay 0.9.0 (dist/server.mjs 19643-19660, 20127),
+# and the archive script that later relays use for step downloads and the finish.
+MARKERS = [('receiver', 'spawnSync(process.execPath,[receiver'), ('archive', 'Source changed during archive'), ('image-fact', 'Source changed before image hash'),
            ('prepare', 'check(root,target,true);fs.mkdirSync'), ('scan', 'walk(root);check(approved,root);check(frameRoot'),
            ('file-fact', 'Invalid frame file'), ('size', 'bytes+=s.size;files++'), ('remove-frame', 'fs.rmSync(file,{force:true})'),
            ('guest-path', 'check(process.argv[1],process.argv[2]);')]
@@ -71,15 +72,18 @@ for r in requests:
     r['behind'] = previous if r['serviceStart'] > r['start'] else None
     if r['end'] >= served_until: served_until, previous = r['end'], r
 
-# The relay's background download of each step's after-screenshot (host/image-downloads), on the Mac's clock.
+# The relay's background downloads, on the Mac's clock: of each step's after-screenshot (host/image-downloads,
+# relay 0.9.0), or of each step's evidence in one archive (host/evidence-downloads, later relays).
 downloads = []
 for p in packages:
-    for f in glob.glob(os.path.join(p, 'host', 'image-downloads', '*.json')):
+    for f in glob.glob(os.path.join(p, 'host', 'image-downloads', '*.json')) + glob.glob(os.path.join(p, 'host', 'evidence-downloads', '*.json')):
         d = json.load(open(f)); m = re.search(r'(execution-[0-9a-z]+)', os.path.basename(f))
         if m and d.get('startedAt'): downloads.append({'execution': m.group(1), 'start': t(d['startedAt']), 'end': t(d.get('endedAt')) or t(d['startedAt'])})
-DOWNLOAD_FILES = re.compile(r'/state/(snapshots|records/action)/')
+DOWNLOAD_FILES = re.compile(r'/state/(snapshots|records/action)/|/\.archive-')
 for r in requests:
-    r['download'] = any(d['start'] - 5 <= r['start'] <= d['end'] + 5 for d in downloads) and (r['kind'] in ('image-fact', 'vm-status') or bool(DOWNLOAD_FILES.search(r['file'])))
+    r['download'] = any(d['start'] - 5 <= r['start'] <= d['end'] + 5 for d in downloads) and (r['kind'] in ('image-fact', 'vm-status', 'archive') or bool(DOWNLOAD_FILES.search(r['file'])))
+    # A step download checks and removes its archive with the generic scripts; inside a download, they are its own.
+    if r['kind'] in ('guest-path', 'remove-frame') and any(d['start'] <= r['start'] <= d['end'] for d in downloads): r['download'] = True
 
 # A relay tool call starts by checking its lease (reconcile): its first request, a vm-status, is its own.
 for call in (s for s in spans if s['name'] == 'relay tool call'):
@@ -149,7 +153,7 @@ def ingredient(at, ex_before, ex_after):
         if r['kind'] == 'receiver': return 'vm-service: receiver request outside the receiver journal (ssh, node start and exit in the VM)'
         if at < r['serviceStart'] and r['behind'] is not None:
             b = r['behind']
-            return f"vm-service: queued behind {'the background screenshot download' if b['download'] else 'another request'}"
+            return f"vm-service: queued behind {'the background download' if b['download'] else 'another request'}"
         return f"vm-service: {r['kind']} request"
     calls = [s for s in spans if s['name'] == 'relay tool call' and s['start'] <= at < s['end']]
     if calls:
