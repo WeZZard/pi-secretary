@@ -68,7 +68,7 @@ test("the relay client needs an image key and defaults to the adapter's relay se
   put(global, { vmUse: { backend: "relay", relayImage: "macos26", relayEnv: "default" } });
   const config = loadVmUseConfiguration(cwd, agentDir, true);
   assert.deepEqual([config.relayImage, config.relayEnv, config.relayTtlHours], ["macos26", "default", 2]);
-  assert.deepEqual(config.relayCommand, ["npx", "-y", "--prefer-offline", "@wezzard/mcp-vm-relay@0.9.0"]);
+  assert.deepEqual(config.relayCommand, ["npx", "-y", "--prefer-offline", "@wezzard/mcp-vm-relay@0.11.0"]);
   put(global, { vmUse: { backend: "relay", relayImage: "macos26", relayCommand: [] } });
   assert.throws(() => loadVmUseConfiguration(cwd, agentDir, true), /relayCommand must be a non-empty array/);
 });
