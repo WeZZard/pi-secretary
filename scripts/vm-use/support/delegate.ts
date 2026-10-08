@@ -29,6 +29,8 @@ export interface DelegationInput {
   timeoutMs?: number;
   /** The relay server command; the published package by default. */
   relayCommand?: string[];
+  /** The vm-service the relay server uses, as MCP_VM_RELAY_URL; the relay's own default when absent. */
+  vmServiceUrl?: string;
   /**
    * `vmUse.permissionCheck` for the run (design docs/arch/vm-use.md §8.1); the extension's default, `none`, when absent.
    * `online` uses DeepSeek through the household LiteLLM gateway as the online API.
@@ -98,6 +100,7 @@ export async function delegate(input: DelegationInput): Promise<DelegationResult
   const onlineKey = input.permissionCheck === "online" ? process.env[ONLINE_API.apiKeyEnv] : undefined;
   if (input.permissionCheck === "online" && !onlineKey) throw new Error(`the mode online needs ${ONLINE_API.apiKeyEnv} in the environment`);
   const child = spawn(process.execPath, args, { cwd: environment.project, env: { ...environment.env, ...(onlineKey ? { [ONLINE_API.apiKeyEnv]: onlineKey } : {}),
+    ...(input.vmServiceUrl ? { MCP_VM_RELAY_URL: input.vmServiceUrl } : {}),
     ...(input.trace ? { PI_SECRETARY_VM_USE_TRACE: join(environment.artifacts, "trace") } : {}) }, stdio: ["pipe", "pipe", "pipe"] });
   let stdout = "", stderr = "", agentEnds = 0;
   child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");

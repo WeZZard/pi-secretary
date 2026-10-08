@@ -5,11 +5,12 @@
  *
  *   node --experimental-strip-types scripts/vm-use/macarena-run.ts [--open-app] [--runs=N] [--out=DIR]
  *     [--model=qwen3.8-27b] [--grounder=http://jev.home.arpa] [--relay-server=PATH]
- *     [--permission-check=none|online] [--trace] <task.json>...
+ *     [--permission-check=none|online] [--vm-service=URL] [--trace] <task.json>...
  *
  * `--open-app` opens the task's one application after its setup (the ship gate's variant, §5).
  * `--permission-check` sets `vmUse.permissionCheck` for every run (design docs/arch/vm-use.md §8.1).
  * `--trace` records Pi's timing trace in each run's trace/ (extensions/secretary/vm-use/trace.ts).
+ * `--vm-service` points the relay server at another vm-service, such as a live test instance.
  * `--relay-server` runs a local build of mcp-vm-relay's `dist/server.mjs` instead of the published package.
  * Runs go round by round: every task's run 1, then every task's run 2, so a partial result covers
  * every task. Output: DIR (default a new test-results/vm-use/macarena-<time>/) gets
@@ -24,7 +25,7 @@ import { delegate } from "./support/delegate.ts";
 
 const flags = new Map(process.argv.slice(2).filter(arg => arg.startsWith("--")).map(arg => { const [key, value] = arg.slice(2).split("="); return [key!, value ?? "true"]; }));
 const taskFiles = process.argv.slice(2).filter(arg => !arg.startsWith("--"));
-if (!taskFiles.length) { console.error("usage: macarena-run.ts [--open-app] [--runs=N] [--out=DIR] [--model=M] [--grounder=URL] [--relay-server=PATH] [--permission-check=none|online] [--trace] <task.json>..."); process.exit(2); }
+if (!taskFiles.length) { console.error("usage: macarena-run.ts [--open-app] [--runs=N] [--out=DIR] [--model=M] [--grounder=URL] [--relay-server=PATH] [--permission-check=none|online] [--vm-service=URL] [--trace] <task.json>..."); process.exit(2); }
 const permissionCheck = flags.get("permission-check");
 if (permissionCheck !== undefined && !["none", "online"].includes(permissionCheck)) { console.error("--permission-check must be none or online"); process.exit(2); }
 const runsPerTask = Number(flags.get("runs") ?? 1);
@@ -53,6 +54,7 @@ for (let run = 1; run <= runsPerTask; run++) {
       const result = await delegate({ name: `macarena-${task.id.slice(0, 8)}`, task: instructionFor(task.instruction, openApp), prepare, check,
         modelId: flags.get("model") ?? "qwen3.8-27b", grounderUrl: flags.get("grounder") ?? "http://jev.home.arpa", timeoutMs: 25 * 60_000,
         ...(flags.has("relay-server") ? { relayCommand: [process.execPath, flags.get("relay-server")!] } : {}),
+        ...(flags.has("vm-service") ? { vmServiceUrl: flags.get("vm-service")! } : {}),
         ...(permissionCheck ? { permissionCheck: permissionCheck as "none" | "online" } : {}), ...(flags.has("trace") ? { trace: true } : {}) });
       const state = join(result.artifacts, "extension-state");
       // A run that never had a machine says nothing about the agent, so it runs again once one is free.
@@ -64,7 +66,7 @@ for (let run = 1; run <= runsPerTask; run++) {
       }
       const taskScore = score(task, result.checks);
       const cause = classify({ score: taskScore, checks: result.checks, state });
-      const record = { task: task.id, file: basename(file), run, started, openApp: openApp ?? null, permissionCheck: permissionCheck ?? null, instruction: task.instruction, score: taskScore ?? null, cause,
+      const record = { task: task.id, file: basename(file), run, started, openApp: openApp ?? null, permissionCheck: permissionCheck ?? null, vmService: flags.get("vm-service") ?? null, instruction: task.instruction, score: taskScore ?? null, cause,
         elapsedS: Math.round(result.elapsedMs / 1000), runStatus: result.runs.map(entry => entry.status), agentReport: result.runs.at(-1)?.output ?? null,
         checks: result.checks ?? null, unfinishedLeases: result.unfinishedLeases, artifacts: result.artifacts };
       appendFileSync(results, `${JSON.stringify(record)}\n`);
