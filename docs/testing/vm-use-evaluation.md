@@ -97,8 +97,41 @@ Each failed run gets one cause, taken from the run's records in this order. The 
 
 ## 6. The benchmark run
 
-- Every MacArena task that can run in a relay machine runs once. Tasks that cannot run are listed with the reason.
-- The result is pass@1 overall and per category, placed next to the published scores of Section 2, with the number of tasks that ran.
+Decisions [PS-D56](../decisions.md) and [PS-D57](../decisions.md). Every MacArena task that can run in a relay machine runs once, but the set grows in stages, so that a failure of the evaluation setup shows on a few tasks before it costs hours on many.
+
+### 6.1 Stages
+
+| Stage | Tasks | Runs | Answers |
+| --- | --- | --- | --- |
+| S1 | The ship gate's 20 tasks (Section 5) | 1 each, 20 | Does every ship-gate task run as written, and what fails first? |
+| S2 | The ship gate's 20 tasks | 3 each, 60 | Does the agent ship (Section 5)? |
+| S3 | The other MacArena tasks that can run in the relay image, in batches of one MacArena category each | 1 each | What is pass@1 on MacArena, and which failure cause is largest? |
+
+- **Which tasks can run.** The inventory of [research §17.1](../research/vm-use-s0-s1.md#171-which-macarena-tasks-can-run) decides it, at the pinned MacArena revision and against the current `macos26` image. Tasks it finds unrunnable are listed with the reason and are not run. Unlocking them, by changing the image or the runner, is not part of these stages.
+- **Batches in S3.** One batch is the runnable tasks of one MacArena category that S1 and S2 did not run. Batches go in the order of their task count, smallest first, so each batch's setup failures are found on as few tasks as possible.
+- **Tasks outside the approved requirements.** A runnable task that needs several applications runs like any other, and its failure counts as `out_of_scope` (Section 4). Its result is reported apart, so that the pass rate within the requirements stays visible.
+- **The application.** As in the ship gate, the runner opens the task's one application after its setup (`--open-app`). A task without one application runs without it.
+
+### 6.2 Moving to the next stage
+
+A stage, or an S3 batch, may start when the one before it meets all of these:
+
+- no run has `false_success`;
+- no run has `destructive`;
+- every `setup_failed` and `check_failed` run is explained: the runner was fixed and the task ran again, or the task was moved to the unrunnable list with the reason.
+
+- The pass rate is reported and does not block the next stage. The ship decision is S2's result, and the set may grow while the agent does not yet ship.
+- Between stages, the work-selection rule of Section 4 chooses the next change from the counted causes of all stages so far.
+- Before S2, the largest failure cause counted in S1 is fixed ([PS-D58](../decisions.md)), so that S2's ship decision measures the agent with that fix.
+- A change to the agent does not restart the stages. The stage report records the agent's revision for every run, so results across revisions are told apart.
+
+### 6.3 Comparison
+
+- Each stage's report gives pass@1 overall, per category, and within the approved requirements, with the number of tasks that ran and the number that could not.
+- It is placed next to:
+  - the published MacArena scores of Section 2;
+  - Claude Opus 5.5's published computer-use scores on OSWorld 2.0, from the [Claude Opus 5.5 system card](https://www-cdn.anthropic.com/fc1b44717c85dc068bc6ba5024219938094694bd/Claude%20Opus%205.5%20System%20Card.pdf), §8.13.3: a strict pass rate of 48.7 percent and a partial score of 81.8 percent. The strict pass rate counts a task only when every checkpoint is met, so it is the one placed next to this evaluation's pass rate. Anthropic's [Opus 5.5 announcement](https://www.anthropic.com/claude-opus-5-5) labels the same 81.8 percent as OSWorld 2.1.
+- **Comparability limit.** Opus 5.5's scores are on another benchmark: 108 long-horizon tasks in an Ubuntu machine, pass@1 averaged over five runs, at most 500 actions per task, at maximum reasoning effort. This evaluation scores each run 0 or 1 on a subset of MacArena in the relay image. The comparison places the numbers side by side and does not claim either agent is better.
 - The counted failure causes of Section 4 are the input to the next plan.
 
 ## 7. Cost
