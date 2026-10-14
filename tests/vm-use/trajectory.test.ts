@@ -303,6 +303,70 @@ test("the page shows plan steps with their phases, each machine step's cause, an
   assert.ok(page.html.indexOf('id="step-agent-6"') < page.html.indexOf('id="step-plan-run-1-new_note"') && page.html.indexOf('id="step-plan-run-1-save"') < page.html.indexOf('id="step-agent-7"'), "plan steps sit between the call and its result");
 });
 
+/** A PNG header of a `width` × `height` picture: enough for the trajectory to read the snapshot's size. */
+const png = (width: number, height: number) => {
+  const header = Buffer.alloc(24);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header);
+  header.writeUInt32BE(13, 8); header.write("IHDR", 12, "latin1"); header.writeUInt32BE(width, 16); header.writeUInt32BE(height, 20);
+  return header;
+};
+/** The review data with the command and the driver's answer the relay recorded for some machine steps. */
+const withCommands = (review: (dir: string) => Promise<MachineData>, commands: Record<string, { tool: string; args: Record<string, unknown>; stdout?: string }>) => async (dir: string) => {
+  const data = structuredClone(await review(dir));
+  for (const [id, command] of Object.entries(commands)) if (data.details[id])
+    Object.assign(data.details[id]!, { argv: ["node", "mcp-host.mjs", "call", "mcp", "cua", command.tool, JSON.stringify(command.args)], output: { exit: 0, stdout: command.stdout ?? "" } });
+  return data;
+};
+
+test("a machine step that clicked carries its pointer, and the page draws its button's marker (ACC-VU-29, PS-D60)", async t => {
+  const { evidence, session, state, review } = await fixture(t);
+  await writeFile(join(evidence, "relay-vm-use-aaaa0001", "state", "snapshots", "cua.click-2-before.png"), png(2000, 1000));
+  const commands = withCommands(review, {
+    "cua.click-2": { tool: "right_click", args: { x: 500, y: 250, scope: "desktop", modifier: ["cmd"] }, stdout: "Right-clicked at screen-point (250, 125)." },
+    "cua.type_text-1": { tool: "type_text", args: { pid: 856, text: "Hi" } },
+  });
+  const { data } = await buildTrajectory({ session, evidence, state, agentId: "agent-1", review: commands });
+  const detail = (id: string) => (data as unknown as { details: Record<string, { pointer?: unknown }> }).details[id];
+  assert.deepEqual(detail("aaaa0001-cua.click-2")!.pointer, { kind: "click", tool: "right_click", button: "right", count: 1, modifiers: ["cmd"], source: "command",
+    points: { x: 250, y: 125 }, point: { x: 500, y: 250, fx: 0.25, fy: 0.25 } }, "the snapshot's size places the point");
+  assert.equal(detail("bbbb0002-cua.type_text-1")!.pointer, undefined, "typing is not a click");
+  assert.equal(detail("aaaa0001-vu-0001")!.pointer, undefined, "a read has no command");
+
+  const page = renderReview(reviewModelOf(data)).html;
+  const monitor = /<article id="step-aaaa0001-cua\.click-2"[^]*?<\/article>/.exec(page)![0];
+  assert.match(monitor, /<svg class="marks m-right before" aria-hidden="true">[^]*?<text class="tag"[^>]*>⌘ R<\/text>/, "an orange R ring with its modifier on the before snapshot");
+  assert.match(monitor, /<svg class="marks m-right after"/, "an outline on the after snapshot");
+  assert.match(monitor, /<h3>Pointer<\/h3><p><i class="swatch m-right"[^>]*><\/i>Right click with ⌘<br>\(250, 125\) points<br>pixel \(500, 250\)<br>given by the command<\/p>/);
+  assert.match(monitor, /<label class="mswitch" for="show-marks"/, "the chin's switch");
+  assert.match(page, /<input type="checkbox" id="show-marks" class="mstate" checked hidden>/);
+  assert.match(page, /<kbd>M<\/kbd><span>Markers<\/span>/, "the key is listed");
+  assert.match(page, /<svg class="marks spot m-right"/, "the thumbnail's dot");
+});
+
+test("a UI element's frame comes from the window read before the step, and a click it cannot place says why (ACC-VU-30, PS-D60)", async t => {
+  const { evidence, session, state, review } = await fixture(t);
+  await writeFile(join(evidence, "relay-vm-use-aaaa0001", "state", "snapshots", "cua.click-2-before.png"), png(2000, 1000));
+  // The read before the click, of window 60, recorded the display scale (design §12.3, Pointer).
+  await write(join(state, "observations", "obs-1.json"), { recordedAt: at("10:00:59"), status: "ready", window: { app: "Notes", title: "Notes", pid: 856, windowId: 60 }, readMs: 900, desktopScale: 2,
+    groups: [{ elements: [1, 2] }, { elements: [3] }], evidence: ["vu-0001"], tree: [{ element_index: 4, role: "AXButton", label: "New Note", frame: { x: 100, y: 50, w: 30, h: 20 } }] });
+  const commands = withCommands(review, {
+    "cua.click-2": { tool: "click", args: { pid: 856, window_id: 60, element_index: 4 }, stdout: "Pressed [4] AXButton." },
+    "cua.type_text-1": { tool: "click", args: { pid: 856, window_id: 60, x: 10, y: 10 } },
+  });
+  const { data } = await buildTrajectory({ session, evidence, state, agentId: "agent-1", review: commands });
+  const detail = (id: string) => (data as unknown as { details: Record<string, { pointer?: unknown }> }).details[id];
+  assert.deepEqual(detail("aaaa0001-cua.click-2")!.pointer, { kind: "element", tool: "click", action: "press", source: "element",
+    frame: { x: 200, y: 100, w: 60, h: 40, fx: 0.1, fy: 0.1, fw: 0.03, fh: 0.04, role: "AXButton", name: "New Note" } });
+  assert.deepEqual(detail("bbbb0002-cua.type_text-1")!.pointer, { kind: "unplaced", tool: "click", button: "left", count: 1,
+    reason: "The command gave a point in the window's own screenshot, whose place on the display was not recorded." });
+
+  const page = renderReview(reviewModelOf(data)).html;
+  assert.match(page, /<svg class="marks m-ax before" aria-hidden="true"><rect class="halo" x="10%" y="10%" width="3%" height="4%"[^]*?>AX press<\/text>/, "a dashed box with its action");
+  const unplaced = /<article id="step-bbbb0002-cua\.type_text-1"[^]*?<\/article>/.exec(page)![0];
+  assert.match(unplaced, /<h3>Pointer<\/h3><p>Left click<br>Position not recorded<br>The command gave a point in the window&#39;s own screenshot/);
+  assert.doesNotMatch(unplaced, /class="marks/, "no marker where the position is not known");
+});
+
 const get = (port: number, path: string, host = `127.0.0.1:${port}`) => new Promise<{ status: number; type: string; body: string }>((done, fail) => {
   request({ host: "127.0.0.1", port, path, headers: { host } }, response => {
     let body = "";

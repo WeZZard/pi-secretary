@@ -9,6 +9,8 @@
 // The relay's visual design is in its docs/ux-design.md §6.10; what this page
 // adds is specified in docs/ux/vm-use.md §1.
 
+import type { Pointer, PointerFrame } from "./pointer.ts";
+
 export interface CommandOutput {
   exit?: number | null;
   signal?: string | null;
@@ -30,6 +32,8 @@ export interface StepDetail {
   /** The guest command, exactly as requested. */
   argv?: string[];
   output?: CommandOutput;
+  /** Where the step clicked and with which button, or the UI element it acted on (decision PS-D60, design §12.3, Pointer). */
+  pointer?: Pointer;
 }
 
 /** A step of the agent's side: what it was asked, said, called and received (design §12.3). */
@@ -378,11 +382,70 @@ function trajectoryBoxes(steps: ReviewPageStep[], model: ReviewPageModel, number
     return (["before", "after"] as const).filter(role => step.snapshots?.[role]).map(role => {
       const path = step.snapshots![role]!, name = role === "before" ? "Before" : "After", at = preciseTime(role === "before" ? detail?.beforeAt : detail?.afterAt);
       return { id: boxId(step, role), step: view(role), label: `Step ${number} · ${name}`, title: headline,
-        body: `<img loading="lazy" alt="${name} dispatch snapshot, enlarged" src="${src(path)}">`,
+        body: detail?.pointer && drawn(detail.pointer)
+          ? `<span class="shot" title="${escapeHtml(pointerTitle(detail.pointer))}"><img loading="lazy" alt="${name} dispatch snapshot, enlarged" src="${src(path)}">${marker(detail.pointer, role)}</span>`
+          : `<img loading="lazy" alt="${name} dispatch snapshot, enlarged" src="${src(path)}">`,
         caption: `${at ? `<time>${at}</time>` : ""}<a href="${src(path)}">Open the original</a>` };
     });
   });
 }
+
+// Where a machine step clicked, and with which button (decision PS-D60, docs/ux/vm-use.md §1.2).
+// The trajectory gave the pointer; the page only draws it, by fractions of the snapshot.
+const buttonWords = { left: "Left", right: "Right", middle: "Middle" } as const;
+const keySymbols: Record<string, string> = { cmd: "⌘", command: "⌘", shift: "⇧", option: "⌥", alt: "⌥", ctrl: "⌃", control: "⌃" };
+const roleWords = (role: string | undefined) => (role ?? "UI element").replace(/^AX/, "");
+const elementWords = (frame: PointerFrame | undefined) => frame ? `${roleWords(frame.role)}${frame.name ? ` ${JSON.stringify(frame.name)}` : ""}` : "the UI element";
+const pair = (p: { x: number; y: number }) => `(${Math.round(p.x)}, ${Math.round(p.y)})`;
+/** A marker's legend: the modifier keys, the button's letter, and ×2 for a double click, such as `⌘ L×2`. */
+const markLegend = (p: Pointer) => `${p.modifiers?.length ? `${p.modifiers.map(key => keySymbols[key.toLowerCase()] ?? key).join("")} ` : ""}${(p.button ?? "left")[0]!.toUpperCase()}${(p.count ?? 1) > 1 ? "×2" : ""}`;
+/** The input in words, such as `Right click` or `Left double click with ⌘`. */
+function inputWords(p: Pointer) {
+  if (p.kind === "element" || (p.kind === "unplaced" && p.action)) return `AX ${(p.action ?? "press").replace(/_/g, " ")}`;
+  const keys = p.modifiers?.length ? ` with ${p.modifiers.map(key => keySymbols[key.toLowerCase()] ?? key).join(" ")}` : "";
+  return `${buttonWords[p.button ?? "left"]} ${(p.count ?? 1) > 1 ? "double click" : "click"}${keys}`;
+}
+/** The pointer as the tooltip and the panel say it: the input, where it landed, and where the position came from. */
+function pointerLines(p: Pointer): string[] {
+  const input = inputWords(p);
+  if (p.kind === "unplaced") return [input, "Position not recorded", ...(p.reason ? [p.reason] : [])];
+  if (p.kind === "element") return [`${input} on ${elementWords(p.frame)}`, ...(p.frame ? [`frame ${pair(p.frame)}, ${Math.round(p.frame.w)} × ${Math.round(p.frame.h)} pixels`] : []), ...(p.reason ? [p.reason] : [])];
+  return [input, ...(p.points ? [`${pair(p.points)} points`] : []), ...(p.point ? [`pixel ${pair(p.point)}`] : []),
+    p.source === "element" ? `at the centre of ${elementWords(p.frame)}` : "given by the command", ...(p.reason ? [p.reason] : [])];
+}
+const pointerTitle = (p: Pointer) => {
+  const [input, ...rest] = pointerLines(p);
+  if (p.kind === "click") return `${input} at ${[p.points ? `${pair(p.points)} points` : undefined, p.point ? `pixel ${pair(p.point)}` : undefined].filter(Boolean).join(", ")}, ${p.source === "element" ? `at the centre of ${elementWords(p.frame)}` : "given by the command"}`;
+  return [input, ...rest].join(", ");
+};
+/** Whether a pointer has a marker: it was placed, and lies inside its snapshot. */
+const drawn = (p: Pointer | undefined): p is Pointer => !!p && p.kind !== "unplaced" && !p.reason
+  && (p.kind === "element" ? !!p.frame : p.point?.fx !== undefined && p.point.fy !== undefined);
+const pct = (fraction: number) => `${+(fraction * 100).toFixed(3)}%`;
+/**
+ * The marker over a snapshot: a ring for a click, solid on the before snapshot and an outline on the
+ * after one, or a dashed box around the UI element of an accessibility action. Its SVG covers the
+ * picture, so the fractions place it at every size; the ring keeps its size in CSS pixels.
+ */
+function marker(p: Pointer | undefined, role: "before" | "after") {
+  if (!drawn(p)) return "";
+  if (p.kind === "element") {
+    const f = p.frame!, box = `x="${pct(f.fx)}" y="${pct(f.fy)}" width="${pct(f.fw)}" height="${pct(f.fh)}"`;
+    return `<svg class="marks m-ax ${role}" aria-hidden="true"><rect class="halo" ${box} rx="3"/><rect class="box" ${box} rx="3"/><text class="tag" x="${pct(f.fx)}" y="${pct(f.fy)}" dy="-7">${escapeHtml(inputWords(p))}</text></svg>`;
+  }
+  const rings = (p.count ?? 1) > 1 ? [15, 22] : [15];
+  return `<svg class="marks m-${p.button ?? "left"} ${role}" aria-hidden="true"><svg x="${pct(p.point!.fx!)}" y="${pct(p.point!.fy!)}" overflow="visible">`
+    + rings.map(r => `<circle class="halo" r="${r}"/><circle class="ring" r="${r}"/>`).join("")
+    + `<circle class="pin" r="2.5"/><text class="tag" x="${rings.at(-1)! + 5}" y="${-rings.at(-1)! + 4}">${escapeHtml(markLegend(p))}</text></svg></svg>`;
+}
+/** A thumbnail's marker: a dot in the button's colour where the step clicked. */
+function spot(p: Pointer | undefined) {
+  if (!drawn(p)) return "";
+  const [x, y] = p.kind === "element" ? [p.frame!.fx + p.frame!.fw / 2, p.frame!.fy + p.frame!.fh / 2] : [p.point!.fx!, p.point!.fy!];
+  return `<svg class="marks spot m-${p.kind === "element" ? "ax" : p.button ?? "left"}" aria-hidden="true"><circle class="halo" cx="${pct(x)}" cy="${pct(y)}" r="4"/><circle class="pin" cx="${pct(x)}" cy="${pct(y)}" r="3"/></svg>`;
+}
+/** The chin's switch that hides and shows the markers, which the key M also turns. */
+const markSwitch = `<label class="mswitch" for="show-marks" title="Hide or show the click markers (M)"><i class="lamp" aria-hidden="true"></i>Markers <kbd>M</kbd></label>`;
 
 /**
  * One view of the viewport: a single snapshot of a step, or its command. The
@@ -438,11 +501,11 @@ ${chin("Plan step", `<button type="button" class="enlarge" popovertarget="${esca
 <p class="term-note">${step.inputMode === "diagnostic" ? "Screenshots were not requested for this diagnostic." : "No snapshots were captured for this step."}</p></div>
 ${chin(kind, `<button type="button" class="enlarge" popovertarget="${escapeHtml(boxId(step, "command"))}" title="Enlarge the command">${expandIcon}Enlarge</button>`)}</div></div></section>`;
   }
-  const path = step.snapshots?.[view.role as "before" | "after"];
+  const path = step.snapshots?.[view.role as "before" | "after"], pointer = detail?.pointer;
   const picture = path
-    ? `<button type="button" class="zoom" popovertarget="${escapeHtml(boxId(step, view.role))}" title="Enlarge the ${view.role} snapshot"><img alt="${roleName(view)} dispatch snapshot" src="${src(path)}"></button>`
+    ? `<button type="button" class="zoom" popovertarget="${escapeHtml(boxId(step, view.role))}" title="${escapeHtml(`Enlarge the ${view.role} snapshot${drawn(pointer) ? `. ${pointerTitle(pointer)}` : ""}`)}"><img alt="${roleName(view)} dispatch snapshot" src="${src(path)}">${marker(pointer, view.role as "before" | "after")}</button>`
     : `<div class="void">${roleName(view)}: unavailable — incomplete evidence</div>`;
-  return `${open}<div class="monitor"><div class="screen">${picture}</div>${chin(roleName(view))}</div></div></section>`;
+  return `${open}<div class="monitor"><div class="screen">${picture}</div>${chin(roleName(view), path && drawn(pointer) ? markSwitch : "")}</div></div></section>`;
 }
 /** A reason as it concerns one step: the verdict it affects, and why. */
 type Concern = { verdict: string; tone: string; text: string; action?: string };
@@ -524,6 +587,7 @@ ${planBlocks(step, links)}
 ${askedBy}
 ${concerns.length ? `<section class="concern ${worst(concerns.map(c => c.tone))}"><h3>Why this step affects the verdicts</h3><ul>${concerns.map(c => `<li class="${c.tone}"><span class="label">${escapeHtml(c.verdict)}</span><p>${escapeHtml(c.text)}</p>${whatToDo(c.action)}</li>`).join("")}</ul></section>` : ""}
 ${reasonShown ? `<section class="block"><h3>Reason</h3><p>${escapeHtml(step.because ?? "Not present in retained host metadata")}</p></section>` : ""}
+${detail?.pointer ? `<section class="block pointer"><h3>Pointer</h3><p>${drawn(detail.pointer) ? `<i class="swatch m-${detail.pointer.kind === "element" ? "ax" : detail.pointer.button ?? "left"}" aria-hidden="true"></i>` : ""}${pointerLines(detail.pointer).map(escapeHtml).join("<br>")}</p></section>` : ""}
 ${command && step.snapshots ? `<section class="block"><h3>Command</h3><pre class="command">${escapeHtml(command)}</pre></section>` : ""}
 <section class="block"><h3>Expected</h3><p>${escapeHtml(step.expected || "Not supplied")}</p></section>
 <section class="block"><h3>Observed</h3>${observed(step, detail?.output, !!step.snapshots)}</section>
@@ -566,7 +630,7 @@ function thumb(step: ReviewPageStep, detail: StepDetail | undefined, number: str
     ? `<img loading="lazy" alt="" src="${src(a.image)}">` : `<pre aria-hidden="true">${escapeHtml(a.kind === "call" ? `${a.name}\n${a.text}` : a.text)}</pre>`}<span class="role">${agentKind[a.kind]}</span></span></a>`).join("") : views.map((view, i) => {
     const image = view.role === "command" || view.role === "agent" || view.role === "plan" ? undefined : step.snapshots?.[view.role];
     const face = view.role === "command" ? `<pre aria-hidden="true"><span class="prompt">$</span>${escapeHtml(command ?? headline)}</pre>`
-      : image ? `<img loading="lazy" alt="" src="${src(image)}">` : `<span class="none">No ${view.role} snapshot</span>`;
+      : image ? `<img loading="lazy" alt="" src="${src(image)}">${spot(detail?.pointer)}` : `<span class="none">No ${view.role} snapshot</span>`;
     return `<a data-t="${view.index}" href="${escapeHtml(viewLink(view))}" title="${escapeHtml(`Step ${number} · ${roleName(view)} · ${headline}`)}"><span class="face${view.role === "command" ? " text" : ""}">${face}${view.role === "command" ? "" : `<span class="role">${roleName(view)}</span>`}${flagged && i === 0 ? `<span class="flag ${flagged}" title="This step affects the verdicts">!</span>` : ""}</span></a>`;
   }).join("");
   return `<li class="s ${tone(step.execution)}${a ? ` agent k-${a.kind}` : step.plan ? " k-plan" : " machine"}${step.inputMode === "diagnostic" ? " diagnostic" : ""}${erred(step) ? " err" : ""}"><span class="tline"><span class="d">${number}</span>${place(step)}</span><div class="faces">${faces}</div><span class="cap"><i class="dot" aria-hidden="true"></i><span class="t" title="${escapeHtml(headline)}">${escapeHtml(headline)}</span>${span ? `<span class="took" title="${tookTip(step)}">${span}</span>` : ""}</span><span class="sr">${escapeHtml(step.execution)}</span></li>`;
@@ -677,8 +741,8 @@ ${defects.length ? `<section class="block defect"><h3>Relay defects <span class=
 <header class="top"><div class="brand"><span class="mark" aria-hidden="true">${relayMark}</span><h1 title="${escapeHtml(model.packageId)}">vm-use <span class="who">${escapeHtml(agent.id ?? agent.sessionId)}</span></h1>
 <ul class="stats">${stat(noun(steps.length, "step"), String(steps.length))}${stat("agent", String(said))}${stat("plan", String(planned))}${stat("machine", String(machine))}${diagnostics ? stat(noun(diagnostics, "diagnostic"), String(diagnostics)) : ""}${started ? `<li class="at"><time datetime="${started}" title="Started ${started}">${utcStamp(started)}</time><span class="local" hidden><span class="sep" aria-hidden="true">·</span><time datetime="${started}" data-local title="Started, in your time zone"></time></span></li>` : ""}${times.length ? stat("", duration(Math.max(...times) - Math.min(...times))) : ""}</ul></div>
 <nav class="tabs mid" aria-label="View"><a class="t-traj" href="${steps[0] ? escapeHtml(link(steps[0])) : "#"}">Trajectory</a><a class="t-over" href="#overview">Overview<span class="${model.findings.length ? "has" : ""}">${model.findings.length}</span></a></nav>
-<ul class="pills"><li class="keys" title="Keyboard shortcuts"><kbd aria-label="Left arrow">←</kbd><kbd aria-label="Right arrow">→</kbd><span>Steps</span><kbd>Space</kbd><span>Enlarge</span></li>${pill("snapshots", "Snapshots", model.completeness)}${pill("execution", "Execution", model.execution)}</ul></header>
-<main class="center">${errors ? `<label class="focus" title="Highlight the steps with errors, and move between them with the arrows"><input type="checkbox" id="focus-errors">Focus on errors</label>` : ""}${steps.map(step => {
+<ul class="pills"><li class="keys" title="Keyboard shortcuts"><kbd aria-label="Left arrow">←</kbd><kbd aria-label="Right arrow">→</kbd><span>Steps</span><kbd>Space</kbd><span>Enlarge</span>${steps.some(step => drawn(model.details.get(step.id)?.pointer)) ? `<kbd>M</kbd><span>Markers</span>` : ""}</li>${pill("snapshots", "Snapshots", model.completeness)}${pill("execution", "Execution", model.execution)}</ul></header>
+<main class="center"><input type="checkbox" id="show-marks" class="mstate" checked hidden>${errors ? `<label class="focus" title="Highlight the steps with errors, and move between them with the arrows"><input type="checkbox" id="focus-errors">Focus on errors</label>` : ""}${steps.map(step => {
     const own = views.filter(v => v.step === step);
     return `<article id="step-${escapeHtml(step.id)}" data-first="${own[0]!.index}" class="step ${tone(step.execution)}${erred(step) ? " err" : ""}">${own.map(v => stage(v, model.details.get(step.id), numbers, {
       previous: views[v.index - 1], next: views[v.index + 1], previousError: views.slice(0, v.index).findLast(w => erred(w.step)), nextError: views.slice(v.index + 1).find(w => erred(w.step)) }, step.plan ? sentBy(step, steps) : 0)).join("")}${panel(step, model.details.get(step.id), numbers.get(step.id)!, steps.length, concerns.get(step.id) ?? [], links)}</article>`;
@@ -810,7 +874,7 @@ kbd{display:inline-grid;place-items:center;min-width:1.4rem;height:1.4rem;paddin
 .lb-nav .dir{flex:none;display:grid;place-items:center;width:1.9rem;height:1.9rem;border-radius:11px;font:400 20px/1 var(--sans);color:var(--pop)}
 .lb-nav:focus-visible{outline:2px solid var(--pop);outline-offset:3px}
 .lb-nav .role{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 12px/1.4 var(--sans);color:var(--text)}
-.enlarge{all:unset;box-sizing:border-box;corner-shape:squircle;display:flex;align-items:center;gap:.5rem;height:2rem;padding:0 1rem;border-radius:9px;font:700 12px var(--sans);letter-spacing:.06em;text-transform:uppercase;color:var(--text);cursor:zoom-in}.enlarge:focus-visible{outline:2px solid var(--pop);outline-offset:2px}
+.enlarge,.mswitch{all:unset;box-sizing:border-box;corner-shape:squircle;display:flex;align-items:center;gap:.5rem;height:2rem;padding:0 1rem;border-radius:9px;font:700 12px var(--sans);letter-spacing:.06em;text-transform:uppercase;color:var(--text);cursor:zoom-in}.enlarge:focus-visible{outline:2px solid var(--pop);outline-offset:2px}
 .close{all:unset;corner-shape:squircle;display:grid;place-items:center;width:1.9rem;height:1.9rem;border-radius:11px;background:var(--s2);color:var(--dim);font:400 20px/1 var(--sans);cursor:pointer}.close:hover{color:var(--bad)}.close:focus-visible{outline:2px solid var(--pop);outline-offset:2px}
 .void{display:grid;place-items:center;background:oklch(from var(--s1) l c h / .7);border-radius:14px;box-shadow:inset 0 0 0 1px var(--hair);color:var(--faint);padding:2rem;text-align:center;aspect-ratio:16/9}
 .arrow{display:grid;place-items:center;width:2rem;height:2rem;border-radius:9px;color:var(--pop);font:400 20px/1 var(--sans)}
@@ -911,7 +975,7 @@ kbd{display:inline-grid;place-items:center;min-width:1.4rem;height:1.4rem;paddin
 .fw-dl:focus-visible{outline:2px solid var(--pop);outline-offset:2px}
 .fw-body{margin:0;padding:1rem 1.25rem 1.25rem;overflow:auto;background:var(--s1);font:12px/1.6 var(--mono);color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere;tab-size:2}
 
-.tabs a,.arrow,kbd,.lb-nav,.close,.enlarge,.fw-dl,.permalink{background:linear-gradient(var(--key-hi),var(--key));box-shadow:inset 0 1px 0 #fff,0 0 0 1px var(--key-edge),0 2px 0 1px var(--key-edge),0 4px 8px oklch(from var(--shade) l c h / .12);transition:translate .08s,box-shadow .08s}
+.tabs a,.arrow,kbd,.lb-nav,.close,.enlarge,.mswitch,.fw-dl,.permalink{background:linear-gradient(var(--key-hi),var(--key));box-shadow:inset 0 1px 0 #fff,0 0 0 1px var(--key-edge),0 2px 0 1px var(--key-edge),0 4px 8px oklch(from var(--shade) l c h / .12);transition:translate .08s,box-shadow .08s}
 .tabs a:hover,.arrow:hover,.lb-nav:hover,.close:hover,.enlarge:hover,.permalink:hover{background:linear-gradient(#fff,var(--key-hi))}
 .tabs a:active,.arrow:active,.lb-nav:active,.close:active,.enlarge:active,.fw-dl:active,.permalink:active{translate:0 2px;box-shadow:inset 0 1px 0 #fff,0 0 0 1px var(--key-edge)}
 .fw-dl{background:linear-gradient(var(--key-blue),var(--blue));box-shadow:inset 0 1px 0 #fff3,0 0 0 1px var(--navy),0 2px 0 1px var(--navy),0 4px 8px oklch(from var(--shade) l c h / .14)}.fw-dl:active{box-shadow:inset 0 1px 0 #fff3,0 0 0 1px var(--navy)}
@@ -954,4 +1018,23 @@ kbd{display:inline-grid;place-items:center;min-width:1.4rem;height:1.4rem;paddin
 .panel .request{margin:.5rem 0 0;font-size:12px;color:var(--faint)}.panel .request b{color:var(--dim)}.panel .answers{list-style:none;margin:.25rem 0 .5rem;padding:0;font:12px/1.6 var(--mono);color:var(--dim)}
 .panel .whole{max-height:none}.panel .steps{display:flex;flex-wrap:wrap;gap:.25rem .75rem}.panel .steps a,.cause a{font:700 12px var(--sans)}.cause.none p{color:var(--faint)}
 .machines{list-style:none;margin:.75rem 0 0;padding:0;display:grid;gap:.5rem}.machines li{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem 1.25rem;font-size:12px;color:var(--dim)}.machines code{font:700 12px var(--mono);color:var(--text)}.doc .s-agent{--sep:var(--orange)}
+/* Click markers (decision PS-D60, docs/ux/vm-use.md §1.2): blue, orange and purple rings for the left, right and middle button, each with its letter; a dashed box for an accessibility action. */
+.m-left{--mk:#1f6fe0}.m-right{--mk:#e0700a}.m-middle{--mk:#8a3fd0}.m-ax{--mk:#0f7f7c}
+.zoom{position:relative}
+.marks{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none}
+body:has(#show-marks:not(:checked)) .marks{display:none}
+.marks .halo{fill:none;stroke:#fff;stroke-width:6;stroke-opacity:.9}
+.marks .ring{fill:none;stroke:var(--mk);stroke-width:3}
+.marks.before .ring{fill:color-mix(in oklch,var(--mk) 32%,transparent)}
+.marks.after .ring{stroke-width:2}.marks.after .halo{stroke-width:4;stroke-opacity:.75}
+.marks .pin{fill:var(--mk);stroke:#fff;stroke-width:1.5}
+.marks .tag{font:700 14px/1 var(--sans);fill:var(--mk);stroke:#fff;stroke-width:4px;stroke-linejoin:round;paint-order:stroke}
+.m-ax .box{fill:none;stroke:var(--mk);stroke-width:2.5;stroke-dasharray:6 4}.m-ax .halo{stroke-width:5}
+.m-ax.before .box{fill:color-mix(in oklch,var(--mk) 12%,transparent)}
+.marks.spot .halo{fill:#fff;stroke:none}.marks.spot .pin{stroke:none}
+.lb-body .shot{position:relative;display:block;max-width:100%}.shot .marks .tag{font-size:16px}
+.mswitch{cursor:pointer}.mswitch kbd{min-width:1.1rem;height:1.1rem;background:none;box-shadow:0 0 0 1px var(--key-edge)}
+.mswitch .lamp{width:.5rem;height:.5rem;border-radius:50%;background:var(--hair);corner-shape:round}
+body:has(#show-marks:checked) .mswitch .lamp{background:var(--pop);box-shadow:0 0 6px var(--pop)}
+.pointer .swatch{display:inline-block;width:.7rem;height:.7rem;margin-right:.4rem;border-radius:50%;corner-shape:round;background:var(--mk)}
 @media print{.app{height:auto;display:block}.track,.arrow,.mid,.lightbox,.enlarge{display:none}.center{display:block}.step{display:block!important;break-inside:avoid;margin-bottom:1rem}.view{display:flex!important}.stage{background:none}}`;

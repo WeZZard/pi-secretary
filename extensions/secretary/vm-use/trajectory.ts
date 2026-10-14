@@ -1,7 +1,8 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync } from "node:fs";
 import { basename, join } from "node:path";
 import { reviewData, type ReviewData as MachineData } from "@wezzard/mcp-vm-relay/review-data";
 import { timeline } from "./timeline.ts";
+import { pointerOf, type PointerRead } from "./viewer/pointer.ts";
 import type { Answers, CallRecord, MachineSummary, ObservationItem, PlanCheckItem, PlanStepItem, Reason, ReviewData, ReviewPageStep, StepDetail } from "./viewer/page.ts";
 
 /**
@@ -72,7 +73,11 @@ interface PermissionRecord {
   recordedAt?: string; stepId: string; attempt: number; approval?: { answer: string; ms?: number };
   judgment?: { verdict?: string; reason?: string; requests?: { purpose: string; answers?: Answers; roundTripMs?: number }[] };
 }
-interface ObservationRecord { recordedAt?: string; status?: string; readMs?: number; window?: { app?: string; title?: string }; groups?: { elements?: unknown[] }[]; evidence?: string[] }
+interface ObservationRecord {
+  recordedAt?: string; status?: string; readMs?: number; window?: { pid?: number; windowId?: number; app?: string; title?: string }; groups?: { elements?: unknown[] }[]; evidence?: string[];
+  /** The read's UI elements, with frames in screen points, and the display scale the relay client measured (design §12.3, Pointer). */
+  tree?: PointerRead["elements"]; desktopScale?: number;
+}
 interface Lease { package: string; recordedAt?: string }
 
 /** The lease records under a session's vm-use state directory, in acquisition order (design §12.3). */
@@ -86,6 +91,17 @@ function leases(state: string): Lease[] {
 export function leasedPackages(state: string): string[] | undefined {
   const found = leases(state);
   return found.length ? found.map(lease => lease.package) : undefined;
+}
+
+/** A PNG's width and height, from its header; undefined for any other file. */
+function pngSize(path: string): { width: number; height: number } | undefined {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, "r");
+    const header = Buffer.alloc(24);
+    if (readSync(fd, header, 0, 24, 0) < 24 || header.toString("latin1", 12, 16) !== "IHDR") return undefined;
+    return { width: header.readUInt32BE(16), height: header.readUInt32BE(20) };
+  } catch { return undefined; } finally { if (fd !== undefined) closeSync(fd); }
 }
 
 const firstAt = (data: MachineData) => Math.min(...Object.values(data.details).map(detail => time(detail.at)).filter(Number.isFinite));
@@ -198,6 +214,8 @@ function records(state: string | undefined) {
     judgements: (runId: string, stepId: string) => ofStep<PermissionRecord>(runId, "permission-", stepId),
     planCheck: (runId: string) => files(runId, "permission-").map(file => readJson<PlanCheckRecord>(file)).find(record => record?.schema === "secretary.vm-use.plan-check/1"),
     observation: (file: string) => state ? readJson<ObservationRecord>(join(state, "observations", basename(file))) : undefined,
+    /** Every window read: the agent's observations and the executor's reads around each plan. */
+    observations: () => state ? list(join(state, "observations")).filter(file => file.endsWith(".json")).flatMap(file => { const read = readJson<ObservationRecord>(join(state, "observations", file)); return read ? [read] : []; }) : [],
   };
 }
 
@@ -224,12 +242,31 @@ export async function buildTrajectory(input: TrajectoryInput): Promise<AgentTraj
   const steps: ReviewPageStep[] = [];
   /** The machine of a call: the one whose lease is the latest written before the call's result (design §12.3). */
   const machineAt = (at: number) => joined.filter(machine => machine.since <= at).at(-1) ?? joined[0];
+  /** Each machine's window reads, by the position in the machine of the read's last relay step (design §12.3, Pointer). */
+  const observations = record.observations();
+  const reads = new Map(joined.map(machine => {
+    const order = new Map([...machine.steps.values()].map((step, position) => [step.id, position]));
+    return [machine.name, { order, reads: observations.flatMap(read => {
+      const positions = (read.evidence ?? []).map(id => order.get(machine.named.get(id)?.id ?? "")).filter((position): position is number => position !== undefined);
+      return positions.length && read.tree ? [{ position: Math.max(...positions), read }] : [];
+    }).sort((a, b) => a.position - b.position) }];
+  }));
+  /** Where a machine step clicked: from its command, the driver's answer, its snapshot and the window reads before it (decision PS-D60). */
+  const pointerFor = (machine: Machine, step: ReviewPageStep, detail: StepDetail) => {
+    const of = reads.get(machine.name), position = of?.order.get(step.id) ?? -1;
+    const before = (of?.reads ?? []).filter(r => r.position < position).map(({ read }) =>
+      ({ ...(read.window ? { window: read.window } : {}), elements: read.tree!, ...(read.desktopScale !== undefined ? { desktopScale: read.desktopScale } : {}) }));
+    const snapshot = step.snapshots?.before ?? step.snapshots?.after;
+    return pointerOf({ argv: detail.argv, stdout: detail.output?.stdout, snapshot: snapshot ? pngSize(join(input.evidence, snapshot)) : undefined, reads: before });
+  };
   /** The machine steps a record names, asked for by `cause`. */
   const machineStepsOf = (ids: string[] | undefined, machine: Machine | undefined, cause: string) => (ids ?? []).flatMap(id => {
     const step = machine?.named.get(id);
     if (!step || asked.has(step.id)) return [];
     asked.add(step.id);
     details[step.id] = { ...machine!.details[step.id] };
+    const pointer = pointerFor(machine!, step, details[step.id]!);
+    if (pointer) details[step.id]!.pointer = pointer;
     return [{ ...step, cause }];
   });
   const observationOf = (id: string, file: ObservationRecord | undefined): ObservationItem | undefined => file

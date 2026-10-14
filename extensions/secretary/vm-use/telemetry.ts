@@ -53,6 +53,8 @@ export class Telemetry {
       // The relay steps of the read, which the trajectory shows under its call (design §6.4, §12.3).
       ...(read.evidence?.length ? { evidence: read.evidence } : {}),
       screenshotCaptured: read.screenshot !== undefined,
+      // Places the tree's frames on the display's snapshot in the trajectory viewer (decision PS-D60).
+      ...(read.desktopScale !== undefined ? { desktopScale: read.desktopScale } : {}),
       tree: read.elements,
       descendantText: read.descendantText,
       executorTable: result.status === "ready" ? renderGrounderTable(result) : undefined,

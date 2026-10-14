@@ -2,7 +2,7 @@
 
 **Document type:** UX and interaction specification.
 
-**Status:** Draft. Section 1 specifies the trajectory viewer that decisions [PS-D17 and PS-D18](../decisions.md) call for. Section 2 specifies the approval dialog of the permission check mode `online` ([PS-D53](../decisions.md)).
+**Status:** Draft. Section 1 specifies the trajectory viewer that decisions [PS-D17 and PS-D18](../decisions.md) call for, and Section 1.2 its click markers ([PS-D60](../decisions.md)). Section 2 specifies the approval dialog of the permission check mode `online` ([PS-D53](../decisions.md)).
 
 **Related documents:** [Requirements](../user-stories/vm-use.md), [technical design](../arch/vm-use.md), and the [subagent interaction design](subagents.md).
 
@@ -31,6 +31,7 @@ The trajectory viewer is the relay's review app, moved into the vm-use extension
   - A plan step's panel shows the grounder's answers with their confidence and, in the mode `online`, the online plan check's two answers for the step, `reach` and `requested`, and whether the step needed approval and why. It links the call, and the machine steps the plan step ran.
   - A `vm_run_plan` call's panel shows the plan check: the mode and whether the delegated request or the configuration chose it ([PS-D54](../decisions.md)), the online API's round trip, the steps that needed approval with the reason for each, or that the check failed, and the approval's answer and wait.
   - A machine step's panel names the plan step that ran it, or the tool call whose observation read it.
+  - A machine step that clicked shows a marker on its snapshots where the click landed, and the marker tells which mouse button pressed it ([Section 1.2](#12-click-markers), [PS-D60](../decisions.md)).
   - A `vm_observe` call's panel shows the observation: the application, the window, the UI element count and how long the read took. It links the machine steps the read ran.
   - A result's view shows the screenshot the agent received, when it received one.
   - The Overview names the agent, its model and session, how its machines were found, and each machine's verdicts, findings, outputs and files, as the relay's Overview did for one machine. For each machine it also counts the machine steps that no plan step or observation asked for, such as the checks after the agent's run.
@@ -65,6 +66,51 @@ The trajectory viewer is the relay's review app, moved into the vm-use extension
 - The selected step is a `vm_run_plan` call in the mode `online`. The online plan check marked the step `share_1`, whose effect leaves the guest, and a person approved the plan after 41.0 s. The call's caption and the pill before its first plan step include that wait.
 - All items are numbered together, in the order of the track. A machine step's panel shows "Asked for by" with its plan step or call, and its machine and relay step identifier.
 - Long text, such as a prompt, a report or a tool call's arguments, is shown whole in the viewport and the panel.
+
+### 1.2 Click markers
+
+Decision [PS-D60](../decisions.md): a machine step's snapshots show where the step clicked and with which mouse button.
+
+- **User intent:** A maintainer wants to see what a click hit without reading coordinates, and to tell a right click that opened a context menu from a left click that pressed a button.
+- **Entry conditions:** The selected item is a machine step that sent a click or acted on a UI element, and its snapshots exist.
+- **User action:** The maintainer selects the step, or enlarges its snapshot with Space. The key M hides and shows the markers, so a marker never keeps the maintainer from seeing what lies under it.
+- **Observable outcome:** The before snapshot shows a solid marker centred on the point the click landed. The after snapshot shows the same marker as an outline, so what changed under it stays visible. The marker is drawn in the monitor, in the enlarged picture and, as a dot in the button's colour, on the step's thumbnails.
+- **Feedback:**
+  - Each mouse button has its own marker, told apart by the letter in it as well as by its colour, so the marker reads without colour:
+
+    | Input | Marker | Colour |
+    | --- | --- | --- |
+    | Left click | A ring with `L` | Blue |
+    | Right click | A ring with `R` | Orange |
+    | Middle click | A ring with `M` | Purple |
+    | Double click | Two rings with the button's letter and `×2`, such as `L×2` | The button's colour |
+    | Click with modifier keys | The keys before the letter, such as `⌘ L` | The button's colour |
+
+  - A small dot at the ring's centre marks the exact point.
+  - The marker's tooltip names the input, the point in screen points and in snapshot pixels, and whether the point was given or taken from a UI element's centre, for example "Right click at (773, 455) points, pixel (1546, 910), at the centre of Button "Done"".
+  - The panel shows the same in a row named Pointer.
+  - An accessibility action on a UI element, such as a press, showing its context menu or setting its value, presses no mouse button. It is shown as a dashed box around the UI element, labelled with the action, such as `AX show menu`, and never as a right click.
+  - A step that sent no click and acted on no UI element, such as a key press, has no marker.
+- **Failure and recovery:**
+  - A step whose position was not recorded shows no marker, and its Pointer row says "Position not recorded". The viewer never guesses a position.
+  - A point that lies outside the snapshot shows no marker, and the Pointer row gives the point and says it is outside the snapshot.
+  - A step whose snapshots are missing shows its Pointer row without a picture.
+
+```text
+┌─ viewport ────────────────────────────────────────────┐  ┌─ panel ─────────────────────────────┐
+│ [194]  cua.click · 2.3 s                        VM ⧈  │  │ STEP 194 of 200                      │
+│ ┌───────────────────────────────────────────────────┐ │  │ ...                                  │
+│ │   ┌ Open ───────────────────────────┐             │ │  │ Pointer  Left click                  │
+│ │   │ Applications   Calculator ◉L    │             │ │  │          (773, 455) points           │
+│ │   │                                 │             │ │  │          pixel (1546, 910)           │
+│ │   │              [Cancel] [Open]    │             │ │  │          given by the command        │
+│ │   └─────────────────────────────────┘             │ │  │                                      │
+│ └───────────────────────────────────────────────────┘ │  │                                      │
+│ <     BEFORE 06:56:20.819   Markers (M)     Enlarge > │  │                                      │
+└───────────────────────────────────────────────────────┘  └──────────────────────────────────────┘
+```
+
+- In the wireframe, ◉L stands for the solid ring with the letter `L` of a left click on the before snapshot. The monitor's chin has a Markers switch that the key M also turns.
 
 ## 2. Approval dialog
 

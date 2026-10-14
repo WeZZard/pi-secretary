@@ -214,6 +214,28 @@ Feature: Delegate a desktop task to the vm-use agent
     And the pill before a plan step's first machine step measures from the plan step's start.
     And the pill's tooltip names the step and the edge it measures from.
 
+  @ACC-VU-29 @proposed @VU-08 @PS-D60
+  Scenario Outline: A machine step's snapshots show where it clicked and with which mouse button.
+    Given a machine step that sent the command <command>.
+    When a maintainer selects the step in the agent's trajectory.
+    Then the before snapshot shows a solid <marker> centred on the point the click landed, and the after snapshot shows the same marker as an outline.
+    And the panel's Pointer row names the <input> with its point in screen points and in snapshot pixels.
+    And the key M hides the markers and shows them again.
+
+    Examples:
+      | command                                                      | marker                    | input             |
+      | click {"scope":"desktop","x":1546,"y":910}                   | blue ring with "L"        | left click        |
+      | click {"scope":"desktop","x":1546,"y":910,"button":"right"}  | orange ring with "R"      | right click       |
+      | click {"scope":"desktop","x":1546,"y":910,"button":"middle"} | purple ring with "M"      | middle click      |
+      | click {"scope":"desktop","x":1546,"y":910,"count":2}         | two blue rings with "L×2" | left double click |
+
+  @ACC-VU-30 @proposed @VU-08 @PS-D60
+  Scenario: An accessibility action is not shown as a click, and a missing position is not guessed.
+    Given a machine step that showed a UI element's context menu through accessibility, and a machine step that clicked at a position that was not recorded.
+    When a maintainer selects each step in the agent's trajectory.
+    Then the first step's snapshots show a dashed box around the UI element labelled "AX show menu", and no right-click marker.
+    And the second step's snapshots show no marker, and its Pointer row says "Position not recorded".
+
   @ACC-VU-11 @proposed @VU-09 @PS-D31 @PS-D32 @PS-D39
   Scenario Outline: The agent operates the computer the way the person asked.
     Given TextEdit is open with an empty document in a relay machine.

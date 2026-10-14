@@ -585,7 +585,8 @@ export class RelayBackend implements ExecutionBackend {
       try { screenshot = { data: (await this.#session.screenshot(file, options.signal)).toString("base64"), mimeType: "image/png" }; }
       catch (error) { if (options.signal?.aborted) throw new BackendError("aborted", "the window read was cancelled"); }
     }
-    return toWindowRead(window, appActive, result.state, this.#options.maxTreeNodes, screenshot, performance.now() - started);
+    const read = toWindowRead(window, appActive, result.state, this.#options.maxTreeNodes, screenshot, performance.now() - started);
+    return this.#desktopScale !== undefined ? { ...read, desktopScale: this.#desktopScale } : read;
   }
   async act(window: WindowRef, action: BackendAction, signal?: AbortSignal): Promise<ActionOutcome> {
     const { value, evidence } = await this.#session.labelled(action.label, () => this.#driver.act(window, action, signal));

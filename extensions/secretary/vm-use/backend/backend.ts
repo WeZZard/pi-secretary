@@ -55,6 +55,11 @@ export interface WindowRead {
   readMs: number;
   /** Relay step identifiers of this read, such as `vu-0007`, to find its evidence (design §11.2). */
   evidence?: string[];
+  /**
+   * Display pixels per screen point, when the backend measured it. The trajectory viewer places a
+   * UI element's frame on the display's snapshot with it (decision PS-D60, design §12.3, Pointer).
+   */
+  desktopScale?: number;
 }
 
 /** `label` names the plan step in the relay's evidence, such as `run-muhqd509 new_line: verify` (design §11.2). */

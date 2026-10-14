@@ -893,6 +893,44 @@ Decisions [PS-D17, PS-D18 and PS-D40](../decisions.md) and [VU-08](../user-stori
 - A step without a start has no lead and is passed over. A negative lead is not recorded; between host and guest times only a clock difference causes one.
 - The page shows `endAt` minus `at` as the step's time, in the caption, the monitor's heading and the panel, and shows the lead in the pill before the step, with a tooltip that names both steps and the edge. It computes neither.
 
+**Pointer.** Decision [PS-D60](../decisions.md) and the [interaction design §1.2](../ux/vm-use.md#12-click-markers): the trajectory, not the page, gives each machine step that clicked or acted on a UI element a `pointer`, in `pointer.ts`. The page draws the markers from it and computes nothing.
+
+| Field | Meaning |
+| --- | --- |
+| `kind` | `click` for a mouse click, `element` for an accessibility action on a UI element, or `unplaced` when the step clicked but its position is not known. |
+| `tool` | The driver tool the command called, such as `click` or `right_click`. |
+| `button` | For `click`: `left`, `right` or `middle`. |
+| `count` | For `click`: the number of clicks: 2 for `double_click`, otherwise the command's `count`, or 1. |
+| `modifiers` | For `click`: the modifier keys of the command's `modifier` argument, in its order. |
+| `action` | For `element`: `press`, `show_menu`, `open`, `set_value`, or the command's own `action` such as `pick`. |
+| `point` | For `click`: the point in snapshot pixels, with its fractions of the snapshot's width and height. |
+| `points` | For `click`: the same point in screen points, from the driver's answer, else from the display scale. |
+| `frame` | For `element`, and for a `click` placed at a UI element's centre: the UI element's frame in snapshot pixels, with its role and name. |
+| `source` | `command` when the command gave the point, `element` when it was taken from a UI element's frame. |
+| `reason` | For `unplaced`, and for a point outside the snapshot: why there is no marker. |
+
+The trajectory reads the button and the position from the command the relay recorded for the machine step, by these rules:
+
+| Command | Button and count | Position |
+| --- | --- | --- |
+| `click` with `scope: "desktop"`, `x` and `y` | `button`, or `left` when it is absent; `count`, or 1 | `x` and `y` are display pixels. The snapshot is the whole display in display pixels (3840 × 2160 in the S1 runs, with screen point (773, 455) at pixel (1546, 910)), so they are the snapshot's pixels. |
+| `click` with `pid`, `window_id`, `x` and `y` | As above | Window-local screenshot pixels. The window screenshot's scale and origin on the display are not recorded, so they are always `unplaced`. |
+| `right_click` with `x` and `y` | `right`, 1 | As for `click` with `pid` and `window_id`. |
+| `double_click` with `x` and `y` | `left`, 2 | As for `click` with `pid` and `window_id`. |
+| `click` with `element_index` and `button: "middle"` | `middle`, 1 | The UI element's centre: the driver falls back to a pixel middle click there. |
+| `click` with `element_index` | `element`, the command's `action` when it gives one; otherwise `show_menu` when `button` is `right`, else `press` | The UI element's frame. |
+| `double_click` with `element_index` | `element`, action `open` | The UI element's frame. |
+| `right_click` with `element_index` | `element`, action `show_menu` | The UI element's frame. The driver shows the menu through the accessibility action and presses no button. |
+| `set_value` with `element_index` | `element`, action `set_value` | The UI element's frame. |
+
+- A UI element's frame comes from the extension's window read of the same window, by `pid` and `window_id`, whose relay step identifiers come latest before the machine step in the same machine (Section 12.1). The driver keeps a window's element indices until the next read of that window, so a later read of another window does not replace it. Without such a read the step is `unplaced`.
+- The driver names the UI element it acted on in its answer, such as `[12] AXTextField`. A role other than the read's role at that index means another read, and the step is `unplaced`.
+- The read's frames are in screen points. The observation record keeps the display scale, the display pixels per screen point that the relay client measures for desktop clicks, and the frame is multiplied by it. For a read recorded before the record kept the scale, the scale is measured as the relay client measures it: the snapshot's width divided by the width of the widest menu bar UI element in the read, taken only between 1 and 4. A read without a menu bar then gives `unplaced`.
+- A desktop click's screen point comes from the driver's answer, `screen-point (x, y)`, else from the display scale.
+- The command an agent sends straight through the relay, as the Claude Code comparison run does, is read by the same rules.
+- A point outside the snapshot keeps its coordinates and gets a `reason`, and the page draws no marker for it.
+- The page places a marker by the point's fraction of the snapshot's width and height, so the marker follows the picture at every size.
+
 **The moved app**
 
 - `page.ts` renders the page from the model, as a pure function; `behaviour.ts` adds the keys, the lightbox and the file windows; `main.ts` fetches the model and renders it. They keep the relay's structure, so a change to one app can be carried to the other by reading the diff.

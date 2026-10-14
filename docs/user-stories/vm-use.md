@@ -97,6 +97,7 @@ As a maintainer reviewing a run, I want one trajectory that puts the agent's sid
 - In the mode `online`, the plan's tool call shows what the online model answered for each step, which steps needed approval and why, whether a person was asked, their answer, and how long the answer took.
 - A plan step that sent nothing, such as a step of a plan that a person declined or a step that never ran, is shown as well.
 - Each step shows whether the agent did it in the host or it ran in the guest machine, and how long each step lasted. The time before each step started, from the end of the step before it or from the start of the step that contains it, is shown between them.
+- A machine step that clicked shows on its snapshots where the click landed, and which mouse button pressed it: left, right or middle. A step that acted on a UI element through accessibility, with no mouse button, shows that UI element instead. A step whose position was not recorded says so.
 - Machine steps that no plan step or observation asked for, such as the checks after the agent's run, are counted in the Overview.
 - An agent that was resumed on a second machine shows both machines in one trajectory.
 - The trajectory is labelled as recorded evidence, not as a person's review, and it stays in local, ignored storage.
@@ -128,6 +129,6 @@ This story comes from decisions [PS-D31, PS-D32 and PS-D39](../decisions.md).
 | Approve VU-01 to VU-07. | Approved as written on 2026-09-24. |
 | Should VU-05 require the agent to act again when the result is already on screen, or only to say that it did not act? | Settled by VU-05 as approved: the report says that the result was already on screen, and the agent does not claim it. |
 | Revise VU-04 for the permission check modes. | Revised for the owner's decisions PS-D53 and PS-D54 on 2026-10-05. The owner has not approved the revised text. |
-| Add VU-08. | Added by the owner's decision PS-D17 on 2026-09-30, and revised by PS-D40, PS-D41, PS-D43 and PS-D44 on 2026-10-03. |
+| Add VU-08. | Added by the owner's decision PS-D17 on 2026-09-30, and revised by PS-D40, PS-D41, PS-D43 and PS-D44 on 2026-10-03, and by PS-D60 on 2026-10-14. |
 | Add VU-09. | Added by the owner's decisions PS-D31 and PS-D32 on 2026-10-01, and revised by PS-D39 on 2026-10-02. |
 | Does the parent's view of a running vm-use agent need its own interaction design? | Open. The recommendation is yes: the fleet view should show the current step and the last check, which the subagent interaction design does not cover. |

@@ -8,7 +8,7 @@
 // selects its before view; in the Overview, the focused image's), and closes
 // any open lightbox wherever the focus is. While a lightbox is open, the arrow
 // keys and its arrows move through its sequence, and the page follows to the
-// item's step. The run's time is shown in the reader's own time zone, and a
+// item's step. The key M hides and shows the click markers. The run's time is shown in the reader's own time zone, and a
 // file's window reads the file when it first opens.
 
 /** The most of a file a window shows. */
@@ -157,6 +157,12 @@ export function bind(doc: Document = document) {
       const i = current(), v = i < 0 ? null : views()[i];
       const lb = v && doc.getElementById(v.id.replace(/^step-/, "lightbox-"));
       if (lb) open(lb);
+      return;
+    }
+    // M hides and shows the click markers, in the viewport and in a lightbox alike (docs/ux/vm-use.md §1.2).
+    if (e.key === "m" || e.key === "M") {
+      const marks = doc.getElementById("show-marks") as HTMLInputElement | null;
+      if (marks) { e.preventDefault(); marks.checked = !marks.checked; }
       return;
     }
     const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
