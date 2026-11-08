@@ -7,6 +7,7 @@ import { createAssistantMessageEventStream, InMemoryCredentialStore, type Assist
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { GoalEngine } from "../../extensions/secretary/goal-engine.ts";
 import { installSecretary } from "../../extensions/secretary/index.ts";
+import { providerContext } from "./provider-context.ts";
 
 export async function discoverySession(t: TestContext, options: {
   setup?: (root: string, agentDir: string) => Promise<void>;
@@ -46,12 +47,12 @@ export async function discoverySession(t: TestContext, options: {
     extensionFactories: [pi => {
       pi.registerProvider(model.provider, { api: model.api, baseUrl: model.baseUrl, apiKey: "fixture", models,
         streamSimple(m, context, request) {
-          const parent = context.tools?.some(tool => tool.name === "Agent") ?? false;
+          const provider = providerContext(context);
+          const parent = provider.tools?.some(tool => tool.name === "Agent") ?? false;
           const calls = parent ? parentCalls : childCalls;
           (parent ? parentModels : childModels).push(`${m.provider}/${m.id}`);
           if (!parent) childReasoning.push(request?.reasoning);
-          calls.push({ ...context, messages: structuredClone(context.messages),
-            tools: context.tools?.map(({ name, description, parameters }) => ({ name, description, parameters })) });
+          calls.push({ ...provider, messages: structuredClone(provider.messages) });
           const index = calls.length - 1;
           const stream = createAssistantMessageEventStream();
           void (async () => {
