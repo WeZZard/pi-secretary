@@ -1,6 +1,6 @@
 {
   "name": "pi-secretary",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A personal pi coding agent extension.",
   "license": "MIT",
   "author": "WeZZard",
@@ -29,16 +29,16 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "0.85.1",
-    "@earendil-works/pi-coding-agent": "0.85.1",
-    "@earendil-works/pi-tui": "0.85.1",
+    "@earendil-works/pi-ai": "1.5.0",
+    "@earendil-works/pi-coding-agent": "1.5.0",
+    "@earendil-works/pi-tui": "1.5.0",
     "typebox": "^1.3.11"
   },
   "devDependencies": {
     "@cucumber/gherkin": "42.0.1",
-    "@earendil-works/pi-ai": "^0.85.1",
-    "@earendil-works/pi-coding-agent": "0.85.1",
-    "@earendil-works/pi-tui": "^0.85.1",
+    "@earendil-works/pi-ai": "1.5.0",
+    "@earendil-works/pi-coding-agent": "1.5.0",
+    "@earendil-works/pi-tui": "1.5.0",
     "@xterm/headless": "6.0.0",
     "typebox": "^1.3.11",
     "typescript": "^5.9.3"

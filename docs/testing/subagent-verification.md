@@ -8,6 +8,18 @@
 
 **Related documents:** [Architecture](../arch/subagents.md), [requirements](../user-stories/subagents.md), [interaction design](../ux/subagents.md), [testing guide](README.md), and [delivery record](../../.plans/2026-09-17-subagent-support.md).
 
+## 2026-11-08: Built-in tool-extension construction in child sessions
+
+- The tested implementation is the working tree based on `50c1021`, implementing [SA-01](../user-stories/subagents.md#sa-01-delegate-a-bounded-task), [Subagents §8.1](../arch/subagents.md#81-resource-and-tool-policy), [Subagents §8.2](../arch/subagents.md#82-supported-pi-apis-and-compatibility-tests), and [PS-D6](../decisions.md). Pi 1.5.0 is the only supported host.
+- Three live child launches failed with `Approved child tools cannot be loaded: codemode`. A real-SDK regression against the unchanged runner and pi 1.5.0 reproduced the same failure before a provider request. The child inherited active tool names without reconstructing the built-in extensions that register them.
+- `built-in-extensions.ts` imports the public codemode, tool-search, and MCP factories directly and supplies them as replaceable built-in descriptors to every fresh child loader. Peer and development dependencies require pi 1.5.0, and no compatibility branch or test skip remains.
+- The 1.5.0 migration also updates normalized transcript tool filtering, `finishTurn` lifecycle handling, user-versus-custom `before_agent_start` classification, provider-context test adapters, two-part compaction fixtures, terminal focus markers, and typed tool-result details. Directory snapshot creation no longer pre-creates the copy destination, which resolves the four existing workspace failures.
+- The codemode regression executes a real script whose nested `tools.read()` returns the project-instruction sentinel. The disabled-built-in control fails closed before a provider request. Both tests execute unconditionally and pass.
+- `npm run check` passes. `npm test` passes all 835 tests with no failures, cancellations, or skips. Acceptance syntax and traceability validation passes for 12 Gherkin files and 115 scenario identities. `npm pack --dry-run` includes the new adapter. Mermaid lint could not run because `mmlint` is not installed in the development environment.
+- Reproduce with `npm ci && npm run check && npm test && npm run lint:acceptance`. Run the focused codemode checks with `node --experimental-strip-types --test --test-concurrency=1 --test-name-pattern='built-in|disabled built-in' tests/agents/runner.test.ts`.
+- A fresh pi process used the real configured provider to launch `run_27fae27b-b14b-4fde-a40f-a75db8c27942`. The child succeeded with output `codemode-150-ok`, and its persisted transcript contains exactly one top-level `codemode` call and one successful nested `bash` call.
+- Fresh configuration loading and catalog discovery both succeed. An already-running parent that still reports `invalid_or_unreadable_configuration` must reload or restart to replace its stale contribution.
+
 ## 2026-09-23: Outcome acknowledgement and the undelivered-outcome projection
 
 - The tested implementation is the working tree based on `dc36669`, implementing [architecture Section 3](../arch/subagents.md#3-invariants) Invariants 14 to 16, [Section 4.4](../arch/subagents.md#44-taskoutput), [Section 6.1](../arch/subagents.md#61-entities), and [Section 10](../arch/subagents.md#10-completion-delivery-and-model-context). The base commit alone does not contain this change.

@@ -107,7 +107,7 @@ test("Pi context abort reaches ModelRuntime but auth cancellation prevents the p
   h.api.sendMessage({ customType: "test:automatic-probe", content: "Local admission probe", display: false }, { triggerTurn: true });
   assert.equal(h.session.isStreaming, true, "custom message marks the host busy synchronously");
   await h.session.waitForIdle();
-  assert.deepEqual(hooks, ["context"]);
+  assert.deepEqual(hooks, ["before_agent_start", "context"]);
   assert.deepEqual(runtimeAborts, [true], "the agent still enters ModelRuntime with its aborted run signal");
   // ModelRuntime.prepareRequest -> getAuth -> pi-ai resolveProviderAuthWithSignal
   // checks signal.throwIfAborted before invoking the inline provider. This is not

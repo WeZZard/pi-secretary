@@ -4,6 +4,8 @@ import { join } from "node:path";
 import type { Context } from "@earendil-works/pi-ai";
 import { discoverySession } from "../support/discovery-session.ts";
 import { runFeatures, type ScenarioBindings } from "./support.ts";
+import { runDetails } from "../support/tool-details.ts";
+import { assertNoPersistedRequestContext } from "../support/persisted-context.ts";
 
 function catalog(context: Context) {
   const message = context.messages.at(-1)!;
@@ -26,7 +28,7 @@ const bindings: ScenarioBindings = {
     assert.equal(catalog(h.parentCalls[0]!).definitions.find((d: any) => d.type === "custom").description, "Installed custom description");
     assert.equal(h.session.messages.filter(m => m.role === "toolResult").length, 0);
     assert.equal(h.childCalls.length, 0);
-    assert.doesNotMatch(await readFile(h.session.sessionFile!, "utf8"), /<secretary-runtime-state>/);
+    assertNoPersistedRequestContext(await readFile(h.session.sessionFile!, "utf8"));
     assert.deepEqual(h.session.messages.find(m => m.role === "user")?.content, [{ type: "text", text: prompt }]);
   },
   "ACC-SA-13-02": async ({ t }) => {
@@ -41,7 +43,7 @@ const bindings: ScenarioBindings = {
     for (const request of h.childCalls) assert.match(request.systemPrompt ?? "", /ORIGINAL_ROLE/);
     assert.equal(catalog(h.parentCalls[1]!).definitions.find((d: any) => d.type === "custom").description, "Edited");
     for (const result of h.session.messages.filter(m => m.role === "toolResult")) {
-      assert.equal(result.isError, false); assert.equal(result.details.status, "succeeded");
+      assert.equal(result.isError, false); assert.equal(runDetails(result).status, "succeeded");
     }
   },
   "ACC-SA-13-03": async ({ t }) => {

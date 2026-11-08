@@ -34,7 +34,7 @@ async function terminalHarness(mode: "main" | "alternate") {
     moveBy(n) { this.write(n < 0 ? `\x1b[${-n}A` : `\x1b[${n}B`); },
     hideCursor() {}, showCursor() {}, clearLine() { this.write("\x1b[2K"); },
     clearFromCursor() { this.write("\x1b[J"); }, clearScreen() { this.write("\x1b[2J\x1b[H"); },
-    setTitle() {}, setProgress() {},
+    setTitle() {}, setProgress() {}, setProgramStatus() {},
   };
   let state = inspectorState();
   const tui = mode === "main" ? new TuiMainScreen(terminal) : new TuiAltScreen(terminal);

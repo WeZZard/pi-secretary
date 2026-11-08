@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import type { Context, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
+import type { Context, JsonObject, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import { goalAgentCompositionSession } from "../support/goal-agent-composition-session.ts";
 import { flushAutomaticScheduling } from "../support/host-session.ts";
+import { runDetails } from "../support/tool-details.ts";
 
-const call = (id: string, name: string, args: Record<string, unknown>): ToolCall => ({ type: "toolCall", id, name, arguments: args });
+const call = (id: string, name: string, args: JsonObject): ToolCall => ({ type: "toolCall", id, name, arguments: args });
 const text = (value: string) => [{ type: "text" as const, text: value }];
 const results = (context: Context) => context.messages.filter((m): m is ToolResultMessage => m.role === "toolResult");
 const SETUP = "Create a goal to summarize fixture release notes. Delegate the initial summary, then mark the goal blocked because release approval is unavailable.";
@@ -35,7 +36,7 @@ test("SA-08: fresh user Agent and finished-child SendMessage execute while the g
       const pending = ["recover-new", "recover-existing"].flatMap(id => {
         const result = seen.find(m => m.toolCallId === id);
         return result && !result.isError && !has(`observe-${id}`)
-          ? [call(`observe-${id}`, "TaskOutput", { task_id: result.details.runId, block: true, timeout: 10000 })] : [];
+          ? [call(`observe-${id}`, "TaskOutput", { task_id: runDetails(result).runId, block: true, timeout: 10000 })] : [];
       });
       return pending.length ? pending : text("Recovery outcomes inspected; leave the goal blocked.");
     },
@@ -80,8 +81,8 @@ test("SA-08: fresh user Agent and finished-child SendMessage execute while the g
     for (const outcome of outcomes) {
       const observation = h.session.messages.find((m): m is ToolResultMessage => m.role === "toolResult" && m.toolCallId === `observe-${outcome.toolCallId}`);
       assert.ok(observation && !observation.isError, "The parent must observe completion, not only acceptance");
-      assert.equal(observation.details.status, "succeeded");
-      const run = h.repository.getRun(outcome.details.runId)!;
+      assert.equal(runDetails(observation).status, "succeeded");
+      const run = h.repository.getRun(runDetails(outcome).runId)!;
       assert.equal(run.status, "succeeded");
       assert.match(await readFile(run.outputPath, "utf8"), outcome.toolName === "Agent" ? /NETWORK_DIAGNOSTICS_DONE/ : /BACKUP_PROCEDURES_DONE/);
       if (outcome.toolName === "SendMessage") {
