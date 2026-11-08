@@ -11,8 +11,9 @@ import {
   createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { compose, RequestContextComposer, type PreparedContext } from "../../extensions/secretary/context/index.ts";
+import { providerContext } from "../support/provider-context.ts";
 
-test("Pi 0.85.1 context hook converts one synthetic envelope after tool results without persisting it", { timeout: 15000 }, async (t) => {
+test("Pi context hook converts one synthetic envelope after tool results without persisting it", { timeout: 15000 }, async (t) => {
   const output = resolve("test-results/context");
   await mkdir(output, { recursive: true });
   const root = await mkdtemp(join(output, "sdk-"));
@@ -44,8 +45,8 @@ test("Pi 0.85.1 context hook converts one synthetic envelope after tool results 
     extensionFactories: [(pi) => {
       pi.registerProvider(model.provider, { api: model.api, baseUrl: model.baseUrl, apiKey: "test", models: [model],
         streamSimple(requestModel, context) {
-          calls.push({ ...context, messages: structuredClone(context.messages),
-            tools: context.tools?.map(({ name, description, parameters }) => ({ name, description, parameters })) });
+          const provider = providerContext(context);
+          calls.push({ ...provider, messages: structuredClone(provider.messages) });
           const tools = calls.length === 1;
           const message: AssistantMessage = {
             role: "assistant", api: requestModel.api, provider: requestModel.provider, model: requestModel.id,
@@ -97,9 +98,10 @@ test("Pi 0.85.1 context hook converts one synthetic envelope after tool results 
     assert.match(text(call.messages.at(-2)!), /synthetic:alpha.*synthetic:beta/);
     assert.equal(call.messages.at(-2)!.role, "user");
     assert.equal(text(call.messages.at(-1)!), "Later hook");
-    assert.equal(text(call.messages[0]), lookalike);
-    assert.ok(Array.isArray(call.messages[0].content));
-    assert.deepEqual(call.messages[0].content.at(-1), image);
+    const firstUser = call.messages.find(message => message.role === "user")!;
+    assert.ok(text(firstUser).startsWith(lookalike));
+    assert.ok(Array.isArray(firstUser.content));
+    assert.deepEqual(firstUser.content.at(-1), { type: "text", text: `${lookalike}\n\n[Image omitted: could not be resized below the inline image size limit.]` });
   }
   assert.deepEqual(continuation.slice(-4, -2).map((m) => m.role), ["toolResult", "toolResult"]);
   assert.deepEqual(continuation.filter((m) => m.role === "toolResult").map((m) => m.toolCallId), ["first", "second"]);

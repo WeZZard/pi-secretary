@@ -6,7 +6,7 @@
 
 **Composition revision:** The subagent module must be independent of goal management, as specified in [Section 11](#11-subsystem-independence). Runtime decoupling is implemented in the working tree and verified with standalone and real-SDK composition tests. The [verification report](../testing/subagent-verification.md#2026-09-20-goal-independent-subagents-and-external-composition) records the checks and deployment limits.
 
-**Implementation baseline:** `01f851a`, tested with Pi 0.85.1. Claude Code 2.1.272 supplies the tool-contract reference; the [historical research](../research/subagent-system-comparison.md) records the original source revisions.
+**Implementation baseline:** Pi 1.5.0. Claude Code 2.1.272 supplies the tool-contract reference; the [historical research](../research/subagent-system-comparison.md) records the original source revisions. Pi versions older than 1.5.0 are unsupported.
 
 **Related documents:** [Requirements](../user-stories/subagents.md), [interaction design](../ux/subagents.md), [research](../research/subagent-system-comparison.md), [goal architecture](architecture.md), and [documentation responsibilities](../README.md).
 
@@ -609,7 +609,7 @@ sequenceDiagram
 - The selected resource loader retains applicable project instructions and trusted resources while preventing Secretary's root initialization in a child.
 - Each fresh child resource loader receives the same built-in tool-extension construction recipe as the pi CLI: `codemode`, `tool-search`, and `mcp` are supplied as replaceable built-in descriptors through their public factories. The parent-authentication adapter supplies the selected model provider, so the child does not reconstruct the CLI's llama.cpp provider extension.
 - Built-in extension registration and tool authorization are separate invariants. The resource loader reconstructs every host-supported built-in tool extension, while the effective active tool set remains the intersection of parent-authorized tools and the definition's allowlist, minus explicit denials and child-incompatible operations.
-- Feature detection returns an empty built-in construction recipe on hosts that predate the public built-in factories. It must not substitute always-on inline factories, because descriptor-based loading preserves `builtin:<name>` enablement, disablement, and replacement behavior.
+- The built-in factories are imported directly from the supported pi 1.5.0 API. The loader uses built-in descriptors rather than always-on inline factories, because descriptor-based loading preserves `builtin:<name>` enablement, disablement, and replacement behavior.
 - The host-supplied capability policy is enforced in both discovery and execution paths. Delegation tools are available within the nesting limit. Restrictions owned by other subsystems are supplied by the host, not encoded as subsystem-specific tool names here.
 - The effective tool set is the intersection of parent-authorized tools and the definition's allowlist, minus explicit denials and child-incompatible operations.
 - Late-registered tools undergo the same checks. Descriptions or active-tool filtering alone are not sufficient enforcement.
@@ -624,7 +624,7 @@ sequenceDiagram
 - Extension shutdown must run exactly once for each initialized child. Prefer supported runtime disposal when it provides this guarantee; otherwise encapsulate the required lifecycle sequence in one adapter and verify it against the supported pi version.
 - Model-runtime inheritance, permission propagation, lifecycle teardown, and editor composition are implementation prerequisites to test against the installed SDK. The design does not assume that a private getter or internal field is a stable API.
 - The implementation must either pass the supported package-version matrix or narrow its peer dependency range. Passing only the installed version is not evidence for the full declared range.
-- The 0.85.1 baseline predates built-in tool extensions, so built-in inheritance tests skip only when the host does not export the corresponding public factories. The installed pi 1.5.0 runtime executes those tests. A broader peer-dependency migration requires a separate full type and runtime compatibility effort.
+- Pi 1.5.0 is the only supported development and runtime version. Peer dependencies and development dependencies require that version, and built-in inheritance tests always execute rather than skipping on an older host.
 
 ### 8.3 Child UI capabilities
 

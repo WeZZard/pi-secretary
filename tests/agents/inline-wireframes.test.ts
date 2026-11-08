@@ -120,7 +120,7 @@ test("registered Agent and SendMessage hooks keep unstructured rejection errors 
 test("TaskStop retains the generic host header and result rather than Agent presentation", async t => {
   const f = await fixture(t);
   const lines = f.render("TaskStop", { args: { task_id: f.run.runId }, result: f.response({ status: "cancelled" }) });
-  assert.equal(lines[0], "TaskStop");
+  assert.equal(lines[0], "TaskStop task_id=\"run_1\"");
   assert.ok(lines.includes("Status: cancelled"));
   assert.ok(!lines.some(line => line.startsWith("Agent ·")));
 });
@@ -172,7 +172,7 @@ test("WF-F: a compact completion with statistics uses the same identity and outc
 test("WF-G: legacy TaskOutput keeps its host header, metadata preview, and expansion notice", async t => {
   const f = await fixture(t);
   const lines = f.render("TaskOutput", { args: { task_id: f.run.runId, block: false }, result: f.response() });
-  same(lines.slice(0, 11), ["TaskOutput", "Agent: agent_1", "Run: run_1", "Status: succeeded",
+  same(lines.slice(0, 11), ["TaskOutput task_id=\"run_1\" block=false", "Agent: agent_1", "Run: run_1", "Status: succeeded",
     "Description: Inspect authentication", `Model: ${model} (invocation model)`, "Working directory: /repo",
     "Isolation: none (parent working directory).", "Output: /output/agent_1.txt", "Partial: false", ""]);
   assert.match(lines[11] ?? "", /more lines,.*to expand/);

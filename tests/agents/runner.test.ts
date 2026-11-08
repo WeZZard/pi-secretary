@@ -4,18 +4,16 @@ import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
-import { createAssistantMessageEventStream, InMemoryCredentialStore, type AssistantMessage, type Context, type Model } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, InMemoryCredentialStore, type AssistantMessage, type Context, type JsonObject, type Model } from "@earendil-works/pi-ai";
 import { ModelRuntime, ModelRegistry, SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import * as piHost from "@earendil-works/pi-coding-agent";
 import { createChildRunner } from "../../extensions/secretary/agents/runner.ts";
 import { childSession, inChildSession, runInChildSession } from "../../extensions/secretary/agents/child-context.ts";
 import { AgentRepository } from "../../extensions/secretary/agents/storage/agent-repository.ts";
 import type { AgentRecord, AgentRun, RunnerHooks } from "../../extensions/secretary/agents/records.ts";
 import { goalTokenDeltaForUsage } from "../../extensions/secretary/goal/accounting.ts";
+import { providerContext } from "../support/provider-context.ts";
 
-const hostSupportsBuiltInCodemode = typeof (piHost as unknown as Record<string, unknown>).createCodemodeExtension === "function";
-
-async function fixture(t: TestContext, responses: Array<string | { tool: string; args?: Record<string, unknown> } | { error: string }> = ["done"]) {
+async function fixture(t: TestContext, responses: Array<string | { tool: string; args?: JsonObject } | { error: string }> = ["done"]) {
   const root = await mkdtemp(join(tmpdir(), "secretary-child-"));
   const old = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = join(root, "agent");
@@ -39,7 +37,8 @@ async function fixture(t: TestContext, responses: Array<string | { tool: string;
     streamSimple(m, context, options) {
       assert.equal(inChildSession(), true);
       assert.equal(options?.apiKey, "fake");
-      calls.push({ modelId: m.id, ...context, messages: structuredClone(context.messages), tools: context.tools?.map(({ name, description, parameters }) => ({ name, description, parameters })) });
+      const provider = providerContext(context);
+      calls.push({ modelId: m.id, ...provider, messages: structuredClone(provider.messages) });
       const response = responses.shift() ?? "done";
       const isError = response === "error" || (typeof response === "object" && "error" in response);
       const errorMessage = typeof response === "object" && "error" in response ? response.error : "deterministic failure";
@@ -89,7 +88,7 @@ test("SDK child inherits public provider, project instructions, role, tools, and
   assert.match(f.calls[0]!.systemPrompt!, /Role sentinel/);
   assert.match(f.calls[0]!.systemPrompt!, /Project instruction sentinel/);
   assert.deepEqual(f.calls[0]!.tools?.map((tool) => tool.name), ["read"]);
-  assert.equal(f.calls[0]!.messages.length, 1);
+  assert.equal(f.calls[0]!.messages.length, 2, "The normalized transcript contains the system message and the user task");
   assert.equal(goalTokenDeltaForUsage(f.usage[0]!.value), 11);
   assert.match(f.usage[0]!.id, /^r:message:/);
   assert.match(await readFile(f.path, "utf8"), /Task sentinel/);
@@ -98,7 +97,7 @@ test("SDK child inherits public provider, project instructions, role, tools, and
   await child.dispose(); await child.dispose();
 });
 
-test("SDK child constructs inherited built-in tools and executes codemode", { skip: !hostSupportsBuiltInCodemode }, async (t) => {
+test("SDK child constructs inherited built-in tools and executes codemode", async (t) => {
   const f = await fixture(t, [{ tool: "codemode", args: {
     code: `const result = await tools.read({ path: "AGENTS.md" }); return result.includes("Project instruction sentinel.") ? "codemode-ok" : "missing";`,
   } }, "done"]);
@@ -111,7 +110,7 @@ test("SDK child constructs inherited built-in tools and executes codemode", { sk
   assert.match(transcript, /codemode-ok/, "The script's nested read returned the project-instruction sentinel");
 });
 
-test("SDK child construction preserves disabled built-in extensions", { skip: !hostSupportsBuiltInCodemode }, async (t) => {
+test("SDK child construction preserves disabled built-in extensions", async (t) => {
   const f = await fixture(t);
   await writeFile(join(f.root, "agent", "settings.json"), JSON.stringify({
     compaction: { enabled: false }, retry: { enabled: false }, extensions: ["-builtin:codemode"],

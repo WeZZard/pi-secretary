@@ -6,6 +6,7 @@ import { discoverySession } from "../support/discovery-session.ts";
 import { AgentBranchScope } from "../../extensions/secretary/agents/branch-scope.ts";
 import { SessionManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { AgentRepository } from "../../extensions/secretary/agents/storage/agent-repository.ts";
+import { runDetails } from "../support/tool-details.ts";
 
 const prompt = "Spawn 10 sub-agents to learn random parts of this repository and synthesize a report from what they learned.";
 
@@ -111,7 +112,7 @@ test("rewind of a resumption shows the retained run and refuses an advanced chil
   await h.session.prompt("Inspect the retained reader.");
   const result = h.session.messages.find(message => message.role === "toolResult" && message.toolName === "TaskOutput");
   assert.ok(result?.role === "toolResult" && !result.isError);
-  assert.equal(result.details.runId, first.runId);
+  assert.equal(runDetails(result).runId, first.runId);
   assert.ok(!JSON.stringify(h.parentCalls[4]!.messages).includes(resumed.runId));
   await h.session.prompt("Try resuming from this branch.");
   const rejected = h.session.messages.filter(message => message.role === "toolResult" && message.toolName === "SendMessage").at(-1);
