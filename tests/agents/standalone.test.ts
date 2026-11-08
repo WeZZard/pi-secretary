@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { deferred, standaloneAgentHarness } from "../support/standalone-agent-harness.ts";
-import { providerContext } from "../support/provider-context.ts";
-import { runDetails } from "../support/tool-details.ts";
 
 function assertAgentOnlySchema(h: Awaited<ReturnType<typeof standaloneAgentHarness>>) {
   const tables = h.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(row => String(row.name));
@@ -92,7 +90,7 @@ test("standalone cancellation settles the actual child and records completion wi
 test("standalone root guidance reaches a live nested owner with session-local branch entries", { timeout: 30000 }, async t => {
   const delegatorHeld = deferred(), releaseDelegator = deferred(), workerHeld = deferred(), releaseWorker = deferred();
   const h = await standaloneAgentHarness(t, { respondChild: async context => {
-    if ((providerContext(context).systemPrompt ?? "").includes("STANDALONE_DELEGATOR")) {
+    if ((context.systemPrompt ?? "").includes("STANDALONE_DELEGATOR")) {
       const launched = context.messages.find(message => message.role === "toolResult" && message.toolCallId === "nested-guidance-launch");
       if (!launched) return [{ type: "toolCall", id: "nested-guidance-launch", name: "Agent", arguments: {
         description: "Nested guided task", prompt: "NESTED_INITIAL", subagent_type: "worker", name: "nested-guided", run_in_background: false,
@@ -129,13 +127,13 @@ test("standalone root guidance reaches a live nested owner with session-local br
 
 test("standalone child installer supports real nested delegation under generic host tool policy", { timeout: 30000 }, async t => {
   const h = await standaloneAgentHarness(t, { respondChild: async context => {
-    if ((providerContext(context).systemPrompt ?? "").includes("STANDALONE_DELEGATOR")) {
+    if ((context.systemPrompt ?? "").includes("STANDALONE_DELEGATOR")) {
       const result = context.messages.find(message => message.role === "toolResult" && message.toolCallId === "nested-launch");
       if (!result) return [{ type: "toolCall", id: "nested-launch", name: "Agent", arguments: {
         description: "Nested standalone work", prompt: "Return nested result", subagent_type: "worker", name: "nested", run_in_background: false,
       } }];
       assert.ok(result.role === "toolResult" && !result.isError, JSON.stringify(result));
-      assert.equal(runDetails(result).status, "succeeded");
+      assert.equal(result.details.status, "succeeded");
       return [{ type: "text", text: "NESTED_OBSERVED" }];
     }
     return [{ type: "text", text: "NESTED_DONE" }];

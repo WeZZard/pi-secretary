@@ -12,7 +12,6 @@ import { installSecretary } from "../../extensions/secretary/index.ts";
 import { AgentService, type LaunchSpec } from "../../extensions/secretary/agents/service.ts";
 import { defaultAgentUi } from "../../extensions/secretary/agents/configuration.ts";
 import { AgentRepository } from "../../extensions/secretary/agents/storage/agent-repository.ts";
-import { providerContext } from "../support/provider-context.ts";
 import { TERMINAL_STATUSES, type RunningChild } from "../../extensions/secretary/agents/records.ts";
 import type { createChildRunner } from "../../extensions/secretary/agents/runner.ts";
 import { deferred } from "./support.ts";
@@ -86,8 +85,7 @@ export async function publicHarness(t: TestContext, options: { mode?: string; co
   const arrivals = new Map<number, ReturnType<typeof deferred<void>>>();
   const call = async (index = 0) => { if (!streams[index]) { const event = arrivals.get(index) ?? deferred<void>(); arrivals.set(index, event); await event.promise; } return streams[index]!; };
   registry.registerProvider(model.provider, { api: model.api, baseUrl: model.baseUrl, apiKey: "fake", models: [model], streamSimple(m, context, request) {
-    const provider = providerContext(context);
-    calls.push({ ...provider, messages: structuredClone(provider.messages) });
+    calls.push({ ...context, messages: structuredClone(context.messages), tools: context.tools?.map(({ name, description, parameters }) => ({ name, description, parameters })) });
     const stream = createAssistantMessageEventStream();
     const base = (text: string): AssistantMessage => ({ role: "assistant", api: m.api, provider: m.provider, model: m.id, content: [{ type: "text", text }], stopReason: "stop", timestamp: Date.now(), usage: { input: 100, cacheRead: 0, output: 20, cacheWrite: 0, totalTokens: 120, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } });
     let ended = false;

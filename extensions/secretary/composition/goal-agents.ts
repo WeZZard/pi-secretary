@@ -157,10 +157,7 @@ export function composeGoalAgents(pi: ExtensionAPI, engine: GoalEngine, sync: Go
     },
   };
 
-  pi.on("before_agent_start", event => {
-    ingestingUserPrompt = event.messageType === "user";
-    if (ingestingUserPrompt) source = { kind: "user" };
-  });
+  pi.on("before_agent_start", () => { ingestingUserPrompt = true; source = { kind: "user" }; });
   pi.on("message_start", event => {
     const message = event.message;
     if (message.role === "user") source = { kind: "user" };

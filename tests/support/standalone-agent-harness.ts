@@ -5,14 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { TestContext } from "node:test";
-import { createAssistantMessageEventStream, InMemoryCredentialStore, type AssistantMessage, type Context, type Model, type ToolCall, type TranscriptContext } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, InMemoryCredentialStore, type AssistantMessage, type Context, type Model, type ToolCall } from "@earendil-works/pi-ai";
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { installAgentSupport } from "../../extensions/secretary/agents/installation.ts";
 import { AgentRepository } from "../../extensions/secretary/agents/storage/agent-repository.ts";
 import { RequestContextComposer } from "../../extensions/secretary/context/index.ts";
 import type { ServiceEvent } from "../../extensions/secretary/agents/service.ts";
-import { providerContext } from "./provider-context.ts";
 
 export function deferred() {
   let resolve!: () => void;
@@ -21,7 +20,7 @@ export function deferred() {
 }
 
 export async function standaloneAgentHarness(t: TestContext, options: {
-  respondChild?: (context: TranscriptContext, index: number, signal?: AbortSignal) => Promise<AssistantMessage["content"]>;
+  respondChild?: (context: Context, index: number, signal?: AbortSignal) => Promise<AssistantMessage["content"]>;
   observeEvents?: boolean;
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), "secretary-standalone-"));
@@ -83,10 +82,9 @@ export async function standaloneAgentHarness(t: TestContext, options: {
     extensionFactories: [pi => {
       pi.registerProvider(model.provider, { api: model.api, baseUrl: model.baseUrl, apiKey: "fixture", models: [model],
         streamSimple(m, context, request) {
-          const provider = providerContext(context);
-          const child = /STANDALONE_(WORKER|DELEGATOR)/.test(provider.systemPrompt ?? "");
+          const child = /STANDALONE_(WORKER|DELEGATOR)/.test(context.systemPrompt ?? "");
           const calls = child ? childCalls : parentCalls;
-          calls.push({ ...provider, messages: structuredClone(provider.messages) });
+          calls.push({ ...context, messages: structuredClone(context.messages), tools: context.tools?.map(tool => ({ ...tool })) });
           const index = calls.length - 1;
           const stream = createAssistantMessageEventStream();
           const message: AssistantMessage = { role: "assistant", api: m.api, model: m.id, provider: m.provider,
@@ -129,13 +127,13 @@ export async function standaloneAgentHarness(t: TestContext, options: {
     async tool(name: string, args: Record<string, unknown>) {
       await session.waitForIdle();
       const id = `standalone-${++sequence}`;
-      pending = [{ type: "toolCall", id, name, arguments: args as ToolCall["arguments"] }];
+      pending = [{ type: "toolCall", id, name, arguments: args }];
       await session.prompt(`Execute fixture operation ${id}.`, { source: "rpc" });
       await session.waitForIdle();
       const result = session.messages.find(message => message.role === "toolResult" && message.toolCallId === id);
       assert.ok(result?.role === "toolResult", `Missing result for ${id}`);
       assert.equal(result.isError, false, JSON.stringify(result));
-      return { ...result, details: result.details as any };
+      return result;
     },
   };
 }

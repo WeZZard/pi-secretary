@@ -195,9 +195,7 @@ export async function createChildRunner(options: {
       session.agent.streamFunction = (requestModel, context, request) => {
         attempt.authorize();
         return previousStream(requestModel, { ...context,
-          messages: context.messages.map((message) => message.role === "system" && message.toolsAdded
-            ? { ...message, toolsAdded: message.toolsAdded.filter((tool) => guardAdmits(tool.name)) }
-            : message),
+          tools: context.tools?.filter((tool) => guardAdmits(tool.name)),
         }, request);
       };
       const previousTool = session.agent.beforeToolCall;
@@ -227,16 +225,13 @@ export async function createChildRunner(options: {
         }
         return decision;
       };
-      const previousFinishTurn = session.agent.finishTurn;
-      session.agent.finishTurn = async (event, turnSignal) => {
+      const previousStop = session.agent.shouldStopAfterTurn;
+      session.agent.shouldStopAfterTurn = async (event, turnSignal) => {
         if (agent.definition.maxTurns !== undefined && attempt.turns >= agent.definition.maxTurns) {
           attempt.partial = `Child reached maxTurns (${agent.definition.maxTurns})`;
-          return { action: "end" };
+          return true;
         }
-        if (attempt.partial !== undefined || cancelled) return { action: "end" };
-        const decision = await previousFinishTurn?.(event, turnSignal);
-        if (decision) return decision;
-        return;
+        return attempt.partial !== undefined || cancelled || (await previousStop?.(event, turnSignal) ?? false);
       };
       attempt.unsubscribe = session.subscribe((event) => {
         if (event.type === "turn_start") { attempt.turns++; hooks.turn(); }

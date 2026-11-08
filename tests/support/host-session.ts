@@ -13,7 +13,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { GoalEngine } from "../../extensions/secretary/goal-engine.ts";
 import { installSecretary } from "../../extensions/secretary/index.ts";
-import { providerContext } from "./provider-context.ts";
 
 export type Response = "success" | "error" | "overflow" | "create_goal" | "complete_goal" | "sentinel";
 
@@ -104,8 +103,8 @@ export async function hostSession(t: TestContext, options: {
       pi.registerProvider(model.provider, {
         api: model.api, baseUrl: model.baseUrl, apiKey: "test", models: [model],
         streamSimple(requestModel, context, requestOptions) {
-          const provider = providerContext(context);
-          calls.push({ context: { ...provider, messages: structuredClone(provider.messages) }, options: requestOptions,
+          calls.push({ context: { ...context, messages: structuredClone(context.messages),
+            tools: context.tools?.map(({ name, description, parameters }) => ({ name, description, parameters })) }, options: requestOptions,
             abortedAtInvocation: requestOptions?.signal?.aborted ?? false });
           const current = context.messages.filter((m) => JSON.stringify(m).includes("Authoritative current goal state."));
           const automatic = JSON.stringify(current).includes("Continue working toward the active thread goal.");

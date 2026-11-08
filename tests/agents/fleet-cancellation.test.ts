@@ -20,7 +20,7 @@ function harness(mode: "main" | "alternate") {
     columns: 120, rows: 40, kittyProtocolActive: false,
     start(onInput) { input = onInput; }, stop() {}, async drainInput() {}, write(data) { output += data; },
     moveBy(n) { this.write(n < 0 ? `\x1b[${-n}A` : `\x1b[${n}B`); }, hideCursor() {}, showCursor() {},
-    clearLine() { this.write("\x1b[2K"); }, clearFromCursor() { this.write("\x1b[J"); }, clearScreen() { this.write("\x1b[2J\x1b[H"); }, setTitle() {}, setProgress() {}, setProgramStatus() {},
+    clearLine() { this.write("\x1b[2K"); }, clearFromCursor() { this.write("\x1b[J"); }, clearScreen() { this.write("\x1b[2J\x1b[H"); }, setTitle() {}, setProgress() {},
   };
   const tui = mode === "main" ? new TuiMainScreen(terminal) : new TuiAltScreen(terminal);
   const editor = new Input();

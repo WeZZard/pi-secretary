@@ -2,13 +2,12 @@ import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { createAssistantMessageEventStream, type AssistantMessage, type Context, type JsonObject, type ToolCall, type ToolResultMessage } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, type AssistantMessage, type Context, type ToolCall, type ToolResultMessage } from "@earendil-works/pi-ai";
 import { goalAgentCompositionSession } from "../support/goal-agent-composition-session.ts";
 import { AgentAssociationStore } from "../../extensions/secretary/composition/association-store.ts";
-import { runDetails } from "../support/tool-details.ts";
 
 const text = (value: string) => [{ type: "text" as const, text: value }];
-const call = (id: string, name: string, args: JsonObject): ToolCall => ({ type: "toolCall", id, name, arguments: args });
+const call = (id: string, name: string, args: Record<string, unknown>): ToolCall => ({ type: "toolCall", id, name, arguments: args });
 const launch = (id: string, background = true) => call(id, "Agent", {
   description: "Ordering regression", prompt: `WORK_${id}`, name: id, subagent_type: "ordering-worker", run_in_background: background,
 });
@@ -220,8 +219,8 @@ test("a delayed completion notification cannot borrow a later fresh user's deleg
     const accepted = outcomes.find(message => message.toolCallId === "fresh-recovery");
     assert.ok(accepted && !accepted.isError, JSON.stringify(outcomes));
     assert.equal(h.repository.runs(h.threadId).length, 2);
-    assert.equal(store.run(runDetails(accepted).runId)?.authority, "user");
-    assert.equal(h.repository.getRun(runDetails(accepted).runId)!.status, "succeeded");
+    assert.equal(store.run(accepted.details.runId)?.authority, "user");
+    assert.equal(h.repository.getRun(accepted.details.runId)!.status, "succeeded");
     assert.equal(h.engine.service.getGoal(h.goalThreadId)!.status, "paused");
   } catch (error) { failure = error; throw error; }
   finally { childGate.resolve(); notificationGate.resolve(); h.engine.service.requestTerminalUpdate(h.goalThreadId, "paused", "user"); await retain(h, failure); }
@@ -308,7 +307,7 @@ test("accepted automatic guidance does not acquire cancellation authority over a
     const run = h.repository.runs(h.threadId)[0];
     const outcome = h.session.messages.find((message): message is ToolResultMessage => message.role === "toolResult" && message.toolCallId === "automatic-guidance");
     assert.ok(outcome && !outcome.isError, JSON.stringify(outcome));
-    assert.equal(runDetails(outcome).runId, run.runId);
+    assert.equal(outcome.details.runId, run.runId);
     assert.equal(new AgentAssociationStore(h.engine.db.connection).run(run.runId)?.authority, "user");
     h.engine.service.requestTerminalUpdate(h.goalThreadId, "paused", "user");
     assert.equal(childAborted, false);
@@ -358,8 +357,8 @@ test("a deferred nextTurn completion appended after fresh input does not replace
     assert.ok(completionIndex > userIndex && userIndex >= 0, "The real SDK must exercise nextTurn completion insertion after the fresh user message");
     const outcome = h.session.messages.find((message): message is ToolResultMessage => message.role === "toolResult" && message.toolCallId === "fresh-nextturn");
     assert.ok(outcome && !outcome.isError, JSON.stringify(outcome));
-    assert.equal(h.repository.getRun(runDetails(outcome).runId)!.status, "succeeded");
-    assert.equal(new AgentAssociationStore(h.engine.db.connection).run(runDetails(outcome).runId)?.authority, "user", "A deferred result is data attached to the new user request, not its producing authority");
+    assert.equal(h.repository.getRun(outcome.details.runId)!.status, "succeeded");
+    assert.equal(new AgentAssociationStore(h.engine.db.connection).run(outcome.details.runId)?.authority, "user", "A deferred result is data attached to the new user request, not its producing authority");
     assert.equal(h.engine.service.getGoal(h.goalThreadId)!.status, "paused");
   } catch (error) { failure = error; throw error; }
   finally { childGate.resolve(); h.engine.service.requestTerminalUpdate(h.goalThreadId, "paused", "user"); await retain(h, failure); }
@@ -394,7 +393,7 @@ test("a real budget wrap-up request can read and complete its budget-limited goa
       const outcome = outcomes.find(message => message.toolCallId === id);
       assert.ok(outcome && !outcome.isError, JSON.stringify(outcome));
     }
-    assert.equal(runDetails(outcomes.find(message => message.toolCallId === "wrap-read")!).goal.status, "budget_limited");
+    assert.equal(outcomes.find(message => message.toolCallId === "wrap-read")!.details.goal.status, "budget_limited");
     assert.equal(h.engine.service.getGoal(h.goalThreadId)!.goalId, goalId);
     assert.equal(h.engine.service.getGoal(h.goalThreadId)!.status, "complete");
     assert.equal(h.repository.runs(h.threadId).length, 0);

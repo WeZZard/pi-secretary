@@ -38,7 +38,7 @@ export function installSecretary(pi: ExtensionAPI, engine: GoalEngine, options: 
   });
   pi.on("context", (event, ctx) => ({ messages: sync.context(event, ctx) }));
   pi.on("input", (event, ctx) => { sync.receiveInput(event.text, ctx); });
-  pi.on("before_agent_start", (event) => { if (event.messageType === "user") sync.expandedInput(event.prompt); });
+  pi.on("before_agent_start", (event) => { sync.expandedInput(event.prompt); });
   pi.on("message_start", (event) => { sync.observeUserMessage(event.message); });
   pi.on("tool_call", (event) => {
     // With delegation installed, composition owns actual request provenance,

@@ -26,7 +26,7 @@ function fixture(t: TestContext) {
 }
 
 function normalize(lines: string[]): string {
-  return lines.join("\n").replaceAll("\x1b_pi:c\x07", "").replaceAll("\x1b_pi:fc\x07", "").replaceAll("\x1b_pi:/fc\x07", "").replaceAll("\x1b[7m", "").replaceAll("\x1b[27m", "");
+  return lines.join("\n").replaceAll("\x1b_pi:c\x07", "").replaceAll("\x1b[7m", "").replaceAll("\x1b[27m", "");
 }
 
 test("layout baseline: top level", (t) => {

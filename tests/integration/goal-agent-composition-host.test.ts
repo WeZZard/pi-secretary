@@ -2,11 +2,10 @@ import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import type { JsonObject, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
+import type { ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import { goalAgentCompositionSession } from "../support/goal-agent-composition-session.ts";
-import { runDetails } from "../support/tool-details.ts";
 
-const call = (id: string, name: string, args: JsonObject): ToolCall => ({ type: "toolCall", id, name, arguments: args });
+const call = (id: string, name: string, args: Record<string, unknown>): ToolCall => ({ type: "toolCall", id, name, arguments: args });
 
 test("composition fixture supports real background launch, saved-child resumption, and observed completion in persistent RPC mode", { timeout: 30000 }, async t => {
   const h = await goalAgentCompositionSession(t, {
@@ -34,7 +33,7 @@ test("composition fixture supports real background launch, saved-child resumptio
       { id: "launch", error: false }, { id: "observe-launch", error: false },
       { id: "resume", error: false }, { id: "observe-resume", error: false },
     ], JSON.stringify(results));
-    for (const id of ["observe-launch", "observe-resume"]) assert.equal(runDetails(results.find(m => m.toolCallId === id)!).status, "succeeded");
+    for (const id of ["observe-launch", "observe-resume"]) assert.equal(results.find(m => m.toolCallId === id)?.details.status, "succeeded");
     const runs = h.repository.runs(h.threadId);
     assert.equal(runs.length, 2);
     assert.ok(runs.every(run => run.background && run.status === "succeeded"));

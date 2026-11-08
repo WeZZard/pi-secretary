@@ -6,8 +6,6 @@ import { test } from "node:test";
 import type { Context } from "@earendil-works/pi-ai";
 import { discoverySession } from "../support/discovery-session.ts";
 import { agentHarness } from "../support/agent-harness.ts";
-import { runDetails } from "../support/tool-details.ts";
-import { assertNoPersistedRequestContext } from "../support/persisted-context.ts";
 
 function envelope(context: Context) {
   const text = JSON.stringify(context.messages.at(-1));
@@ -44,7 +42,7 @@ test("SA-DISC-01: first real SDK request publishes the resolved catalog without 
   assert.equal(h.session.messages.filter(m => m.role === "toolResult").length, 0);
   assert.ok(!h.session.messages.some(m => m.role === "custom" && m.customType === "secretary:request-context"));
   const transcript = await readFile(h.session.sessionFile!, "utf8");
-  assertNoPersistedRequestContext(transcript);
+  assert.doesNotMatch(transcript, /<secretary-runtime-state>/);
 });
 
 test("SA-DISC-05: uncorrelated invocations and old branch bindings cannot launch", async t => {
@@ -77,7 +75,7 @@ test("SA-DISC-02: real parallel launches use their generating catalog, then the 
   await h.session.prompt("Delegate twice using the catalog.");
   const results = h.session.messages.filter(m => m.role === "toolResult" && m.toolName === "Agent");
   assert.equal(results.length, 2);
-  for (const result of results) { assert.ok(result.role === "toolResult"); assert.equal(result.isError, false, JSON.stringify(result)); assert.equal(runDetails(result).status, "succeeded"); }
+  for (const result of results) { assert.ok(result.role === "toolResult"); assert.equal(result.isError, false, JSON.stringify(result)); assert.equal(result.details.status, "succeeded"); }
   assert.equal(h.childCalls.length, 2);
   for (const call of h.childCalls) assert.match(call.systemPrompt ?? "", /ORIGINAL_ROLE/);
   assert.equal(catalog(h.parentCalls[0]!).definitions.find((d: any) => d.type === "custom").description, "Original description");
@@ -203,10 +201,10 @@ test("incident-shaped SDK batch: ten read-only children complete without parent 
   for (const result of results) {
     assert.ok(result.role === "toolResult");
     assert.equal(result.isError, false, JSON.stringify(result));
-    assert.equal(runDetails(result).status, "succeeded");
-    assert.deepEqual(repo.getAgent(runDetails(result).agentId)?.tools, ["read"]);
+    assert.equal(result.details.status, "succeeded");
+    assert.deepEqual(repo.getAgent(result.details.agentId)?.tools, ["read"]);
   }
   assert.equal(h.childCalls.length, 10);
   assert.equal(h.session.messages.filter(m => m.role === "toolResult" && m.toolName !== "Agent").length, 0);
-  assertNoPersistedRequestContext(await readFile(h.session.sessionFile!, "utf8"));
+  assert.doesNotMatch(await readFile(h.session.sessionFile!, "utf8"), /<secretary-runtime-state>/);
 });

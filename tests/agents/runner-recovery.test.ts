@@ -59,8 +59,8 @@ async function fixture(t: TestContext, responses: Response[], holdSummary = fals
   registry.registerProvider(model.provider, { api: model.api, baseUrl: model.baseUrl, apiKey: "fake", models: [model],
     streamSimple(_model, context, options) {
       const response = responses[calls.length];
-      assert.ok(response, `Unexpected provider request after scripted recovery (maxTokens=${options?.maxTokens})`);
-      const result = message(response === "summary" ? "Recovery summary sentinel. Current recovery task sentinel." : response, calls.length + 1);
+      assert.ok(response, "Unexpected provider request after scripted recovery");
+      const result = message(response === "summary" ? "Recovery summary sentinel." : response, calls.length + 1);
       if (response === "overflow" || response === "transient") {
         result.stopReason = "error";
         result.errorMessage = response === "overflow" ? "This model's maximum context length is 1000 tokens" : "503 service unavailable";
@@ -103,17 +103,10 @@ async function fixture(t: TestContext, responses: Response[], holdSummary = fals
 }
 
 function assertUsageValues(f: Awaited<ReturnType<typeof fixture>>, calls = f.calls) {
-  const values = calls.map(({ message: { usage } }) => ({
+  assert.deepEqual(f.usage.map(({ value }) => value), calls.map(({ message: { usage } }) => ({
     inputTokens: usage.input, cachedInputTokens: usage.cacheRead, cacheWriteInputTokens: usage.cacheWrite,
     outputTokens: usage.output, reasoningOutputTokens: 0, totalTokens: usage.totalTokens,
-  }));
-  if (values.length === 4) {
-    const [history, turnPrefix] = [values[1]!, values[2]!];
-    const combined = Object.fromEntries(Object.keys(history).map(key => [key,
-      history[key as keyof typeof history] + turnPrefix[key as keyof typeof turnPrefix]]));
-    values.splice(1, 2, combined as typeof history);
-  }
-  assert.deepEqual(f.usage.map(({ value }) => value), values);
+  })));
   assert.equal(new Set(f.usage.map(({ id }) => id)).size, f.usage.length, "Usage must be emitted once per source");
 }
 
@@ -135,11 +128,11 @@ function assertUsageSources(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 test("child automatically compacts context overflow and accounts summary plus recovered response once", { timeout: 15000 }, async (t) => {
-  const f = await fixture(t, ["overflow", "summary", "summary", "recovered"]);
+  const f = await fixture(t, ["overflow", "summary", "recovered"]);
   assert.deepEqual(await f.child.result, { status: "succeeded", output: "recovered" });
-  assert.deepEqual(f.calls.map(({ response }) => response), ["overflow", "summary", "summary", "recovered"]);
-  assert.match(JSON.stringify(f.calls[3]!.context.messages), /Recovery summary sentinel/);
-  assert.match(JSON.stringify(f.calls[3]!.context.messages), /Current recovery task sentinel/);
+  assert.deepEqual(f.calls.map(({ response }) => response), ["overflow", "summary", "recovered"]);
+  assert.match(JSON.stringify(f.calls[2]!.context.messages), /Recovery summary sentinel/);
+  assert.match(JSON.stringify(f.calls[2]!.context.messages), /Current recovery task sentinel/);
   assert.equal(f.entries().filter((entry) => entry.type === "compaction").length, 1);
   assert.deepEqual(f.usage.map(({ id }) => id.split(":")[1]), ["message", "compaction", "message"]);
   assertUsageValues(f);
@@ -159,7 +152,7 @@ test("child waits for automatic transient-error retry and retains both usage sou
 });
 
 test("recovery usage identities reference their actual persisted assistant and compaction entries", { timeout: 15000 }, async (t) => {
-  const f = await fixture(t, ["overflow", "summary", "summary", "recovered"]);
+  const f = await fixture(t, ["overflow", "summary", "recovered"]);
   assert.equal((await f.child.result).status, "succeeded");
   assertUsageSources(f);
 });

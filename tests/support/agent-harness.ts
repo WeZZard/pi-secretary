@@ -7,7 +7,6 @@ import { createAssistantMessageEventStream, InMemoryCredentialStore, type Assist
 import { ModelRuntime, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { GoalEngine } from "../../extensions/secretary/goal-engine.ts";
 import { installSecretary } from "../../extensions/secretary/index.ts";
-import { providerContext } from "./provider-context.ts";
 
 export async function agentHarness(t: TestContext, options: { mode?: string; collision?: string } = {}) {
   const root = await mkdtemp(join(tmpdir(), "secretary-install-"));
@@ -22,8 +21,7 @@ export async function agentHarness(t: TestContext, options: { mode?: string; col
   const registry = new ModelRegistry(runtime);
   const calls: Context[] = [];
   registry.registerProvider(model.provider, { api: model.api, baseUrl: model.baseUrl, apiKey: "fake", models: [model], streamSimple(m, context) {
-    const provider = providerContext(context);
-    calls.push({ ...provider, messages: structuredClone(provider.messages) });
+    calls.push({ ...context, messages: structuredClone(context.messages), tools: context.tools?.map(({ name, description, parameters }) => ({ name, description, parameters })) });
     const message: AssistantMessage = { role: "assistant", api: m.api, provider: m.provider, model: m.id, content: [{ type: "text", text: "Verified fixture child output." }], stopReason: "stop", timestamp: Date.now(), usage: { input: 100, cacheRead: 40, output: 20, cacheWrite: 0, totalTokens: 120, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
     const stream = createAssistantMessageEventStream();
     stream.push({ type: "done", reason: "stop", message }); stream.end(); return stream;

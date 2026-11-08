@@ -2,7 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { standaloneAgentHarness } from "../support/standalone-agent-harness.ts";
 import { nestedRealTree, settle } from "../support/nested-real-tree.ts";
-import { providerContext } from "../support/provider-context.ts";
 
 /**
  * Failing reproducers for the nested-subagent output-collection checkpoint, aligned with the
@@ -13,7 +12,7 @@ import { providerContext } from "../support/provider-context.ts";
 
 test("checkpoint 4 guard: the main session collects a nested agent's output through TaskOutput", { timeout: 30000 }, async t => {
   const h = await standaloneAgentHarness(t, { respondChild: async context => {
-    if ((providerContext(context).systemPrompt ?? "").includes("STANDALONE_DELEGATOR")) {
+    if ((context.systemPrompt ?? "").includes("STANDALONE_DELEGATOR")) {
       const launched = context.messages.find(message => message.role === "toolResult" && message.toolCallId === "nested-output-launch");
       if (!launched) return [{ type: "toolCall", id: "nested-output-launch", name: "Agent", arguments: {
         description: "Nested output work", prompt: "NESTED_OUTPUT_TASK", subagent_type: "worker", name: "nested-output", run_in_background: false } }];

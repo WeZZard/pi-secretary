@@ -26,8 +26,7 @@ export function snapshot(id = "a", parentId = "p"): AgentSnapshot {
 export const markdown = Array.from({ length: 30 }, (_, i) => `<!-- secretary-entry:entry-${i} -->\n## assistant\n\nRetained paragraph ${i}.\n`).join("\n");
 /** Structured fixture events, one stable entry id per event, replacing the legacy markdown transcript. */
 export const fixtureEvents: readonly TranscriptEvent[] = Array.from({ length: 30 }, (_, i) => ({ kind: "assistant" as const, entryId: `entry-${i}`, text: `Retained paragraph ${i}.` }));
-export const plain = (lines: string[]) => stripVTControlCharacters(lines.join("\n")
-  .replaceAll("\x1b_pi:c\x07", "").replaceAll("\x1b_pi:fc\x07", "").replaceAll("\x1b_pi:/fc\x07", ""));
+export const plain = (lines: string[]) => stripVTControlCharacters(lines.join("\n").replaceAll("\x1b_pi:c\x07", ""));
 
 export class UIHarness {
   state = initialState();

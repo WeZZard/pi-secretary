@@ -3,21 +3,20 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { TestContext } from "node:test";
 import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
-import { createAssistantMessageEventStream, type AssistantMessage, type Context, type JsonObject, type Model, type TranscriptContext } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, type AssistantMessage, type Context, type Model } from "@earendil-works/pi-ai";
 import { agentHarness } from "../support/agent-harness.ts";
 import { AgentRepository } from "../../extensions/secretary/agents/storage/agent-repository.ts";
 import { Inspector } from "../../extensions/secretary/agents/ui/inspector.ts";
 import { initialState } from "../../extensions/secretary/agents/ui/state.ts";
 import type { UsageRecord } from "../../extensions/secretary/agents/records.ts";
 import { deferred, tick } from "./support.ts";
-import { providerContext } from "../support/provider-context.ts";
 
 export interface Reply {
   text?: string;
   input?: number;
   cached?: number;
   output?: number;
-  tool?: { name: string; arguments: JsonObject };
+  tool?: { name: string; arguments: Record<string, unknown> };
   /** First-request provider failure; the message carries this as its errorMessage. */
   error?: string;
   gate?: ReturnType<typeof deferred<void>>;
@@ -32,9 +31,8 @@ export async function configurationHarness(t: TestContext) {
   const calls: Array<{ model: string; context: Context }> = [];
   h.ctx.modelRegistry.registerProvider("test-provider", {
     api: "openai-completions", baseUrl: "http://127.0.0.1:1/never", apiKey: "fixture-only", models,
-    streamSimple(model: Model<"openai-completions">, context: TranscriptContext, options: any) {
-      const provider = providerContext(context);
-      calls.push({ model: `${model.provider}/${model.id}`, context: { ...provider, messages: structuredClone(provider.messages) } });
+    streamSimple(model: Model<"openai-completions">, context: Context, options: any) {
+      calls.push({ model: `${model.provider}/${model.id}`, context: { ...context, messages: structuredClone(context.messages), tools: context.tools?.map(({ name, description, parameters }) => ({ name, description, parameters })) } });
       const reply = replies.shift() ?? {};
       const stream = createAssistantMessageEventStream();
       const release = () => reply.gate?.resolve();

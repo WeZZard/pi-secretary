@@ -99,6 +99,7 @@ export class WorkspaceManager {
     const record: DirectorySnapshotRecord = { kind: "directory-snapshot", id, repo: source, path: join(storage, id), reason: plan.reason, state: "allocated" };
     const manifest: SnapshotManifest = { version: 1, agentId, record, inventory: baseline };
     await writeFile(join(storage, `${id}.json`), JSON.stringify(manifest), { flag: "wx", mode: 0o600 });
+    await mkdir(record.path, { mode: 0o700 });
     await cp(source, record.path, { recursive: true, force: false, errorOnExist: true, preserveTimestamps: true,
       filter: path => { signal?.throwIfAborted(); return path === source || !relative(source, path).split(/[\\/]/).includes(".git"); } });
     signal?.throwIfAborted();
