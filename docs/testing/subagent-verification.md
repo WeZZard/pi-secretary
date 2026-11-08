@@ -8,6 +8,19 @@
 
 **Related documents:** [Architecture](../arch/subagents.md), [requirements](../user-stories/subagents.md), [interaction design](../ux/subagents.md), [testing guide](README.md), and [delivery record](../../.plans/2026-09-17-subagent-support.md).
 
+## 2026-11-08: Built-in tool-extension construction in child sessions
+
+- The tested implementation is the working tree based on `43499f8`, implementing [SA-01](../user-stories/subagents.md#sa-01-delegate-a-bounded-task), [Subagents §5.2](../arch/subagents.md#52-packaged-definitions), and [Subagents §8.1](../arch/subagents.md#81-resource-and-tool-policy). The base commit alone does not contain this repair.
+- Three live child launches failed with `Approved child tools cannot be loaded: codemode`. A real-SDK regression against the unchanged runner and pi 1.5.0 reproduced the same failure before a provider request. The child inherited the parent's active tool names, but its `DefaultResourceLoader` had no built-in extension factories and therefore could not register codemode.
+- `built-in-extensions.ts` now reconstructs the public codemode, tool-search, and MCP factories as replaceable built-in descriptors. `runner.ts` supplies those descriptors to each fresh child loader. Feature detection preserves the 0.85.1 baseline, and descriptor-based loading preserves explicit built-in disablement.
+- On pi 1.5.0, the codemode regression executes a real script whose nested `tools.read()` returns the project-instruction sentinel. The disabled-built-in control fails closed before a provider request. Both tests pass.
+- The unchanged pi 1.5.0 baseline reports 25 passing and 7 failing runner tests. The repaired tree reports 27 passing and the same 7 failing runner tests, so the two new tests pass without introducing a new runner failure. Those seven pre-existing failures concern the changed provider-context fields and the removed `shouldStopAfterTurn` hook.
+- On the pinned 0.85.1 baseline, TypeScript checking passes. The subagent suite reports 326 tests with 320 passes, 4 failures, and 2 expected skips. The same four workspace tests fail on the unchanged baseline, which has 324 tests with 320 passes and 4 failures.
+- Acceptance syntax and traceability validation passes for 12 Gherkin files and 115 scenario identities. `npm pack --dry-run` includes the new adapter. Mermaid lint could not run because `mmlint` is not installed in the development environment.
+- Reproduce the focused checks with `node --experimental-strip-types --test --test-concurrency=1 --test-name-pattern='built-in|disabled built-in' tests/agents/runner.test.ts` against pi 1.5.0. Run `npm ci && npm run check && npm run test:subagents` to compare the pinned baseline.
+- A broader pi 1.5.0 type-surface migration is outside this repair.
+- A fresh pi process loaded the maintained local checkout and used the real configured provider to launch `run_77db15d1-f054-43ad-9ebc-afe3f26d0628`. The child succeeded with output `codemode-child-ok`. Its persisted transcript contains exactly one top-level `codemode` call and one successful nested `bash` call. An already-running parent must reload or restart to load the repaired extension.
+
 ## 2026-09-23: Outcome acknowledgement and the undelivered-outcome projection
 
 - The tested implementation is the working tree based on `dc36669`, implementing [architecture Section 3](../arch/subagents.md#3-invariants) Invariants 14 to 16, [Section 4.4](../arch/subagents.md#44-taskoutput), [Section 6.1](../arch/subagents.md#61-entities), and [Section 10](../arch/subagents.md#10-completion-delivery-and-model-context). The base commit alone does not contain this change.

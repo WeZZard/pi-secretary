@@ -36,6 +36,7 @@ As a parent agent, I want to delegate a task without changing my own conversatio
 - A foreground launch returns the outcome after execution completes.
 - An unknown agent type or unavailable model produces an actionable error rather than a silent fallback.
 - Fresh child sessions receive their task and applicable project instructions, but not the parent's conversation history.
+- A child receives the parent's authorized built-in extension tools under the host's enablement policy. Codemode executes scripts with the child's authorized nested tools, and an explicitly disabled built-in extension remains unavailable.
 - Launching a child does not create a goal implicitly.
 
 ### SA-02: Observe concurrent work

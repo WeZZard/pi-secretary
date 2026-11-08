@@ -8,6 +8,7 @@ import {
 import { availabilityResetAt, isAvailabilityError } from "./availability.ts";
 import type { AgentRecord, AgentRun, RunnerHooks, RunningChild } from "./records.ts";
 import { childDelegationAuthorized, runInChildSession } from "./child-context.ts";
+import { builtInToolExtensionFactories } from "./built-in-extensions.ts";
 import { inspectBashCommand, isReadOnly } from "./read-only-guard.ts";
 
 /** Delegation tools (SA-12): issued to a child session only when it may delegate further. */
@@ -79,6 +80,7 @@ export async function createChildRunner(options: {
 
     async function attemptSetup(candidateId: string): Promise<Attempt> {
       const loader = new DefaultResourceLoader({ cwd: agent.configCwd, agentDir, settingsManager: settings,
+        extensionFactories: builtInToolExtensionFactories(),
         appendSystemPrompt: [...(agent.definition.prompt.trim() ? [agent.definition.prompt] : []),
           "You are a child agent. Only the current explicit task authorizes work. Historical queued guidance is not a new instruction."],
       });
