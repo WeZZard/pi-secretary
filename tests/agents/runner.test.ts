@@ -6,11 +6,14 @@ import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { createAssistantMessageEventStream, InMemoryCredentialStore, type AssistantMessage, type Context, type Model } from "@earendil-works/pi-ai";
 import { ModelRuntime, ModelRegistry, SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import * as piHost from "@earendil-works/pi-coding-agent";
 import { createChildRunner } from "../../extensions/secretary/agents/runner.ts";
 import { childSession, inChildSession, runInChildSession } from "../../extensions/secretary/agents/child-context.ts";
 import { AgentRepository } from "../../extensions/secretary/agents/storage/agent-repository.ts";
 import type { AgentRecord, AgentRun, RunnerHooks } from "../../extensions/secretary/agents/records.ts";
 import { goalTokenDeltaForUsage } from "../../extensions/secretary/goal/accounting.ts";
+
+const hostSupportsBuiltInCodemode = typeof (piHost as unknown as Record<string, unknown>).createCodemodeExtension === "function";
 
 async function fixture(t: TestContext, responses: Array<string | { tool: string; args?: Record<string, unknown> } | { error: string }> = ["done"]) {
   const root = await mkdtemp(join(tmpdir(), "secretary-child-"));
@@ -93,6 +96,29 @@ test("SDK child inherits public provider, project instructions, role, tools, and
   await child.abort();
   assert.equal((await child.result).status, "succeeded");
   await child.dispose(); await child.dispose();
+});
+
+test("SDK child constructs inherited built-in tools and executes codemode", { skip: !hostSupportsBuiltInCodemode }, async (t) => {
+  const f = await fixture(t, [{ tool: "codemode", args: {
+    code: `const result = await tools.read({ path: "AGENTS.md" }); return result.includes("Project instruction sentinel.") ? "codemode-ok" : "missing";`,
+  } }, "done"]);
+  f.agent.tools = ["read", "codemode", "tool_search"];
+  const child = await f.start();
+  assert.deepEqual(await child.result, { status: "succeeded", output: "done" });
+  assert.equal(f.calls.length, 2, "The codemode result returns to the fixture model for a normal completion");
+  const transcript = await readFile(f.path, "utf8");
+  assert.match(transcript, /Script completed/);
+  assert.match(transcript, /codemode-ok/, "The script's nested read returned the project-instruction sentinel");
+});
+
+test("SDK child construction preserves disabled built-in extensions", { skip: !hostSupportsBuiltInCodemode }, async (t) => {
+  const f = await fixture(t);
+  await writeFile(join(f.root, "agent", "settings.json"), JSON.stringify({
+    compaction: { enabled: false }, retry: { enabled: false }, extensions: ["-builtin:codemode"],
+  }));
+  f.agent.tools = ["read", "codemode"];
+  await assert.rejects(f.start(), /Approved child tools cannot be loaded: codemode/);
+  assert.equal(f.calls.length, 0, "A disabled approved tool fails closed before any provider request");
 });
 
 test("runner advances to the next fallback candidate on a first-request availability failure", async (t) => {
