@@ -14,6 +14,9 @@ import { inspectBashCommand, isReadOnly } from "./read-only-guard.ts";
 /** Delegation tools (SA-12): issued to a child session only when it may delegate further. */
 export const DELEGATION_TOOL_NAMES = ["Agent", "SendMessage", "TaskStop", "TaskOutput"];
 
+/** How long to wait for a tool that an extension registers after `session_start`, such as a connecting MCP server. */
+const TOOL_REGISTRATION_WAIT_MS = 5_000;
+
 function usageRecord(usage: Usage) {
   // Intentionally identical to the parent normalization (including cache semantics).
   return { inputTokens: usage.input, cachedInputTokens: usage.cacheRead,
@@ -178,11 +181,21 @@ export async function createChildRunner(options: {
       });
       // Startup hooks may register providers too. Never silently accept a replacement.
       attempt.authorize();
-      const availableTools = new Set(session.getAllTools().map((tool) => tool.name));
+      const approvedTools = allowed();
+      const unloadable = () => approvedTools.filter((name) => !DELEGATION_TOOL_NAMES.includes(name)
+        && !session.getAllTools().some((tool) => tool.name === name));
+      // An extension registers some tools after `session_start`, such as an MCP server whose connection is
+      // still resolving, so a tool the definition approves can be absent at bind time and appear a moment
+      // later. Wait for the approved ones rather than fail closed on a registration that has not happened yet.
+      const deadline = Date.now() + TOOL_REGISTRATION_WAIT_MS;
+      while (unloadable().length && Date.now() < deadline) {
+        signal.throwIfAborted();
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
       // Delegation tools are provided by this extension's own child-session installation; when
       // that installation is absent the child simply cannot delegate, so their absence is not
       // an authorization failure the way a missing approved work tool is.
-      const missingTools = allowed().filter((name) => !availableTools.has(name) && !DELEGATION_TOOL_NAMES.includes(name));
+      const missingTools = unloadable();
       if (missingTools.length) throw new Error(`Approved child tools cannot be loaded: ${missingTools.join(", ")}`);
       // Compose rather than replace SDK permission/extension hooks. This outer guard also
       // covers tools registered or activated after startup. Delegation tool names are admitted
